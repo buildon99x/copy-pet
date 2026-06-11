@@ -119,7 +119,9 @@ const ADVANCE: f32 = 6.0;
 /// Advance per Hangul cell (7px glyph + 1px gap).
 const ADVANCE_HANGUL: f32 = hangul::CELL + 1.0;
 
-fn advance_of(c: char) -> f32 {
+/// Advance of one character cell in font units (multiply by the pixel size).
+/// Also used by [`crate::sysfont`] when it falls back per character.
+pub(crate) fn advance(c: char) -> f32 {
     if hangul::is_hangul(c) {
         ADVANCE_HANGUL
     } else {
@@ -129,7 +131,7 @@ fn advance_of(c: char) -> f32 {
 
 /// Pixel width of a string drawn at scale `px`.
 pub fn measure(text: &str, px: f32) -> f32 {
-    let total: f32 = text.chars().map(advance_of).sum();
+    let total: f32 = text.chars().map(advance).sum();
     if total == 0.0 {
         0.0
     } else {
@@ -147,7 +149,7 @@ pub fn truncate_to_width(text: &str, px: f32, max_w: f32) -> String {
     let mut w = 0.0;
     let mut out = String::new();
     for c in text.chars() {
-        let a = advance_of(c) * px;
+        let a = advance(c) * px;
         if w + a + ell > max_w {
             out.push_str("..");
             return out;

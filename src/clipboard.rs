@@ -211,8 +211,21 @@ impl ClipStore {
     /// (newest first), filtered by a case-insensitive substring query on
     /// text and source app.
     pub fn visible(&self, query: &str) -> Vec<&Clip> {
+        self.visible_filtered(query, None)
+    }
+
+    /// Like [`ClipStore::visible`], additionally restricted to clips whose
+    /// source app equals `source` (case-insensitive), when given.
+    pub fn visible_filtered(&self, query: &str, source: Option<&str>) -> Vec<&Clip> {
         let q = query.trim().to_lowercase();
+        let src = source.map(|s| s.to_lowercase());
         let matches = |c: &Clip| {
+            if let Some(want) = &src {
+                let from = c.source.as_deref().map(|s| s.to_lowercase());
+                if from.as_deref() != Some(want.as_str()) {
+                    return false;
+                }
+            }
             if q.is_empty() {
                 return true;
             }
@@ -224,6 +237,24 @@ impl ClipStore {
         };
         let mut out: Vec<&Clip> = self.items.iter().filter(|c| c.pinned && matches(c)).collect();
         out.extend(self.items.iter().filter(|c| !c.pinned && matches(c)));
+        out
+    }
+
+    /// Distinct source apps across the history, most recently used first
+    /// (case-insensitive dedupe, first spelling wins). Drives the panel's
+    /// source-filter cycle button.
+    pub fn sources(&self) -> Vec<&str> {
+        let mut seen: Vec<String> = Vec::new();
+        let mut out = Vec::new();
+        for c in &self.items {
+            if let Some(s) = c.source.as_deref() {
+                let key = s.to_lowercase();
+                if !seen.contains(&key) {
+                    seen.push(key);
+                    out.push(s);
+                }
+            }
+        }
         out
     }
 }
@@ -300,6 +331,27 @@ mod tests {
         assert_eq!(s.visible("chrome").len(), 1);
         assert_eq!(s.visible("zzz").len(), 0);
         assert_eq!(s.visible("").len(), 2);
+    }
+
+    #[test]
+    fn source_filter_and_distinct_sources() {
+        let mut s = ClipStore::default();
+        s.add_copy("one".into(), Some("Chrome".into()));
+        s.add_copy("two".into(), Some("Code".into()));
+        s.add_copy("three".into(), Some("chrome".into())); // dup, different case
+        s.add_copy("four".into(), None);
+        // distinct, most recent first, first spelling kept per app
+        assert_eq!(s.sources(), vec!["chrome", "Code"]);
+        // filter is case-insensitive equality on the source
+        let chrome = s.visible_filtered("", Some("CHROME"));
+        assert_eq!(chrome.len(), 2);
+        assert!(chrome.iter().all(|c| c.source.as_deref().unwrap().eq_ignore_ascii_case("chrome")));
+        // sourceless clips only match without a filter
+        assert_eq!(s.visible_filtered("four", Some("chrome")).len(), 0);
+        assert_eq!(s.visible_filtered("four", None).len(), 1);
+        // query and filter combine
+        assert_eq!(s.visible_filtered("one", Some("chrome")).len(), 1);
+        assert_eq!(s.visible_filtered("two", Some("chrome")).len(), 0);
     }
 
     #[test]

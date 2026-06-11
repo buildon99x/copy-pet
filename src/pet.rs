@@ -87,7 +87,7 @@ pub struct Pet {
     fish_queue: VecDeque<Badge>,
     // inputs from the platform
     hover: bool,
-    panel_hint: &'static str,
+    panel_hint: String,
     // bookkeeping
     frame: u64,
     rng: u32,
@@ -127,7 +127,7 @@ impl Pet {
             fish: None,
             fish_queue: VecDeque::new(),
             hover: false,
-            panel_hint: "",
+            panel_hint: String::new(),
             frame: 0,
             rng: seed(),
             level,
@@ -158,8 +158,8 @@ impl Pet {
     }
 
     /// Footer hint shown in the panel (backend-specific hotkey text).
-    pub fn set_panel_hint(&mut self, hint: &'static str) {
-        self.panel_hint = hint;
+    pub fn set_panel_hint(&mut self, hint: impl Into<String>) {
+        self.panel_hint = hint.into();
     }
 
     /// Returns `true` once after a level-up so the platform can refresh tray UI.
@@ -603,7 +603,7 @@ impl Pet {
                 store: &self.clips,
                 lang: self.lang(),
                 capture: self.st.clip_capture,
-                hint: self.panel_hint,
+                hint: &self.panel_hint,
                 caret: (t * 1.6).fract() < 0.65,
             };
             render::draw_panel(pm, &view, self.scale());

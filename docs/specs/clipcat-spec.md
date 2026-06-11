@@ -1,6 +1,7 @@
 # ClipCat — Product & Technical Spec
 
-Status: implemented (v2.0) · Owner: ClipCat · Last updated: 2026-06-11
+Status: implemented (v2.0 + unreleased 2.1 features) · Owner: ClipCat ·
+Last updated: 2026-06-11
 
 ## 1. Summary
 
@@ -58,17 +59,36 @@ clips, search, hotkey), **Bongo Cat** (reactive paw-tapping mascot) and
   timestamp of last copy.
 
 ### Panel (UI)
-- Opens via: global **Ctrl+Shift+V** (Windows native, `RegisterHotKey`),
-  middle-click on the cat (both backends), tray menu (Windows), `C` key
-  (portable). The window grows upward (324×426 canvas at scale 1.0); the cat
-  stays at the bottom.
-- Contents: title row with capture-pause / clear-unpinned / language / close
-  buttons; search box (live filter over text + source, Korean supported —
-  IME input works on both backends); 6 visible rows (pin star · preview ·
-  source + relative time · delete ✕) with hover + keyboard selection;
-  scrollbar; footer with counts and the hotkey hint.
+- Opens via a global hotkey on all OSes — **Win+Shift+V** by default, where
+  the `win` modifier is the OS super key, so it reads **Cmd+Shift+V on
+  macOS** and Super+Shift+V on Linux. Configurable as the `hotkey` spec
+  string in `state.json` (`hotkey.rs` parses `"win+shift+v"`-style values;
+  invalid values reset to the default on load).
+  - Windows (native): `RegisterHotKey`; on a clash with another app it
+    falls back to **Ctrl+Shift+V**. The panel footer, tray menu and About
+    dialog always show the combination that actually registered.
+  - macOS/Linux (portable): a `ChordTracker` on the existing rdev listener
+    matches the configured chord and toggles the panel (ADR-0008 — exact
+    modifier match, auto-repeat fires once, key identities compared and
+    immediately discarded). Needs macOS Accessibility / X11 like the
+    counters; unlike `RegisterHotKey` the chord is not reserved from the
+    focused app.
+  - Also: middle-click on the cat (both backends), tray menu (Windows),
+    `C` key with the window focused (portable). The window grows upward
+    (324×426 canvas at scale 1.0); the cat stays at the bottom.
+- Contents: title row with source-filter / capture-pause / clear-unpinned /
+  language / close buttons; search box (live filter over text + source,
+  Korean supported — IME input works on both backends); 6 visible rows
+  (pin star · preview · source + relative time · delete ✕) with hover +
+  keyboard selection; scrollbar; footer with counts and the hotkey hint.
+- **Source-app filter**: the funnel button (or Tab) cycles all → app 1 →
+  app 2 → … → all over the distinct source apps in the history (most
+  recently used first). The active filter renders as a chip inside the
+  search box and combines with the text query; reopening the panel clears
+  it. Clips without a known source only show when no filter is active.
 - Keyboard while open: type = search, ↑/↓/PgUp/PgDn = select, Enter = copy
-  selected, Del = delete, Backspace = edit query, Esc = clear query / close.
+  selected, Del = delete, Backspace = edit query, Tab = cycle source
+  filter, Esc = clear query → clear filter → close (one layer per press).
 - Clicking a row copies it back (toast "COPIED!", pop sound, happy cat).
   Pinned clips sort first.
 - On the native backend the window is `WS_EX_NOACTIVATE`; opening the panel
@@ -106,7 +126,8 @@ clamped at level 99.
 | Gesture | Effect |
 |---------|--------|
 | Copy anywhere | Fish + clip saved (+5 XP) |
-| Ctrl+Shift+V / middle-click / tray / `C` | Toggle clipboard panel |
+| Win+Shift+V (default) / middle-click / tray / `C` | Toggle clipboard panel |
+| Funnel button / Tab (panel open) | Cycle the source-app filter |
 | Drag | Move the pet (unless position-locked) |
 | Single click | Squash bounce + sparkle (+1 XP) |
 | Double click | Pet it: heart burst (+10 XP) |
@@ -121,12 +142,22 @@ clamped at level 99.
 - First run picks the language from the OS locale (`GetUserDefaultUILanguage`
   / `$LANG`); after that it's a persisted setting, switchable from the tray
   menu (Windows), the panel's EN/KO button, or `G` (portable).
-- **Hangul rendering** (`hangul.rs`): syllables are decomposed
-  (U+AC00 formula) and composed from ~40 vector jamo stroke shapes with
-  standard vertical/horizontal/mixed vowel layouts, stroked by tiny-skia at
-  any size — no font files (ADR-0006). ASCII stays the 5×7 bitmap font
-  (now covering all printable ASCII incl. lowercase); unknown glyphs render
-  a hollow box.
+- **Text rendering** is split by surface (ADR-0007):
+  - **UI surfaces — panel + toast — use the system font** (`sysfont.rs`):
+    the OS UI font plus a Hangul-capable fallback are loaded at startup
+    from well-known font files (Windows: Segoe UI + Malgun Gothic; macOS:
+    SF/Helvetica + Apple SD Gothic Neo; Linux: Noto/DejaVu + Noto CJK/
+    Nanum) and rasterized with `ab_glyph`. Nothing is bundled or
+    downloaded. Characters no loaded font covers — and systems with no
+    usable font at all — fall back per character to the built-in fonts
+    below, so text never disappears.
+  - **Pet decorations — the hover stats tooltip, fish badge letters, Zzz —
+    keep the built-in pixel look**: the 5×7 bitmap font (all printable
+    ASCII incl. lowercase; unknown glyphs render a hollow box) and
+    **vector Hangul** (`hangul.rs`): syllables are decomposed (U+AC00
+    formula) and composed from ~40 vector jamo stroke shapes with standard
+    vertical/horizontal/mixed vowel layouts, stroked by tiny-skia at any
+    size — no font files (ADR-0006).
 
 ## 7. Platforms & backends
 
@@ -142,22 +173,29 @@ XWayland); audio is Windows-only (ADR-0002).
 JSON at the per-OS config dir: Windows `%APPDATA%\ClipCat`, macOS
 `~/Library/Application Support/ClipCat`, Linux `$XDG_CONFIG_HOME/ClipCat`.
 `state.json` holds lifetime/daily counters (now incl. copies), window
-position, language and all settings; `clips.json` holds the clip history.
+position, language, the panel hotkey spec and all settings; `clips.json`
+holds the clip history.
 Saved on a 30 s dirty throttle, on size change, drag-end and shutdown.
 A v1 `DeskCat` dir (and the HKCU `DeskCat` autostart value on Windows) is
 migrated automatically on first run.
 
 ## 9. Privacy
 
-Input hooks only increment three atomic counters (`input::{KEYS,CLICKS,
-WHEEL}`); no keycodes, characters, window titles or timings are stored.
+Input hooks increment three atomic counters (`input::{KEYS,CLICKS,WHEEL}`)
+and — on the portable backend — additionally compare each key event against
+the one configured panel-hotkey chord, discarding it immediately (ADR-0008;
+Windows uses the OS's own `RegisterHotKey` instead). Beyond that, no
+keycodes, characters, window titles or timings are read or stored.
 Clipboard text is stored **locally only**, capture is pausable, oversized
 clips are ignored, and there is no network code in the binary.
 
 ## 10. Quality bar
 
-- Single binary, no installer, no bundled assets (icon, fonts and sounds
-  generated from code).
+- Single binary, no installer, no bundled assets (icon, built-in fonts and
+  sounds generated from code; the UI font is read from the OS at runtime,
+  never shipped).
+- Releases are cut by `scripts/release.sh` (CHANGELOG-gated; see
+  `CHANGELOG.md` for the user-facing-only policy).
 - Idle/active CPU ≈ a few percent of one core (release); memory ~12–16 MB.
 - `cargo clippy` clean (incl. `--features portable` and the
   `x86_64-pc-windows-msvc` target); `cargo test` green; CI builds on all

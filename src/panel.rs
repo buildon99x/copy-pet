@@ -5,7 +5,7 @@
 //!
 //! All coordinates are in canvas units (window pixels / global scale).
 
-use crate::clipboard::ClipStore;
+use crate::clipboard::{Clip, ClipStore};
 
 // ---- layout (canvas units) --------------------------------------------------
 
@@ -22,13 +22,15 @@ pub const CARD_Y: f32 = 4.0;
 pub const CARD_W: f32 = 316.0;
 pub const CARD_H: f32 = 246.0;
 
-/// Header buttons, 16x16, right-aligned: pause, clear, language, close.
+/// Header buttons, 16x16, right-aligned: source filter, pause, clear,
+/// language, close.
 pub const BTN_Y: f32 = 9.0;
 pub const BTN: f32 = 16.0;
 pub const BTN_CLOSE_X: f32 = 300.0;
 pub const BTN_LANG_X: f32 = 280.0;
 pub const BTN_CLEAR_X: f32 = 260.0;
 pub const BTN_PAUSE_X: f32 = 240.0;
+pub const BTN_FILTER_X: f32 = 220.0;
 
 pub const SEARCH_X: f32 = 12.0;
 pub const SEARCH_Y: f32 = 30.0;
@@ -73,12 +75,16 @@ pub enum NavKey {
     Delete,
     Backspace,
     Esc,
+    /// Cycles the source-app filter (all -> app 1 -> app 2 -> ... -> all).
+    Tab,
 }
 
 #[derive(Default)]
 pub struct Panel {
     pub open: bool,
     pub query: String,
+    /// Active source-app filter; None shows clips from every app.
+    pub source: Option<String>,
     /// Index of the first visible row into the filtered clip list.
     pub scroll: usize,
     /// Keyboard selection index into the filtered clip list.
@@ -92,9 +98,32 @@ impl Panel {
         self.open = !self.open;
         if self.open {
             self.query.clear();
+            self.source = None;
             self.scroll = 0;
             self.sel = 0;
         }
+    }
+
+    /// The clip list the panel currently shows (query + source filter).
+    pub fn visible<'a>(&self, store: &'a ClipStore) -> Vec<&'a Clip> {
+        store.visible_filtered(&self.query, self.source.as_deref())
+    }
+
+    /// Advances the source filter to the next app seen in the history,
+    /// wrapping back to "all apps" after the last one.
+    pub fn cycle_source(&mut self, store: &ClipStore) {
+        let sources = store.sources();
+        let next = match &self.source {
+            None => sources.first().map(|s| s.to_string()),
+            Some(cur) => sources
+                .iter()
+                .position(|s| s.eq_ignore_ascii_case(cur))
+                .and_then(|i| sources.get(i + 1))
+                .map(|s| s.to_string()),
+        };
+        self.source = next;
+        self.scroll = 0;
+        self.sel = 0;
     }
 
     /// True if the point (canvas coords) is inside the panel card.
@@ -129,7 +158,7 @@ impl Panel {
 
     /// Mouse wheel over the panel: scroll by rows (positive = down).
     pub fn wheel(&mut self, rows: i32, store: &ClipStore) {
-        let total = store.visible(&self.query).len();
+        let total = self.visible(store).len();
         if rows > 0 {
             self.scroll = self.scroll.saturating_add(rows as usize);
         } else {
@@ -159,8 +188,13 @@ impl Panel {
         if on_btn(BTN_PAUSE_X) {
             return Some(PanelAction::ToggleCapture);
         }
+        if on_btn(BTN_FILTER_X) {
+            // pure panel state: cycle the source filter, no action needed
+            self.cycle_source(store);
+            return None;
+        }
         // clip rows
-        let visible = store.visible(&self.query);
+        let visible = self.visible(store);
         if let Some(i) = self.row_at(y, visible.len()) {
             let id = visible[i].id;
             self.sel = i;
@@ -189,7 +223,7 @@ impl Panel {
 
     /// Navigation key while the panel is open.
     pub fn nav(&mut self, key: NavKey, store: &ClipStore) -> Option<PanelAction> {
-        let total = store.visible(&self.query).len();
+        let total = self.visible(store).len();
         match key {
             NavKey::Up => {
                 self.sel = self.sel.saturating_sub(1);
@@ -210,13 +244,13 @@ impl Panel {
                 self.keep_sel_visible();
             }
             NavKey::Enter => {
-                let visible = store.visible(&self.query);
+                let visible = self.visible(store);
                 if let Some(c) = visible.get(self.sel) {
                     return Some(PanelAction::Copy(c.id));
                 }
             }
             NavKey::Delete => {
-                let visible = store.visible(&self.query);
+                let visible = self.visible(store);
                 if let Some(c) = visible.get(self.sel) {
                     return Some(PanelAction::Delete(c.id));
                 }
@@ -226,11 +260,19 @@ impl Panel {
                 self.scroll = 0;
                 self.sel = 0;
             }
+            NavKey::Tab => {
+                self.cycle_source(store);
+                return None;
+            }
             NavKey::Esc => {
-                if self.query.is_empty() {
+                // peel back one layer at a time: query, then filter, then close
+                if !self.query.is_empty() {
+                    self.query.clear();
+                } else if self.source.is_some() {
+                    self.source = None;
+                } else {
                     return Some(PanelAction::Close);
                 }
-                self.query.clear();
                 self.scroll = 0;
                 self.sel = 0;
             }
@@ -307,13 +349,63 @@ mod tests {
     }
 
     #[test]
-    fn esc_clears_query_then_closes() {
-        let s = store(2);
+    fn esc_clears_query_then_filter_then_closes() {
+        let mut s = store(2);
+        s.add_copy("from chrome".into(), Some("Chrome".into()));
         let mut p = Panel { open: true, ..Default::default() };
         p.input_char('a');
+        p.cycle_source(&s);
+        assert!(p.source.is_some());
         assert_eq!(p.nav(NavKey::Esc, &s), None);
         assert!(p.query.is_empty());
+        assert!(p.source.is_some(), "query clears first");
+        assert_eq!(p.nav(NavKey::Esc, &s), None);
+        assert!(p.source.is_none(), "filter clears second");
         assert_eq!(p.nav(NavKey::Esc, &s), Some(PanelAction::Close));
+    }
+
+    fn store_with_sources() -> ClipStore {
+        let mut s = ClipStore::default();
+        s.add_copy("alpha".into(), Some("Chrome".into()));
+        s.add_copy("beta".into(), Some("Code".into()));
+        s.add_copy("gamma".into(), None);
+        s.add_copy("delta".into(), Some("Chrome".into()));
+        s
+    }
+
+    #[test]
+    fn source_filter_cycles_and_filters_rows() {
+        let s = store_with_sources();
+        let mut p = Panel { open: true, ..Default::default() };
+        assert_eq!(p.visible(&s).len(), 4);
+        // most recent source first: Chrome, then Code, then back to all
+        p.cycle_source(&s);
+        assert_eq!(p.source.as_deref(), Some("Chrome"));
+        assert_eq!(p.visible(&s).len(), 2);
+        p.cycle_source(&s);
+        assert_eq!(p.source.as_deref(), Some("Code"));
+        assert_eq!(p.visible(&s).len(), 1);
+        p.cycle_source(&s);
+        assert_eq!(p.source, None);
+        assert_eq!(p.visible(&s).len(), 4);
+    }
+
+    #[test]
+    fn filter_button_and_tab_cycle_the_source() {
+        let s = store_with_sources();
+        let mut p = Panel { open: true, ..Default::default() };
+        assert_eq!(p.click(BTN_FILTER_X + 8.0, BTN_Y + 8.0, &s), None);
+        assert_eq!(p.source.as_deref(), Some("Chrome"));
+        assert_eq!(p.nav(NavKey::Tab, &s), None);
+        assert_eq!(p.source.as_deref(), Some("Code"));
+        // enter copies from the *filtered* list
+        let act = p.nav(NavKey::Enter, &s);
+        let code_id = s.visible_filtered("", Some("Code"))[0].id;
+        assert_eq!(act, Some(PanelAction::Copy(code_id)));
+        // reopening the panel clears the filter
+        p.toggle();
+        p.toggle();
+        assert_eq!(p.source, None);
     }
 
     #[test]

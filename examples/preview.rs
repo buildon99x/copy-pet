@@ -61,10 +61,35 @@ fn main() {
         save(&pm, &dir, "1-hangul");
     }
 
+    // 1b. system font (panel/toast text) vs the pixel font, same sizes
+    {
+        let mut pm = Pixmap::new(560, 200).unwrap();
+        pm.fill(tiny_skia::Color::WHITE);
+        let ts = tiny_skia::Transform::identity();
+        let black = (40, 40, 40, 255);
+        println!(
+            "system font available: {}",
+            clipcat::sysfont::available()
+        );
+        clipcat::sysfont::draw(&mut pm, "System font: panel rows, toast, search", 10.0, 10.0, 1.6, black, ts);
+        clipcat::sysfont::draw(&mut pm, "시스템 폰트 한글 테스트 — 클립보드 히스토리", 10.0, 34.0, 1.6, black, ts);
+        clipcat::sysfont::draw(&mut pm, "The quick brown fox 0123456789 ?!@#$%&", 10.0, 58.0, 2.0, black, ts);
+        clipcat::sysfont::draw(&mut pm, "meta line size", 10.0, 86.0, 1.2, black, ts);
+        clipcat::font::draw(&mut pm, "pixel font for comparison (tooltip keeps this)", 10.0, 104.0, 1.6, black, ts);
+        let cut = clipcat::sysfont::truncate_to_width(
+            "truncation test: this line is far too long to fit into 200 units of width",
+            1.6,
+            200.0,
+        );
+        clipcat::sysfont::draw(&mut pm, &cut, 10.0, 128.0, 1.6, black, ts);
+        save(&pm, &dir, "1b-sysfont");
+    }
+
     // 2. cat with fish mid-flight (letter badge), mouth opening
     {
         let badge = Badge::from_source(Some("Code"));
         let mut sc = base_scene(Lang::Ko);
+        sc.toast = Some(("복사됨! COPIED!", 1.0));
         sc.mouth_open = 0.7;
         sc.fish = Some(FishView {
             x: 165.0,
@@ -110,12 +135,14 @@ fn main() {
             store.toggle_pin(id);
         }
 
-        for (lang, capture, name) in [
-            (Lang::Ko, true, "4-panel-ko"),
-            (Lang::En, false, "4-panel-en-paused"),
+        for (lang, capture, source, name) in [
+            (Lang::Ko, true, None, "4-panel-ko"),
+            (Lang::En, false, None, "4-panel-en-paused"),
+            (Lang::Ko, true, Some("Code"), "4-panel-ko-filtered"),
         ] {
             let mut panel = Panel::default();
             panel.toggle();
+            panel.source = source.map(str::to_string);
             panel.sel = 1;
             panel.cursor = Some((150.0, panel::ROWS_Y + panel::ROW_H * 2.5));
             let mut sc = base_scene(lang);
@@ -127,7 +154,7 @@ fn main() {
                 store: &store,
                 lang,
                 capture,
-                hint: "CTRL+SHIFT+V",
+                hint: "WIN+SHIFT+V",
                 caret: true,
             };
             render::draw_panel(&mut pm, &view, 1.0);

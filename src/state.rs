@@ -25,6 +25,9 @@ pub struct Persist {
     pub lang: String,
     /// When false, copy events are ignored (privacy pause).
     pub clip_capture: bool,
+    /// Global panel hotkey spec, e.g. "win+shift+v" (see [`crate::hotkey`]).
+    /// Editable in state.json; invalid values reset to the default on load.
+    pub hotkey: String,
     // lifetime
     pub total_keys: u64,
     pub total_clicks: u64,
@@ -51,6 +54,7 @@ impl Default for Persist {
             locked: false,
             lang: String::new(),
             clip_capture: true,
+            hotkey: crate::hotkey::DEFAULT.to_string(),
             total_keys: 0,
             total_clicks: 0,
             total_copies: 0,
@@ -128,6 +132,9 @@ impl Persist {
         }
         if Lang::from_code(&st.lang).is_none() {
             st.lang = detect_lang().code().to_string();
+        }
+        if crate::hotkey::Hotkey::parse(&st.hotkey).is_none() {
+            st.hotkey = crate::hotkey::DEFAULT.to_string();
         }
         st
     }
@@ -321,5 +328,6 @@ mod tests {
         assert!(st.clip_capture, "clip capture defaults on");
         assert_eq!(st.total_copies, 0);
         assert!(st.lang.is_empty());
+        assert_eq!(st.hotkey, crate::hotkey::DEFAULT, "hotkey defaults in");
     }
 }

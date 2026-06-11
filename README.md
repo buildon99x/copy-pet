@@ -20,11 +20,18 @@ Windows; a portable build sharing the same core on macOS/Linux.
 - **The fish** 🐟 — each copy sends a fish flying into the cat's mouth, tinted
   and badged with the source app (its real icon on Windows, an initial
   elsewhere). Copying feeds the cat: +5 XP per clip.
-- **Panel** — `Ctrl+Shift+V` (Windows), middle-click, or the tray/`C` key
-  opens the history: type to search (Korean included), click to copy back,
-  ★ to pin, ✕ to delete, 🗑 to clear, ⏸ to pause capture (privacy pause).
-- **English + Korean** — full UI in both, switchable at runtime; Hangul is
-  rendered by an in-code vector font (no font files).
+- **Panel** — `Win+Shift+V` on Windows (configurable; auto-falls back to
+  `Ctrl+Shift+V` if taken), `Cmd+Shift+V` on macOS, `Super+Shift+V` on
+  Linux — or middle-click / the tray / `C`. Type to search (Korean
+  included), click to copy back, ★ to pin, ✕ to delete, 🗑 to clear,
+  ⏸ to pause capture (privacy pause).
+- **Filter by app** — the funnel button (or `Tab`) cycles through the apps
+  you copied from; the active app shows as a chip in the search box and
+  combines with the text search.
+- **English + Korean** — full UI in both, switchable at runtime. The panel
+  and toasts render in your **system font** (Segoe UI / Malgun Gothic on
+  Windows — read from the OS, never bundled); the cat's own tooltip keeps
+  its pixel font, with in-code vector Hangul as the universal fallback.
 - **Bongo-cat core loop** — global input *counts* drive paw taps, XP and
   levels: 2 XP/key, 1 XP/click & scroll, 5 XP/copy. Level-ups unlock
   accessories (scarf, glasses, beanie, headphones, crown, wizard hat).
@@ -39,10 +46,11 @@ Windows; a portable build sharing the same core on macOS/Linux.
 | Gesture | Effect |
 |---------|--------|
 | Copy anywhere (Ctrl+C) | Cat eats a fish; clip saved to history |
-| `Ctrl+Shift+V` (Windows) / middle-click | Toggle the clipboard panel |
+| `Win+Shift+V` (`Cmd+Shift+V` on macOS) / middle-click | Toggle the clipboard panel |
 | Click a clip row | Copy it back to the clipboard |
 | Star / ✕ on a row | Pin / delete the clip |
-| Type while panel is open | Search (arrows + Enter work too; Esc closes) |
+| Funnel button / `Tab` (panel open) | Cycle the source-app filter |
+| Type while panel is open | Search (arrows + Enter work too; Esc clears query → filter → closes) |
 | Drag | Move the pet (unless position-locked) |
 | Click | Boop (squash bounce, +1 XP) |
 | Double-click | Pet it (+10 XP, hearts) |
@@ -52,7 +60,8 @@ Windows; a portable build sharing the same core on macOS/Linux.
 
 ### Portable build (macOS / Linux) keyboard shortcuts
 
-With the window focused (and the panel closed):
+Global (works everywhere): `Cmd+Shift+V` (macOS) / `Super+Shift+V` (Linux)
+toggles the clipboard panel. With the window focused (and the panel closed):
 `C` clipboard panel · `S` size · `A` accessory · `M` sound · `B` stats bubble ·
 `L` lock · `G` language · `Q`/`Esc` quit.
 
@@ -63,7 +72,7 @@ With the window focused (and the panel closed):
 | Window | fully transparent, click-through | opaque "card" (softbuffer has no per-pixel alpha) |
 | Clipboard watch | `WM_CLIPBOARDUPDATE` listener | `arboard` polling (~0.4 s) |
 | Fish badge | real app icon | colored initial |
-| Panel hotkey | global `Ctrl+Shift+V` | `C` / middle-click (window-local) |
+| Panel hotkey | global `Win+Shift+V` (configurable, `Ctrl+Shift+V` fallback) | `C` / middle-click (window-local) |
 | Settings UI | tray menu | keyboard shortcuts |
 | Sound | winmm synth | (silent in v2) |
 | Global input | `WH_*_LL` hooks | `rdev` (macOS needs Accessibility; X11 only on Linux) |
@@ -110,7 +119,10 @@ Everything stays on your machine — **there is no network code in the binary**.
   `i18n`) + two backends: native Win32 (layered window, tray, clipboard
   listener) and portable (`winit` + `softbuffer` + `rdev` + `arboard`).
 - Icon, sounds, ASCII font **and the Korean vector font** are all generated
-  from code — no bundled assets, single binary.
+  from code — no bundled assets, single binary. The panel/toast UI font is
+  the OS's own (loaded at runtime via `ab_glyph`, ADR-0007).
+- User-facing changes are tracked in [CHANGELOG.md](CHANGELOG.md); releases
+  are cut with `scripts/release.sh`.
 
 ---
 
@@ -127,11 +139,17 @@ Everything stays on your machine — **there is no network code in the binary**.
   (히스토리 100개 + 만료되지 않는 고정 클립).
 - **생선** 🐟 — 복사할 때마다 출처 앱의 아이콘(Windows) 또는 이니셜 뱃지가
   붙은 생선이 고양이 입으로 날아갑니다. 복사 1회 = +5 XP.
-- **패널** — `Ctrl+Shift+V`(Windows), 휠클릭, 트레이 메뉴 또는 `C` 키로 열기:
+- **패널** — `Win+Shift+V`(Windows 기본, 변경 가능 — 다른 앱이 선점하면
+  `Ctrl+Shift+V`로 자동 대체), 휠클릭, 트레이 메뉴 또는 `C` 키로 열기:
   타이핑으로 검색(한글 지원), 클릭으로 재복사, ★ 고정, ✕ 삭제, 🗑 비우기,
   ⏸ 수집 일시정지(프라이버시 모드).
-- **영어 + 한국어** — 런타임에 전환 가능한 완전한 양국어 UI. 한글은 폰트
-  파일 없이 코드로 생성한 벡터 폰트로 렌더링합니다.
+- **출처 앱 필터** — 깔때기 버튼(또는 `Tab`)으로 복사해 온 앱별로 클립을
+  걸러 봅니다. 활성 필터는 검색창의 칩으로 표시되고 텍스트 검색과 함께
+  적용됩니다.
+- **영어 + 한국어** — 런타임에 전환 가능한 완전한 양국어 UI. 패널과 토스트는
+  **시스템 폰트**(Windows: 맑은 고딕/Segoe UI — OS에서 읽어 오며 번들하지
+  않음)로 렌더링하고, 고양이 툴팁(통계 말풍선)은 픽셀 폰트를 유지합니다.
+  한글 벡터 폰트는 폰트가 없는 환경의 폴백으로 계속 내장됩니다.
 - **봉고캣 코어 루프** — 키 1회 = 2 XP, 클릭/스크롤 = 1 XP, 복사 = 5 XP.
   레벨업하면 액세서리가 잠금해제됩니다 (목도리·안경·비니·헤드폰·왕관·마법사 모자).
 - **오늘의 통계** — 마우스를 올리면 키 입력 / 클릭 / 복사 / 활동 시간 표시.
@@ -145,10 +163,11 @@ Everything stays on your machine — **there is no network code in the binary**.
 | 동작 | 효과 |
 |------|------|
 | 어디서든 복사 (Ctrl+C) | 고양이가 생선을 먹고 클립 저장 |
-| `Ctrl+Shift+V` (Windows) / 휠클릭 | 클립보드 패널 열기/닫기 |
+| `Win+Shift+V` (Windows) / 휠클릭 | 클립보드 패널 열기/닫기 |
 | 클립 행 클릭 | 클립보드로 재복사 |
 | 행의 별 / ✕ | 고정 / 삭제 |
-| 패널 열고 타이핑 | 검색 (방향키 + Enter, Esc로 닫기) |
+| 깔때기 버튼 / `Tab` (패널 열림) | 출처 앱 필터 순환 |
+| 패널 열고 타이핑 | 검색 (방향키 + Enter, Esc는 검색어 → 필터 → 닫기 순서로 해제) |
 | 드래그 | 위치 이동 (잠금 시 제외) |
 | 클릭 | 콩— (+1 XP) |
 | 더블클릭 | 쓰다듬기 (+10 XP, 하트) |

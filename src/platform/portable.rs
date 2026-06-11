@@ -8,12 +8,21 @@
 //! the fully transparent, click-through look). See ADR-0001 / ADR-0003.
 //!
 //! Interactions: drag to move, double-click to pet, single-click to bounce,
-//! middle-click to toggle the clipboard panel, hover to show today's stats.
-//! Settings have no system tray here; when the window is focused these keys
-//! apply: S size · A accessory · M sound · B stats bubble · L lock ·
-//! G language · C clipboard panel · Q/Esc quit. While the panel is open the
-//! keyboard drives it instead (type to search, arrows/enter, Esc closes).
+//! middle-click to toggle the clipboard panel, hover to show today's stats,
+//! and the global panel hotkey (Cmd+Shift+V on macOS, Super+Shift+V on
+//! Linux by default — the configured `win` modifier maps to the OS super
+//! key). Settings have no system tray here; when the window is focused
+//! these keys apply: S size · A accessory · M sound · B stats bubble ·
+//! L lock · G language · C clipboard panel · Q/Esc quit. While the panel is
+//! open the keyboard drives it instead (type to search, arrows/enter, Tab
+//! cycles the source-app filter, Esc closes).
+//!
+//! Privacy note (ADR-0008): the rdev listener increments the activity
+//! counters and additionally compares each key event against the one
+//! configured hotkey chord, in memory, discarding it immediately — key
+//! identities are never stored, logged, buffered or transmitted.
 
+use crate::hotkey::Hotkey;
 use crate::input;
 use crate::panel::NavKey;
 use crate::pet::Pet;
@@ -56,6 +65,8 @@ struct PortableApp {
     /// Mirror of `st.clip_capture` for the watcher thread: while false the
     /// clipboard is not even read.
     capture_flag: Arc<AtomicBool>,
+    /// Raised by the global-input thread when the panel hotkey chord fires.
+    panel_toggle: Arc<AtomicBool>,
     // interaction
     cursor: PhysicalPosition<f64>,
     mouse_down: bool,
@@ -71,6 +82,7 @@ impl PortableApp {
         clip_rx: Receiver<String>,
         suppress: Suppress,
         capture_flag: Arc<AtomicBool>,
+        panel_toggle: Arc<AtomicBool>,
     ) -> Self {
         let (w, h) = pet.canvas_size();
         PortableApp {
@@ -85,6 +97,7 @@ impl PortableApp {
             clip_rx,
             suppress,
             capture_flag,
+            panel_toggle,
             cursor: PhysicalPosition::new(0.0, 0.0),
             mouse_down: false,
             dragging: false,
@@ -224,6 +237,7 @@ impl PortableApp {
             PhysicalKey::Code(KeyCode::Delete) => Some(NavKey::Delete),
             PhysicalKey::Code(KeyCode::Backspace) => Some(NavKey::Backspace),
             PhysicalKey::Code(KeyCode::Escape) => Some(NavKey::Esc),
+            PhysicalKey::Code(KeyCode::Tab) => Some(NavKey::Tab), // source filter
             _ => None,
         };
         if let Some(key) = nav {
@@ -404,6 +418,10 @@ impl ApplicationHandler for PortableApp {
         let now = Instant::now();
         if now.duration_since(self.last_frame) >= TICK {
             self.last_frame = now;
+            // the global panel hotkey fired on the input thread
+            if self.panel_toggle.swap(false, Ordering::Relaxed) {
+                self.pet.toggle_panel();
+            }
             // copy events observed by the clipboard watcher
             self.capture_flag
                 .store(self.pet.st.clip_capture, Ordering::Relaxed);
@@ -429,15 +447,95 @@ impl ApplicationHandler for PortableApp {
     }
 }
 
-/// Spawns the `rdev` global input listener. Increments the shared counters on
-/// every key/button/wheel event system-wide; reads no key contents.
-fn spawn_global_input() {
-    std::thread::spawn(|| {
-        let _ = rdev::listen(|event| match event.event_type {
-            rdev::EventType::KeyPress(_) => input::key(),
-            rdev::EventType::ButtonPress(_) => input::click(),
-            rdev::EventType::Wheel { .. } => input::wheel(),
+/// The rdev key the configured hotkey letter/digit corresponds to.
+fn rdev_key_of(c: char) -> Option<rdev::Key> {
+    use rdev::Key::*;
+    Some(match c {
+        'A' => KeyA, 'B' => KeyB, 'C' => KeyC, 'D' => KeyD, 'E' => KeyE,
+        'F' => KeyF, 'G' => KeyG, 'H' => KeyH, 'I' => KeyI, 'J' => KeyJ,
+        'K' => KeyK, 'L' => KeyL, 'M' => KeyM, 'N' => KeyN, 'O' => KeyO,
+        'P' => KeyP, 'Q' => KeyQ, 'R' => KeyR, 'S' => KeyS, 'T' => KeyT,
+        'U' => KeyU, 'V' => KeyV, 'W' => KeyW, 'X' => KeyX, 'Y' => KeyY,
+        'Z' => KeyZ,
+        '0' => Num0, '1' => Num1, '2' => Num2, '3' => Num3, '4' => Num4,
+        '5' => Num5, '6' => Num6, '7' => Num7, '8' => Num8, '9' => Num9,
+        _ => return None,
+    })
+}
+
+/// Matches the global key stream against one configured chord. Holds only
+/// five booleans of state (the four modifiers + main-key-down for repeat
+/// suppression); key identities are compared and immediately discarded —
+/// never stored, logged or transmitted (ADR-0008).
+struct ChordTracker {
+    hk: Hotkey,
+    main: Option<rdev::Key>,
+    ctrl: bool,
+    shift: bool,
+    alt: bool,
+    meta: bool,
+    main_down: bool,
+}
+
+impl ChordTracker {
+    fn new(hk: Hotkey) -> ChordTracker {
+        ChordTracker {
+            main: rdev_key_of(hk.key),
+            hk,
+            ctrl: false,
+            shift: false,
+            alt: false,
+            meta: false,
+            main_down: false,
+        }
+    }
+
+    /// Feeds one global key event; true when the chord fired (on the initial
+    /// press only — OS auto-repeat while held does not re-fire).
+    fn on_event(&mut self, event: &rdev::EventType) -> bool {
+        use rdev::Key::*;
+        let (key, down) = match event {
+            rdev::EventType::KeyPress(k) => (k, true),
+            rdev::EventType::KeyRelease(k) => (k, false),
+            _ => return false,
+        };
+        match key {
+            ControlLeft | ControlRight => self.ctrl = down,
+            ShiftLeft | ShiftRight => self.shift = down,
+            Alt | AltGr => self.alt = down,
+            MetaLeft | MetaRight => self.meta = down,
+            k if Some(*k) == self.main => {
+                let fresh = down && !self.main_down;
+                self.main_down = down;
+                return fresh
+                    && self.meta == self.hk.win
+                    && self.ctrl == self.hk.ctrl
+                    && self.shift == self.hk.shift
+                    && self.alt == self.hk.alt;
+            }
             _ => {}
+        }
+        false
+    }
+}
+
+/// Spawns the `rdev` global input listener: increments the shared counters
+/// on every key/button/wheel event system-wide and raises `panel_toggle`
+/// when the configured panel chord is pressed (see [`ChordTracker`] for the
+/// privacy boundary).
+fn spawn_global_input(hk: Hotkey, panel_toggle: Arc<AtomicBool>) {
+    std::thread::spawn(move || {
+        let mut chord = ChordTracker::new(hk);
+        let _ = rdev::listen(move |event| {
+            match event.event_type {
+                rdev::EventType::KeyPress(_) => input::key(),
+                rdev::EventType::ButtonPress(_) => input::click(),
+                rdev::EventType::Wheel { .. } => input::wheel(),
+                _ => {}
+            }
+            if chord.on_event(&event.event_type) {
+                panel_toggle.store(true, Ordering::Relaxed);
+            }
         });
     });
 }
@@ -486,7 +584,6 @@ fn spawn_clipboard_watcher(tx: Sender<String>, suppress: Suppress, capture: Arc<
 
 pub fn run() {
     crate::sound::init();
-    spawn_global_input();
 
     let (tx, rx) = std::sync::mpsc::channel();
     let suppress: Suppress = Arc::new(Mutex::new(None));
@@ -494,9 +591,13 @@ pub fn run() {
     let capture_flag = Arc::new(AtomicBool::new(st.clip_capture));
     spawn_clipboard_watcher(tx, suppress.clone(), capture_flag.clone());
 
+    let hk = Hotkey::from_spec(&st.hotkey);
+    let panel_toggle = Arc::new(AtomicBool::new(false));
+    spawn_global_input(hk, panel_toggle.clone());
+
     let mut pet = Pet::new(st);
-    pet.set_panel_hint("C / ESC");
-    let mut app = PortableApp::new(pet, rx, suppress, capture_flag);
+    pet.set_panel_hint(format!("{} / C", hk.display()));
+    let mut app = PortableApp::new(pet, rx, suppress, capture_flag, panel_toggle);
 
     let event_loop = match EventLoop::new() {
         Ok(el) => el,
@@ -504,4 +605,65 @@ pub fn run() {
     };
     event_loop.set_control_flow(ControlFlow::WaitUntil(Instant::now() + TICK));
     let _ = event_loop.run_app(&mut app);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rdev::EventType::{KeyPress, KeyRelease};
+    use rdev::Key;
+
+    fn tracker(spec: &str) -> ChordTracker {
+        ChordTracker::new(Hotkey::from_spec(spec))
+    }
+
+    #[test]
+    fn fires_on_exact_chord_only() {
+        let mut t = tracker("win+shift+v"); // = Cmd+Shift+V on macOS
+        assert!(!t.on_event(&KeyPress(Key::MetaLeft)));
+        assert!(!t.on_event(&KeyPress(Key::ShiftLeft)));
+        assert!(t.on_event(&KeyPress(Key::KeyV)), "chord complete");
+        // wrong modifiers never fire: Ctrl+Shift+V is a different chord
+        let mut t = tracker("win+shift+v");
+        t.on_event(&KeyPress(Key::ControlLeft));
+        t.on_event(&KeyPress(Key::ShiftLeft));
+        assert!(!t.on_event(&KeyPress(Key::KeyV)));
+        // extra modifier on top of the chord also blocks it
+        let mut t = tracker("win+shift+v");
+        t.on_event(&KeyPress(Key::MetaLeft));
+        t.on_event(&KeyPress(Key::ShiftLeft));
+        t.on_event(&KeyPress(Key::ControlLeft));
+        assert!(!t.on_event(&KeyPress(Key::KeyV)));
+    }
+
+    #[test]
+    fn auto_repeat_fires_once_until_released() {
+        let mut t = tracker("win+shift+v");
+        t.on_event(&KeyPress(Key::MetaRight));
+        t.on_event(&KeyPress(Key::ShiftRight));
+        assert!(t.on_event(&KeyPress(Key::KeyV)));
+        assert!(!t.on_event(&KeyPress(Key::KeyV)), "OS auto-repeat");
+        assert!(!t.on_event(&KeyRelease(Key::KeyV)));
+        assert!(t.on_event(&KeyPress(Key::KeyV)), "re-press fires again");
+    }
+
+    #[test]
+    fn releasing_a_modifier_disarms() {
+        let mut t = tracker("ctrl+alt+9");
+        t.on_event(&KeyPress(Key::ControlLeft));
+        t.on_event(&KeyPress(Key::Alt));
+        t.on_event(&KeyRelease(Key::Alt));
+        assert!(!t.on_event(&KeyPress(Key::Num9)));
+        t.on_event(&KeyPress(Key::AltGr)); // right alt counts too
+        t.on_event(&KeyRelease(Key::Num9));
+        assert!(t.on_event(&KeyPress(Key::Num9)));
+    }
+
+    #[test]
+    fn plain_key_without_modifiers_never_fires() {
+        let mut t = tracker("win+shift+v");
+        assert!(!t.on_event(&KeyPress(Key::KeyV)));
+        // and non-key events are ignored entirely
+        assert!(!t.on_event(&rdev::EventType::Wheel { delta_x: 0, delta_y: 1 }));
+    }
 }

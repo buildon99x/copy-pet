@@ -38,7 +38,6 @@ impl Lang {
 pub enum Msg {
     // tray menu (native backend)
     MenuShowStats,
-    MenuClipboard,
     MenuCapturePause,
     MenuSize,
     SizeSmall,
@@ -79,8 +78,6 @@ pub fn t(lang: Lang, msg: Msg) -> &'static str {
     match (msg, lang) {
         (MenuShowStats, Lang::En) => "Always show stats",
         (MenuShowStats, Lang::Ko) => "통계 항상 표시",
-        (MenuClipboard, Lang::En) => "Clipboard history\tCtrl+Shift+V",
-        (MenuClipboard, Lang::Ko) => "클립보드 히스토리\tCtrl+Shift+V",
         (MenuCapturePause, Lang::En) => "Pause clip capture",
         (MenuCapturePause, Lang::Ko) => "클립 수집 일시정지",
         (MenuSize, Lang::En) => "Size",
@@ -149,6 +146,15 @@ pub fn t(lang: Lang, msg: Msg) -> &'static str {
 
 // ---- formatted strings ------------------------------------------------------
 
+/// Tray-menu entry for the clipboard panel, with the live hotkey label
+/// (e.g. "WIN+SHIFT+V") as the Windows menu accelerator column.
+pub fn menu_clipboard(lang: Lang, hotkey: &str) -> String {
+    match lang {
+        Lang::En => format!("Clipboard history\t{hotkey}"),
+        Lang::Ko => format!("클립보드 히스토리\t{hotkey}"),
+    }
+}
+
 pub fn level_up(lang: Lang, lv: u32) -> String {
     match lang {
         Lang::En => format!("LEVEL UP! LV {lv}"),
@@ -205,21 +211,28 @@ pub fn time_ago(lang: Lang, secs: u64) -> String {
     }
 }
 
-/// Body of the native About dialog.
-pub fn about_text(lang: Lang, version: &str, lv: u32, keys: u64, clips: usize) -> String {
+/// Body of the native About dialog. `hotkey` is the live panel hotkey label.
+pub fn about_text(
+    lang: Lang,
+    version: &str,
+    hotkey: &str,
+    lv: u32,
+    keys: u64,
+    clips: usize,
+) -> String {
     match lang {
         Lang::En => format!(
             "ClipCat v{version}\n\nA desktop cat that manages your clipboard \
              and grows with your typing.\n\nLevel: LV {lv}\nLifetime keys: {keys}\nStored \
              clips: {clips}\n\n- Copy anywhere: the cat eats a fish and saves the clip\n\
-             - Ctrl+Shift+V or middle-click: clipboard history\n- Click a clip: copy it \
+             - {hotkey} or middle-click: clipboard history\n- Click a clip: copy it \
              back\n- Type/click: the cat taps along and earns XP\n- Double-click: pet the \
              cat\n\nEverything stays on this PC. No network, ever."
         ),
         Lang::Ko => format!(
             "ClipCat v{version}\n\n클립보드를 관리하고 타이핑과 함께 자라는 데스크탑 \
              고양이.\n\n현재 레벨: LV {lv}\n누적 키 입력: {keys}\n저장된 클립: {clips}개\n\n\
-             - 어디서든 복사 → 고양이가 생선을 먹고 클립을 저장\n- Ctrl+Shift+V 또는 \
+             - 어디서든 복사 → 고양이가 생선을 먹고 클립을 저장\n- {hotkey} 또는 \
              휠클릭 → 클립보드 히스토리\n- 클립 클릭 → 다시 복사\n- 타이핑/클릭 → \
              고양이가 따라 치고 XP 획득\n- 더블클릭 → 쓰다듬기\n\n모든 데이터는 이 PC에만 \
              저장됩니다. 네트워크 통신은 없습니다."
@@ -243,7 +256,7 @@ mod tests {
     fn every_message_has_both_translations() {
         use Msg::*;
         let all = [
-            MenuShowStats, MenuClipboard, MenuCapturePause, MenuSize, SizeSmall, SizeNormal,
+            MenuShowStats, MenuCapturePause, MenuSize, SizeSmall, SizeNormal,
             SizeLarge, MenuAccessory, AccNone, MenuSound, SoundOff, SoundEvents, SoundAll,
             MenuLock, MenuLanguage, MenuAutostart, MenuReset, MenuAbout, MenuExit, ResetTitle,
             ResetConfirm, PanelTitle, SearchHint, PanelEmpty, PanelNoMatch, ToastCopied,
@@ -253,6 +266,10 @@ mod tests {
         for msg in all {
             assert!(!t(Lang::En, msg).is_empty());
             assert!(!t(Lang::Ko, msg).is_empty());
+        }
+        for lang in [Lang::En, Lang::Ko] {
+            assert!(menu_clipboard(lang, "WIN+SHIFT+V").contains("WIN+SHIFT+V"));
+            assert!(about_text(lang, "2.1.0", "WIN+SHIFT+V", 3, 10, 4).contains("WIN+SHIFT+V"));
         }
     }
 
