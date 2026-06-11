@@ -15,10 +15,13 @@ portable backend.
 ## Golden rules
 
 1. **Privacy is non-negotiable.** Global *input* hooks may only increment the
-   atomic counters in `src/input.rs` — never read, store, log or transmit key
-   contents, window titles or timings. Clipboard *content* is the product, but
-   it stays local: stored only in the user's config dir, capture can always be
-   paused, and there is **no network code — keep it that way**.
+   atomic counters in `src/input.rs`, with exactly one sanctioned exception:
+   the portable backend's `ChordTracker` compares each key event against the
+   user's configured panel-hotkey chord and immediately discards it
+   (ADR-0008) — beyond that, never read, store, log or transmit key
+   contents, window titles or timings. Clipboard *content* is the product,
+   but it stays local: stored only in the user's config dir, capture can
+   always be paused, and there is **no network code — keep it that way**.
 2. **Keep the core platform-agnostic.** Simulation, clipboard store, panel
    logic, rendering, i18n, progression and persistence live in the core and
    must not reference any OS API (tiny per-OS leaves like `state::today_string`
@@ -89,7 +92,8 @@ Two backends share one core; exactly one backend compiles per build, chosen in
   Win+Shift+V, configurable via `state.json`, Ctrl+Shift+V fallback on
   clash), Shell tray with full context menu, HKCU autostart.
 - `any(not(windows), feature = "portable"))` → **portable**: `winit` window +
-  `softbuffer` present + `rdev` global input + `arboard` clipboard polling.
+  `softbuffer` present + `rdev` global input (counters + the panel-hotkey
+  chord matcher; Cmd+Shift+V on macOS) + `arboard` clipboard polling.
   Pet drawn on an opaque card; settings via keyboard shortcuts.
 
 The core flow: a ~33 ms tick drains `input` counters and pending copy events →

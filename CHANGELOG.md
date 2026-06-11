@@ -17,6 +17,10 @@ versions follow [SemVer](https://semver.org/). Maintenance rules:
 ## [Unreleased]
 
 ### Added
+- The clipboard-panel hotkey now also works globally on macOS and Linux:
+  **Cmd+Shift+V** on macOS, Super+Shift+V on Linux (the `win` modifier in
+  the configurable spec maps to the OS's super key). macOS needs the same
+  Accessibility permission the cat already uses; on Linux it requires X11.
 - Clipboard history can now be filtered by the app a clip was copied from:
   a funnel button in the panel header (or the Tab key) cycles through the
   source apps, the active filter shows as a chip in the search box, and Esc

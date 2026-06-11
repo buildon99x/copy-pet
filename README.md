@@ -20,10 +20,11 @@ Windows; a portable build sharing the same core on macOS/Linux.
 - **The fish** 🐟 — each copy sends a fish flying into the cat's mouth, tinted
   and badged with the source app (its real icon on Windows, an initial
   elsewhere). Copying feeds the cat: +5 XP per clip.
-- **Panel** — `Win+Shift+V` (Windows, configurable; auto-falls back to
-  `Ctrl+Shift+V` if taken), middle-click, or the tray/`C` key opens the
-  history: type to search (Korean included), click to copy back, ★ to pin,
-  ✕ to delete, 🗑 to clear, ⏸ to pause capture (privacy pause).
+- **Panel** — `Win+Shift+V` on Windows (configurable; auto-falls back to
+  `Ctrl+Shift+V` if taken), `Cmd+Shift+V` on macOS, `Super+Shift+V` on
+  Linux — or middle-click / the tray / `C`. Type to search (Korean
+  included), click to copy back, ★ to pin, ✕ to delete, 🗑 to clear,
+  ⏸ to pause capture (privacy pause).
 - **Filter by app** — the funnel button (or `Tab`) cycles through the apps
   you copied from; the active app shows as a chip in the search box and
   combines with the text search.
@@ -45,7 +46,7 @@ Windows; a portable build sharing the same core on macOS/Linux.
 | Gesture | Effect |
 |---------|--------|
 | Copy anywhere (Ctrl+C) | Cat eats a fish; clip saved to history |
-| `Win+Shift+V` (Windows) / middle-click | Toggle the clipboard panel |
+| `Win+Shift+V` (`Cmd+Shift+V` on macOS) / middle-click | Toggle the clipboard panel |
 | Click a clip row | Copy it back to the clipboard |
 | Star / ✕ on a row | Pin / delete the clip |
 | Funnel button / `Tab` (panel open) | Cycle the source-app filter |
@@ -59,7 +60,8 @@ Windows; a portable build sharing the same core on macOS/Linux.
 
 ### Portable build (macOS / Linux) keyboard shortcuts
 
-With the window focused (and the panel closed):
+Global (works everywhere): `Cmd+Shift+V` (macOS) / `Super+Shift+V` (Linux)
+toggles the clipboard panel. With the window focused (and the panel closed):
 `C` clipboard panel · `S` size · `A` accessory · `M` sound · `B` stats bubble ·
 `L` lock · `G` language · `Q`/`Esc` quit.
 

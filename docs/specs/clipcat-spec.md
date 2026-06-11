@@ -59,16 +59,23 @@ clips, search, hotkey), **Bongo Cat** (reactive paw-tapping mascot) and
   timestamp of last copy.
 
 ### Panel (UI)
-- Opens via: a global hotkey (Windows native, `RegisterHotKey`) —
-  **Win+Shift+V** by default, configurable as the `hotkey` spec string in
-  `state.json` (`hotkey.rs` parses `"win+shift+v"`-style values; invalid
-  values reset to the default on load). If registration clashes with
-  another app the backend falls back to **Ctrl+Shift+V**; the panel footer,
-  tray menu and About dialog always show the combination that actually
-  registered. Also: middle-click on the cat (both backends), tray menu
-  (Windows), `C` key (portable — no *global* hotkey there: the rdev
-  listener may only count events, never inspect keys). The window grows
-  upward (324×426 canvas at scale 1.0); the cat stays at the bottom.
+- Opens via a global hotkey on all OSes — **Win+Shift+V** by default, where
+  the `win` modifier is the OS super key, so it reads **Cmd+Shift+V on
+  macOS** and Super+Shift+V on Linux. Configurable as the `hotkey` spec
+  string in `state.json` (`hotkey.rs` parses `"win+shift+v"`-style values;
+  invalid values reset to the default on load).
+  - Windows (native): `RegisterHotKey`; on a clash with another app it
+    falls back to **Ctrl+Shift+V**. The panel footer, tray menu and About
+    dialog always show the combination that actually registered.
+  - macOS/Linux (portable): a `ChordTracker` on the existing rdev listener
+    matches the configured chord and toggles the panel (ADR-0008 — exact
+    modifier match, auto-repeat fires once, key identities compared and
+    immediately discarded). Needs macOS Accessibility / X11 like the
+    counters; unlike `RegisterHotKey` the chord is not reserved from the
+    focused app.
+  - Also: middle-click on the cat (both backends), tray menu (Windows),
+    `C` key with the window focused (portable). The window grows upward
+    (324×426 canvas at scale 1.0); the cat stays at the bottom.
 - Contents: title row with source-filter / capture-pause / clear-unpinned /
   language / close buttons; search box (live filter over text + source,
   Korean supported — IME input works on both backends); 6 visible rows
@@ -174,8 +181,11 @@ migrated automatically on first run.
 
 ## 9. Privacy
 
-Input hooks only increment three atomic counters (`input::{KEYS,CLICKS,
-WHEEL}`); no keycodes, characters, window titles or timings are stored.
+Input hooks increment three atomic counters (`input::{KEYS,CLICKS,WHEEL}`)
+and — on the portable backend — additionally compare each key event against
+the one configured panel-hotkey chord, discarding it immediately (ADR-0008;
+Windows uses the OS's own `RegisterHotKey` instead). Beyond that, no
+keycodes, characters, window titles or timings are read or stored.
 Clipboard text is stored **locally only**, capture is pausable, oversized
 clips are ignored, and there is no network code in the binary.
 

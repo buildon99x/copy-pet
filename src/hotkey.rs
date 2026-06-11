@@ -1,14 +1,28 @@
 //! The global clipboard-panel hotkey: parsing and display formatting of the
 //! persisted spec string (e.g. `"win+shift+v"`, see [`crate::state::Persist`]).
-//! Platform-agnostic — actually registering the key combination is the
-//! backend's job (`RegisterHotKey` in `platform/windows.rs`; the portable
-//! backend has no global hotkey because its global input listener is, by the
-//! privacy rules, never allowed to inspect which key was pressed).
+//! Platform-agnostic — actually detecting the key combination is the
+//! backend's job (`RegisterHotKey` in `platform/windows.rs`; a chord matcher
+//! on the rdev listener in `platform/portable.rs`, see ADR-0008).
+//!
+//! The `win` modifier means the OS "super" key: the Windows key, ⌘ Command
+//! on macOS, Super on Linux — so the one default spec is Win+Shift+V on
+//! Windows and Cmd+Shift+V on macOS.
 
-/// Default panel hotkey: Win+Shift+V.
+/// Default panel hotkey: Win+Shift+V (Cmd+Shift+V on macOS).
 pub const DEFAULT: &str = "win+shift+v";
 /// Fallback when the default cannot be registered (clash with another app).
 pub const FALLBACK: &str = "ctrl+shift+v";
+
+/// What the `win` modifier is called on this OS (display only).
+pub fn super_name() -> &'static str {
+    if cfg!(target_os = "macos") {
+        "CMD"
+    } else if cfg!(windows) {
+        "WIN"
+    } else {
+        "SUPER"
+    }
+}
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct Hotkey {
@@ -61,11 +75,12 @@ impl Hotkey {
             .expect("DEFAULT must parse")
     }
 
-    /// Human-readable label, e.g. `"WIN+SHIFT+V"` (panel footer, tray menu).
+    /// Human-readable label (panel footer, tray menu): `"WIN+SHIFT+V"` on
+    /// Windows, `"CMD+SHIFT+V"` on macOS, `"SUPER+SHIFT+V"` on Linux.
     pub fn display(&self) -> String {
         let mut out = String::new();
         for (on, name) in [
-            (self.win, "WIN"),
+            (self.win, super_name()),
             (self.ctrl, "CTRL"),
             (self.alt, "ALT"),
             (self.shift, "SHIFT"),
@@ -85,11 +100,15 @@ mod tests {
     use super::*;
 
     #[test]
-    fn default_is_win_shift_v() {
+    fn default_is_super_shift_v() {
         let hk = Hotkey::from_spec(DEFAULT);
         assert!(hk.win && hk.shift && !hk.ctrl && !hk.alt);
         assert_eq!(hk.key, 'V');
-        assert_eq!(hk.display(), "WIN+SHIFT+V");
+        // the super key is named per OS: WIN / CMD / SUPER
+        assert_eq!(hk.display(), format!("{}+SHIFT+V", super_name()));
+        if cfg!(target_os = "macos") {
+            assert_eq!(super_name(), "CMD");
+        }
     }
 
     #[test]

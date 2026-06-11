@@ -148,7 +148,9 @@ fn hotkey_spec_lifecycle() {
     assert_eq!(st.hotkey, hotkey::DEFAULT);
     let hk = Hotkey::from_spec(&st.hotkey);
     assert!(hk.win && hk.shift && !hk.ctrl && !hk.alt);
-    assert_eq!((hk.key, hk.display().as_str()), ('V', "WIN+SHIFT+V"));
+    // the `win` modifier is the OS super key: WIN+...+V / CMD+...+V / SUPER+...+V
+    let expect = format!("{}+SHIFT+V", hotkey::super_name());
+    assert_eq!((hk.key, hk.display()), ('V', expect));
 
     // round-trips through the state.json representation
     let json = serde_json::to_string(&st).unwrap();
