@@ -1,0 +1,61 @@
+[package]
+name = "deskcat"
+version = "1.0.0"
+edition = "2021"
+description = "DeskCat - a desktop cat that types along with you and levels up"
+
+[features]
+# Force the portable (winit/softbuffer/rdev) backend even on Windows, so the
+# cross-platform path can be exercised on the dev machine. On macOS/Linux the
+# portable backend is always used and these crates are pulled in unconditionally.
+portable = ["dep:winit", "dep:softbuffer", "dep:rdev"]
+
+[dependencies]
+# Core, all platforms
+tiny-skia = "0.11"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# Portable backend — optional here (enabled by the `portable` feature on
+# Windows); always required on non-Windows via the target table below.
+winit = { version = "0.30", optional = true }
+softbuffer = { version = "0.4", optional = true }
+rdev = { version = "0.5", optional = true }
+
+# --- Windows: native Win32 backend, winmm audio, local-time, registry --------
+[target.'cfg(windows)'.dependencies.windows-sys]
+version = "0.59"
+features = [
+    "Win32_Foundation",
+    "Win32_Security",
+    "Win32_Graphics_Gdi",
+    "Win32_UI_WindowsAndMessaging",
+    "Win32_UI_Shell",
+    "Win32_UI_Input_KeyboardAndMouse",
+    "Win32_UI_HiDpi",
+    "Win32_System_LibraryLoader",
+    "Win32_System_Threading",
+    "Win32_System_Registry",
+    "Win32_System_SystemInformation",
+    "Win32_Media_Audio",
+]
+
+# --- Unix (macOS + Linux): libc for local-time (localtime_r) -----------------
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+# --- Non-Windows: portable backend is the only backend, always compiled ------
+[target.'cfg(not(windows))'.dependencies]
+winit = "0.30"
+softbuffer = "0.4"
+rdev = "0.5"
+
+# Windows resource (icon + version info) embedding only runs on Windows hosts.
+[target.'cfg(windows)'.build-dependencies]
+winresource = "0.1"
+
+[profile.release]
+opt-level = 3
+lto = true
+strip = true
+codegen-units = 1

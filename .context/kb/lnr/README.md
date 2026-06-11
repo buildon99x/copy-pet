@@ -1,0 +1,12 @@
+# Lessons & Near-misses (LNR)
+
+Short notes on trial-and-error: a symptom we hit, the real cause, the fix, and
+the takeaway. These are the things that cost time and are easy to repeat — read
+before touching the related area.
+
+| # | Lesson | Area |
+|--:|--------|------|
+| [0001](0001-softbuffer-no-alpha.md) | softbuffer can't carry per-pixel alpha → black rectangle | portable render |
+| [0002](0002-debug-vs-release-cpu.md) | Debug tiny-skia is ~10× slower; benchmark CPU on release | performance |
+| [0003](0003-rdev-winit-threading.md) | rdev runs on its own thread; macOS/Wayland caveats | portable input |
+| [0004](0004-cargo-cross-platform-deps.md) | "optional on Windows, required elsewhere" dependency layout | build/cargo |

@@ -1,0 +1,62 @@
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    name: ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest, ubuntu-latest]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      - uses: Swatinem/rust-cache@v2
+
+      # winit + softbuffer (X11/Wayland) and rdev (XRecord/XTest) system libs
+      - name: Install Linux system dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            pkg-config \
+            libxkbcommon-dev libwayland-dev \
+            libx11-dev libxi-dev libxtst-dev libxcursor-dev libxrandr-dev \
+            libxcb1-dev libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev
+
+      # Default backend: native Win32 on Windows, portable elsewhere.
+      - name: Build
+        run: cargo build --release
+
+      - name: Clippy
+        run: cargo clippy --release
+
+      - name: Test
+        run: cargo test --release
+
+      # Also exercise the portable backend on Windows so it can't bit-rot.
+      - name: Clippy (portable backend on Windows)
+        if: runner.os == 'Windows'
+        run: cargo clippy --release --features portable
+
+      - name: Upload binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: deskcat-${{ matrix.os }}
+          path: |
+            target/release/deskcat
+            target/release/deskcat.exe
+          if-no-files-found: ignore
