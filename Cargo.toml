@@ -1,14 +1,15 @@
 [package]
-name = "deskcat"
-version = "1.0.0"
+name = "clipcat"
+version = "2.0.0"
 edition = "2021"
-description = "DeskCat - a desktop cat that types along with you and levels up"
+description = "ClipCat - a desktop cat clipboard manager: every copy feeds the cat"
 
 [features]
-# Force the portable (winit/softbuffer/rdev) backend even on Windows, so the
-# cross-platform path can be exercised on the dev machine. On macOS/Linux the
-# portable backend is always used and these crates are pulled in unconditionally.
-portable = ["dep:winit", "dep:softbuffer", "dep:rdev"]
+# Force the portable (winit/softbuffer/rdev/arboard) backend even on Windows,
+# so the cross-platform path can be exercised on the dev machine. On
+# macOS/Linux the portable backend is always used and these crates are pulled
+# in unconditionally.
+portable = ["dep:winit", "dep:softbuffer", "dep:rdev", "dep:arboard"]
 
 [dependencies]
 # Core, all platforms
@@ -21,19 +22,25 @@ serde_json = "1"
 winit = { version = "0.30", optional = true }
 softbuffer = { version = "0.4", optional = true }
 rdev = { version = "0.5", optional = true }
+# Clipboard read/write for the portable backend (the native Windows backend
+# talks to the Win32 clipboard directly). Text only — see ADR-0005.
+arboard = { version = "3", optional = true, default-features = false }
 
 # --- Windows: native Win32 backend, winmm audio, local-time, registry --------
 [target.'cfg(windows)'.dependencies.windows-sys]
 version = "0.59"
 features = [
     "Win32_Foundation",
+    "Win32_Globalization",
     "Win32_Security",
     "Win32_Graphics_Gdi",
     "Win32_UI_WindowsAndMessaging",
     "Win32_UI_Shell",
     "Win32_UI_Input_KeyboardAndMouse",
     "Win32_UI_HiDpi",
+    "Win32_System_DataExchange",
     "Win32_System_LibraryLoader",
+    "Win32_System_Memory",
     "Win32_System_Threading",
     "Win32_System_Registry",
     "Win32_System_SystemInformation",
@@ -49,6 +56,7 @@ libc = "0.2"
 winit = "0.30"
 softbuffer = "0.4"
 rdev = "0.5"
+arboard = { version = "3", default-features = false }
 
 # Windows resource (icon + version info) embedding only runs on Windows hosts.
 [target.'cfg(windows)'.build-dependencies]

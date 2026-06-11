@@ -1,18 +1,31 @@
 //! The platform-agnostic pet simulation: animation state machine, particle
-//! system, XP/level progression and scene construction. Knows nothing about
-//! windows, hooks or trays — the platform backends drive it by feeding input
-//! counts, calling [`Pet::advance`] each tick and presenting [`Pet::render`].
+//! system, XP/level progression, the copy-event fish, the clipboard store +
+//! panel, and scene construction. Knows nothing about windows, hooks or
+//! trays — the platform backends drive it by feeding input counts and copy
+//! events, calling [`Pet::advance`] each tick and presenting [`Pet::render`].
 
-use crate::render::{self, Accessory, BubbleData, Particle, ParticleKind, Scene};
+use crate::clipboard::ClipStore;
+use crate::i18n::{self, t, Lang, Msg};
+use crate::panel::{self, NavKey, Panel, PanelAction};
+use crate::render::{self, Accessory, Badge, BubbleData, FishView, Particle, ParticleKind, Scene};
 use crate::sound;
 use crate::state::{level_progress, Persist, ACCESSORIES};
+use std::collections::VecDeque;
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 use tiny_skia::Pixmap;
 
 /// Selectable pet sizes (small / normal / large) as canvas multipliers.
 pub const SCALES: [f32; 3] = [0.78, 1.0, 1.3];
 
-/// Logical window size in physical pixels for a given scale.
+/// XP granted for every captured copy event.
+pub const XP_PER_COPY: u64 = 5;
+
+/// Flight time of one fish, in seconds.
+const FISH_SECS: f32 = 0.9;
+/// At most this many fish queue up during copy bursts.
+const FISH_QUEUE_MAX: usize = 3;
+
+/// Logical window size in physical pixels for a given scale (cat only).
 pub fn window_size(scale: f32) -> (i32, i32) {
     (
         (render::CANVAS_W * scale).round() as i32,
@@ -46,6 +59,8 @@ fn seed() -> u32 {
 
 pub struct Pet {
     pub st: Persist,
+    pub clips: ClipStore,
+    pub panel: Panel,
     pub dirty: bool,
     last_save: Instant,
     // timing
@@ -67,14 +82,19 @@ pub struct Pet {
     zzz_next: f32,
     toast: Option<(String, f32)>, // text, expires_at (seconds since start)
     bubble_alpha: f32,
+    // copy-event fish
+    fish: Option<(Badge, f32)>, // badge, flight progress 0..1
+    fish_queue: VecDeque<Badge>,
     // inputs from the platform
     hover: bool,
+    panel_hint: &'static str,
     // bookkeeping
     frame: u64,
     rng: u32,
     level: u32,
     last_min_bucket: u64,
     level_changed: bool,
+    size_changed: bool,
 }
 
 impl Pet {
@@ -83,6 +103,8 @@ impl Pet {
         let (level, _, _) = level_progress(st.total_xp);
         Pet {
             st,
+            clips: ClipStore::load(),
+            panel: Panel::default(),
             dirty: false,
             last_save: now,
             start: now,
@@ -102,12 +124,16 @@ impl Pet {
             zzz_next: 0.0,
             toast: None,
             bubble_alpha: 0.0,
+            fish: None,
+            fish_queue: VecDeque::new(),
             hover: false,
+            panel_hint: "",
             frame: 0,
             rng: seed(),
             level,
             last_min_bucket: 0,
             level_changed: false,
+            size_changed: false,
         }
     }
 
@@ -115,21 +141,187 @@ impl Pet {
         SCALES[self.st.scale_idx.min(2)]
     }
 
+    pub fn lang(&self) -> Lang {
+        self.st.lang()
+    }
+
     pub fn level(&self) -> u32 {
         self.level
     }
 
     pub fn tooltip(&self) -> String {
-        format!("DeskCat — LV {}", self.level)
+        format!("ClipCat — LV {}", self.level)
     }
 
     pub fn set_hover(&mut self, hover: bool) {
         self.hover = hover;
     }
 
+    /// Footer hint shown in the panel (backend-specific hotkey text).
+    pub fn set_panel_hint(&mut self, hint: &'static str) {
+        self.panel_hint = hint;
+    }
+
     /// Returns `true` once after a level-up so the platform can refresh tray UI.
     pub fn take_level_changed(&mut self) -> bool {
         std::mem::take(&mut self.level_changed)
+    }
+
+    /// Returns `true` once after the wanted window size changed (panel
+    /// toggled or scale changed); the platform then resizes its surface.
+    pub fn take_size_changed(&mut self) -> bool {
+        std::mem::take(&mut self.size_changed)
+    }
+
+    /// Window size in physical pixels for the current scale + panel state.
+    pub fn canvas_size(&self) -> (i32, i32) {
+        let s = self.scale();
+        if self.panel.open {
+            (
+                (panel::CANVAS_W * s).round() as i32,
+                (panel::CANVAS_H * s).round() as i32,
+            )
+        } else {
+            window_size(s)
+        }
+    }
+
+    /// Top-left of the cat canvas inside the window canvas.
+    fn origin(&self) -> (f32, f32) {
+        if self.panel.open {
+            panel::CAT_ORIGIN
+        } else {
+            (0.0, 0.0)
+        }
+    }
+
+    /// Maps window-canvas coords to cat-local coords (for click_bounce).
+    pub fn cat_point(&self, cx: f32, cy: f32) -> (f32, f32) {
+        let (ox, oy) = self.origin();
+        (cx - ox, cy - oy)
+    }
+
+    pub fn set_scale_idx(&mut self, idx: usize) {
+        if idx != self.st.scale_idx && idx < SCALES.len() {
+            self.st.scale_idx = idx;
+            self.dirty = true;
+            self.size_changed = true;
+        }
+    }
+
+    // ---- clipboard ----------------------------------------------------------
+
+    /// A copy was observed system-wide. Stores the clip, feeds the cat a
+    /// fish and grants XP. `badge` lets the backend attach a real app icon;
+    /// when None one is derived from the source app name.
+    pub fn on_copy(&mut self, text: String, source: Option<String>, badge: Option<Badge>) {
+        if !self.st.clip_capture {
+            return;
+        }
+        let badge = badge.unwrap_or_else(|| Badge::from_source(source.as_deref()));
+        if !self.clips.add_copy(text, source) {
+            return;
+        }
+        if self.fish_queue.len() >= FISH_QUEUE_MAX {
+            self.fish_queue.pop_front();
+        }
+        self.fish_queue.push_back(badge);
+        self.st.copies_today += 1;
+        self.st.total_copies += 1;
+        self.st.total_xp += XP_PER_COPY;
+        self.dirty = true;
+        self.last_event = Instant::now();
+        self.maybe_level_up();
+    }
+
+    pub fn panel_open(&self) -> bool {
+        self.panel.open
+    }
+
+    pub fn toggle_panel(&mut self) {
+        self.panel.toggle();
+        self.size_changed = true;
+    }
+
+    /// Tracks the cursor (window-canvas coords) for panel hover highlights.
+    pub fn set_cursor(&mut self, cx: f32, cy: f32) {
+        self.panel.cursor = Some((cx, cy));
+    }
+
+    pub fn clear_cursor(&mut self) {
+        self.panel.cursor = None;
+    }
+
+    /// True when the point (window-canvas coords) lands on the open panel.
+    pub fn panel_hit(&self, cx: f32, cy: f32) -> bool {
+        self.panel.hit(cx, cy)
+    }
+
+    /// Executes a panel action. Returns text the backend must put on the
+    /// OS clipboard, if any.
+    fn run_action(&mut self, action: PanelAction) -> Option<String> {
+        match action {
+            PanelAction::Copy(id) => {
+                let text = self.clips.get(id).map(|c| c.text.clone());
+                if text.is_some() {
+                    self.set_toast(t(self.lang(), Msg::ToastCopied).to_string(), 1.6);
+                    self.happy = (self.happy + 0.4).min(1.0);
+                    if self.st.sound_mode >= 1 {
+                        sound::play_pop();
+                    }
+                }
+                return text;
+            }
+            PanelAction::TogglePin(id) => self.clips.toggle_pin(id),
+            PanelAction::Delete(id) => {
+                self.clips.delete(id);
+            }
+            PanelAction::Clear => {
+                let n = self.clips.clear_unpinned();
+                if n > 0 {
+                    self.set_toast(i18n::cleared_clips(self.lang(), n), 2.2);
+                }
+            }
+            PanelAction::ToggleCapture => {
+                self.st.clip_capture = !self.st.clip_capture;
+                self.dirty = true;
+                let msg = if self.st.clip_capture {
+                    Msg::ToastCaptureOn
+                } else {
+                    Msg::ToastCapturePaused
+                };
+                self.set_toast(t(self.lang(), msg).to_string(), 2.2);
+            }
+            PanelAction::ToggleLang => {
+                let lang = self.lang().toggled();
+                self.st.set_lang(lang);
+                self.dirty = true;
+            }
+            PanelAction::Close => self.toggle_panel(),
+        }
+        None
+    }
+
+    /// A click at window-canvas coords while the panel is open.
+    pub fn panel_click(&mut self, cx: f32, cy: f32) -> Option<String> {
+        let action = self.panel.click(cx, cy, &self.clips)?;
+        self.run_action(action)
+    }
+
+    /// Mouse wheel over the panel (positive rows = scroll down).
+    pub fn panel_wheel(&mut self, rows: i32) {
+        self.panel.wheel(rows, &self.clips);
+    }
+
+    /// Printable character while the panel is open (search input).
+    pub fn panel_char(&mut self, c: char) {
+        self.panel.input_char(c);
+    }
+
+    /// Navigation key while the panel is open.
+    pub fn panel_nav(&mut self, key: NavKey) -> Option<String> {
+        let action = self.panel.nav(key, &self.clips)?;
+        self.run_action(action)
     }
 
     // ---- per-frame update --------------------------------------------------
@@ -177,10 +369,7 @@ impl Pet {
                 sound::play_tap(self.next_paw_left);
             }
 
-            let (lv, _, _) = level_progress(self.st.total_xp);
-            if lv > self.level {
-                self.level_up(lv, t);
-            }
+            self.maybe_level_up();
         }
 
         // ease animation params toward rest
@@ -204,6 +393,20 @@ impl Pet {
 
         let excite = (self.rate / 7.0).clamp(0.0, 1.0);
         self.tail_phase += dt * (1.3 + excite * 5.0 + self.happy * 2.0 - self.sleep * 0.9);
+
+        // fish flight
+        if self.fish.is_none() {
+            if let Some(badge) = self.fish_queue.pop_front() {
+                self.fish = Some((badge, 0.0));
+            }
+        }
+        if let Some((_, ft)) = &mut self.fish {
+            *ft += dt / FISH_SECS;
+            if *ft >= 1.0 {
+                self.fish = None;
+                self.nom();
+            }
+        }
 
         // zzz particles while asleep
         if self.sleep > 0.7 && t > self.zzz_next {
@@ -241,8 +444,8 @@ impl Pet {
         }
         self.particles.retain(|p| p.life > 0.0);
 
-        // bubble fade
-        let bubble_target = if self.st.bubble_pinned || self.hover {
+        // bubble fade (hidden while the panel is open)
+        let bubble_target = if !self.panel.open && (self.st.bubble_pinned || self.hover) {
             1.0
         } else {
             0.0
@@ -264,8 +467,61 @@ impl Pet {
 
         // redraw hint: skip every other frame only when fully asleep & still
         self.frame += 1;
-        let resting = self.sleep > 0.9 && self.particles.is_empty();
+        let resting = self.sleep > 0.9
+            && self.particles.is_empty()
+            && self.fish.is_none()
+            && !self.panel.open;
         !(resting && self.frame.is_multiple_of(2))
+    }
+
+    /// The fish reached the mouth: crunch, sparkles, a happy bump.
+    fn nom(&mut self) {
+        self.happy = (self.happy + 0.5).min(1.0);
+        self.squash = 0.6;
+        self.spawn_sparkles(4, 120.0, 130.0);
+        let r = rand_f(&mut self.rng);
+        self.particles.push(Particle {
+            x: 120.0,
+            y: 118.0,
+            vx: (r - 0.5) * 18.0,
+            vy: -32.0,
+            life: 1.0,
+            kind: ParticleKind::Heart,
+            size: 4.0,
+            spin: 0.0,
+        });
+        if self.st.sound_mode >= 1 {
+            sound::play_nom();
+        }
+    }
+
+    /// Fish position along its arc into the mouth (cat-local coords).
+    fn fish_view<'a>(badge: &'a Badge, ft: f32) -> FishView<'a> {
+        // quadratic bezier: top-right, dipping in toward the mouth
+        let (sx, sy) = (236.0f32, 44.0f32);
+        let (cx, cy) = (186.0f32, -6.0f32);
+        let (mx, my) = (122.0f32, 134.0f32);
+        let u = 1.0 - ft;
+        let x = u * u * sx + 2.0 * u * ft * cx + ft * ft * mx;
+        let y = u * u * sy + 2.0 * u * ft * cy + ft * ft * my;
+        // velocity for heading
+        let dx = 2.0 * u * (cx - sx) + 2.0 * ft * (mx - cx);
+        let dy = 2.0 * u * (cy - sy) + 2.0 * ft * (my - cy);
+        let mut rot = dy.atan2(dx).to_degrees() - 180.0;
+        rot += (ft * 14.0).sin() * 6.0; // swimming wiggle
+        // gulp: shrink as it disappears into the mouth
+        let scale = if ft > 0.82 {
+            (1.0 - (ft - 0.82) / 0.18 * 0.85).max(0.15)
+        } else {
+            1.0
+        } * 0.95;
+        FishView {
+            x,
+            y,
+            rot,
+            scale,
+            badge,
+        }
     }
 
     /// Draws onto a transparent canvas (native layered-window backend).
@@ -302,10 +558,18 @@ impl Pet {
                 pct: into as f32 / need as f32,
                 keys: self.st.keys_today,
                 clicks: self.st.clicks_today,
+                copies: self.st.copies_today,
                 minutes: self.st.active_min_today,
             })
         } else {
             None
+        };
+
+        let fish = self.fish.as_ref().map(|(b, ft)| Self::fish_view(b, *ft));
+        // mouth opens as the fish closes in
+        let mouth_open = match &self.fish {
+            Some((_, ft)) => ((ft - 0.45) / 0.4).clamp(0.0, 1.0),
+            None => 0.0,
         };
 
         let scene = Scene {
@@ -318,16 +582,31 @@ impl Pet {
             squash: self.squash,
             breath,
             tail_phase: self.tail_phase,
+            mouth_open,
             accessory: Accessory::from_id(self.st.accessory),
             particles: &self.particles,
+            fish,
             bubble,
             bubble_alpha: self.bubble_alpha,
             toast: toast_view,
+            lang: self.lang(),
+            origin: self.origin(),
         };
         if card {
             render::render_card(pm, &scene, self.scale());
         } else {
             render::render(pm, &scene, self.scale());
+        }
+        if self.panel.open {
+            let view = render::PanelView {
+                panel: &self.panel,
+                store: &self.clips,
+                lang: self.lang(),
+                capture: self.st.clip_capture,
+                hint: self.panel_hint,
+                caret: (t * 1.6).fract() < 0.65,
+            };
+            render::draw_panel(pm, &view, self.scale());
         }
     }
 
@@ -355,15 +634,11 @@ impl Pet {
         if self.st.sound_mode >= 1 {
             sound::play_pop();
         }
-        let (lv, _, _) = level_progress(self.st.total_xp);
-        if lv > self.level {
-            let t = self.now_t();
-            self.level_up(lv, t);
-        }
+        self.maybe_level_up();
     }
 
     /// Single tap on the body: a little squash bounce and a sparkle.
-    /// `cx`/`cy` are in canvas coordinates (window pixels / scale).
+    /// `cx`/`cy` are in cat-local canvas coordinates (see [`Pet::cat_point`]).
     pub fn click_bounce(&mut self, cx: f32, cy: f32) {
         self.squash = 1.0;
         self.st.total_xp += 1;
@@ -384,9 +659,11 @@ impl Pet {
     pub fn reset_stats(&mut self) {
         self.st.total_keys = 0;
         self.st.total_clicks = 0;
+        self.st.total_copies = 0;
         self.st.total_xp = 0;
         self.st.keys_today = 0;
         self.st.clicks_today = 0;
+        self.st.copies_today = 0;
         self.st.active_min_today = 0;
         self.st.accessory = 0;
         self.level = 1;
@@ -394,16 +671,24 @@ impl Pet {
         self.save();
     }
 
+    fn maybe_level_up(&mut self) {
+        let (lv, _, _) = level_progress(self.st.total_xp);
+        if lv > self.level {
+            let t = self.now_t();
+            self.level_up(lv, t);
+        }
+    }
+
     fn level_up(&mut self, lv: u32, t: f32) {
         self.level = lv;
         self.level_changed = true;
         self.happy = 1.0;
         self.spawn_stars(12);
-        let mut text = format!("LEVEL UP! LV {}", lv);
+        let mut text = i18n::level_up(self.lang(), lv);
         for (i, acc) in ACCESSORIES.iter().enumerate() {
             if acc.level == lv {
                 self.st.accessory = i + 1;
-                text = format!("* NEW: {} *", acc.name_en);
+                text = i18n::new_accessory(self.lang(), acc.name(self.lang()));
                 self.spawn_sparkles(8, 120.0, 80.0);
             }
         }
@@ -412,6 +697,11 @@ impl Pet {
             sound::play_chime();
         }
         self.dirty = true;
+    }
+
+    fn set_toast(&mut self, text: String, secs: f32) {
+        let t = self.now_t();
+        self.toast = Some((text, t + secs));
     }
 
     fn spawn_stars(&mut self, n: usize) {
@@ -458,7 +748,7 @@ impl Pet {
     /// True when there are unsaved changes and enough time has elapsed that
     /// the platform should capture the window position and persist.
     pub fn should_autosave(&self) -> bool {
-        self.dirty && self.last_save.elapsed().as_secs() >= 30
+        (self.dirty || self.clips.dirty) && self.last_save.elapsed().as_secs() >= 30
     }
 
     /// Records the current window position and writes state to disk.
@@ -471,7 +761,111 @@ impl Pet {
 
     pub fn save(&mut self) {
         self.st.save();
+        self.clips.save_if_dirty();
         self.dirty = false;
         self.last_save = Instant::now();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::panel::PanelAction;
+
+    fn pet() -> Pet {
+        let mut p = Pet::new(Persist::default());
+        p.clips = ClipStore::default(); // don't touch the real config dir
+        p
+    }
+
+    #[test]
+    fn copy_event_stores_clip_grants_xp_and_queues_fish() {
+        let mut p = pet();
+        let xp0 = p.st.total_xp;
+        p.on_copy("hello".into(), Some("Code".into()), None);
+        assert_eq!(p.clips.len(), 1);
+        assert_eq!(p.st.total_xp, xp0 + XP_PER_COPY);
+        assert_eq!(p.st.copies_today, 1);
+        assert_eq!(p.fish_queue.len(), 1);
+        assert_eq!(p.fish_queue[0].letter, 'C');
+    }
+
+    #[test]
+    fn capture_pause_ignores_copies() {
+        let mut p = pet();
+        p.st.clip_capture = false;
+        p.on_copy("secret".into(), None, None);
+        assert!(p.clips.is_empty());
+        assert!(p.fish_queue.is_empty());
+        assert_eq!(p.st.total_xp, 0);
+    }
+
+    #[test]
+    fn fish_queue_is_capped() {
+        let mut p = pet();
+        for i in 0..10 {
+            p.on_copy(format!("clip {i}"), None, None);
+        }
+        assert!(p.fish_queue.len() <= FISH_QUEUE_MAX);
+    }
+
+    #[test]
+    fn fish_flies_and_gets_eaten() {
+        let mut p = pet();
+        p.on_copy("fish food".into(), None, None);
+        // simulate ~1.5s of ticks
+        for _ in 0..50 {
+            p.last_tick -= std::time::Duration::from_millis(33);
+            p.advance(0, 0, 0);
+        }
+        assert!(p.fish.is_none());
+        assert!(p.fish_queue.is_empty());
+        assert!(p.happy > 0.0, "nom should make the cat happy");
+    }
+
+    #[test]
+    fn panel_copy_returns_text_for_backend() {
+        let mut p = pet();
+        p.on_copy("copy me back".into(), None, None);
+        p.toggle_panel();
+        assert!(p.panel_open());
+        let got = p.panel_nav(NavKey::Enter);
+        assert_eq!(got.as_deref(), Some("copy me back"));
+    }
+
+    #[test]
+    fn toggle_panel_changes_canvas_size() {
+        let mut p = pet();
+        let closed = p.canvas_size();
+        p.toggle_panel();
+        assert!(p.take_size_changed());
+        let open = p.canvas_size();
+        assert!(open.0 > closed.0 && open.1 > closed.1);
+        // cat-local mapping accounts for the origin shift
+        let (cx, cy) = p.cat_point(crate::panel::CAT_ORIGIN.0, crate::panel::CAT_ORIGIN.1);
+        assert_eq!((cx, cy), (0.0, 0.0));
+    }
+
+    #[test]
+    fn lang_toggle_persists_in_state() {
+        let mut p = pet();
+        let before = p.lang();
+        p.toggle_panel();
+        let _ = p.run_action(PanelAction::ToggleLang);
+        assert_ne!(p.lang(), before);
+    }
+
+    #[test]
+    fn render_panel_open_smoke() {
+        let mut p = pet();
+        p.on_copy("첫 번째 클립".into(), Some("브라우저".into()), None);
+        p.on_copy("second clip".into(), Some("Code".into()), None);
+        p.toggle_panel();
+        let (w, h) = p.canvas_size();
+        let mut pm = Pixmap::new(w as u32, h as u32).unwrap();
+        p.render(&mut pm); // must not panic
+        p.render_card(&mut pm);
+        let drawn = pm.data().chunks_exact(4).any(|px| px[3] > 0);
+        assert!(drawn);
     }
 }

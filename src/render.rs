@@ -1,10 +1,16 @@
 //! All drawing: the cat, desk, keyboard, paws, accessories, particles,
-//! stats bubble and toasts. Pure vector art via tiny-skia on a 240x256
-//! logical canvas, multiplied by a global scale.
+//! stats bubble, toasts, the copy-event fish and the clipboard panel.
+//! Pure vector art via tiny-skia on a 240x256 logical cat canvas (the panel
+//! canvas in `crate::panel` is larger), multiplied by a global scale.
 
+use crate::clipboard::ClipStore;
 use crate::font;
+use crate::i18n::{self, t, Lang, Msg};
+use crate::panel as pl;
+use crate::panel::Panel;
 use tiny_skia::{
-    FillRule, LineCap, LineJoin, Paint, Path, PathBuilder, Pixmap, Rect, Stroke, Transform,
+    FillRule, FilterQuality, LineCap, LineJoin, Paint, Path, PathBuilder, Pixmap, PixmapPaint,
+    Rect, Stroke, Transform,
 };
 
 pub const CANVAS_W: f32 = 240.0;
@@ -20,6 +26,11 @@ const DESK_FRONT: (u8, u8, u8, u8) = (179, 133, 79, 255);
 const KEY_BASE: (u8, u8, u8, u8) = (78, 85, 102, 255);
 const KEY_CAP: (u8, u8, u8, u8) = (153, 161, 181, 255);
 const TEXT: (u8, u8, u8, u8) = (84, 72, 58, 255);
+const TEXT_DIM: (u8, u8, u8, u8) = (149, 138, 124, 255);
+const FISH_BLUE: (u8, u8, u8) = (108, 160, 220);
+const ROW_SEL: (u8, u8, u8, u8) = (208, 228, 248, 200);
+const ROW_HOVER: (u8, u8, u8, u8) = (226, 238, 250, 150);
+const PIN_GOLD: (u8, u8, u8, u8) = (242, 201, 76, 255);
 
 #[derive(Clone, Copy, PartialEq)]
 pub enum Accessory {
@@ -71,7 +82,85 @@ pub struct BubbleData {
     pub pct: f32,
     pub keys: u64,
     pub clicks: u64,
+    pub copies: u64,
     pub minutes: u32,
+}
+
+// ---- copy-event fish ---------------------------------------------------------
+
+/// Identifies the app a clip was copied from, drawn on the fish the cat eats.
+/// `icon` (when the backend could extract one) is a small premultiplied
+/// pixmap; otherwise a colored letter badge is used.
+pub struct Badge {
+    pub letter: char,
+    pub color: (u8, u8, u8),
+    pub icon: Option<Pixmap>,
+}
+
+const BADGE_PALETTE: [(u8, u8, u8); 8] = [
+    (108, 160, 220), // blue
+    (126, 201, 110), // green
+    (240, 148, 86),  // orange
+    (199, 128, 232), // purple
+    (240, 98, 146),  // pink
+    (96, 196, 201),  // teal
+    (242, 201, 76),  // gold
+    (146, 156, 222), // periwinkle
+];
+
+impl Badge {
+    pub fn from_source(source: Option<&str>) -> Badge {
+        let Some(name) = source.filter(|s| !s.is_empty()) else {
+            return Badge {
+                letter: '*',
+                color: FISH_BLUE,
+                icon: None,
+            };
+        };
+        let letter = name
+            .chars()
+            .find(|c| c.is_ascii_alphanumeric())
+            .map(|c| c.to_ascii_uppercase())
+            .unwrap_or('*');
+        let mut h: u32 = 0x811c_9dc5;
+        for b in name.bytes() {
+            h ^= b as u32;
+            h = h.wrapping_mul(0x0100_0193);
+        }
+        Badge {
+            letter,
+            color: BADGE_PALETTE[(h as usize) % BADGE_PALETTE.len()],
+            icon: None,
+        }
+    }
+
+    /// Attaches a real app icon from straight-alpha RGBA pixels (size x size).
+    pub fn set_icon_rgba(&mut self, size: u32, rgba: &[u8]) {
+        if size == 0 || rgba.len() != (size * size * 4) as usize {
+            return;
+        }
+        // premultiply for tiny-skia
+        let mut data = rgba.to_vec();
+        for px in data.chunks_exact_mut(4) {
+            let a = px[3] as u32;
+            px[0] = ((px[0] as u32 * a) / 255) as u8;
+            px[1] = ((px[1] as u32 * a) / 255) as u8;
+            px[2] = ((px[2] as u32 * a) / 255) as u8;
+        }
+        self.icon = Pixmap::from_vec(
+            data,
+            tiny_skia::IntSize::from_wh(size, size).unwrap(),
+        );
+    }
+}
+
+/// Where/how to draw the in-flight fish this frame (cat-local coords).
+pub struct FishView<'a> {
+    pub x: f32,
+    pub y: f32,
+    pub rot: f32, // degrees
+    pub scale: f32,
+    pub badge: &'a Badge,
 }
 
 pub struct Scene<'a> {
@@ -84,11 +173,17 @@ pub struct Scene<'a> {
     pub squash: f32,
     pub breath: f32,
     pub tail_phase: f32,
+    pub mouth_open: f32,
     pub accessory: Accessory,
     pub particles: &'a [Particle],
+    pub fish: Option<FishView<'a>>,
     pub bubble: Option<BubbleData>,
     pub bubble_alpha: f32,
     pub toast: Option<(&'a str, f32)>,
+    pub lang: Lang,
+    /// Top-left of the cat canvas inside the window canvas (non-zero when
+    /// the clipboard panel is open).
+    pub origin: (f32, f32),
 }
 
 // ---- small helpers --------------------------------------------------------
@@ -129,7 +224,7 @@ fn round_rect(x: f32, y: f32, w: f32, h: f32, r: f32) -> Option<Path> {
 
 struct Cv<'a> {
     pm: &'a mut Pixmap,
-    ts: Transform, // global scale
+    ts: Transform, // global scale (and cat origin where applicable)
 }
 
 impl<'a> Cv<'a> {
@@ -159,6 +254,17 @@ impl<'a> Cv<'a> {
     }
     fn text(&mut self, s: &str, x: f32, y: f32, px: f32, c: (u8, u8, u8, u8)) {
         font::draw(self.pm, s, x, y, px, c, self.ts);
+    }
+    fn line(&mut self, pts: &[(f32, f32)], c: (u8, u8, u8, u8), w: f32) {
+        let mut pb = PathBuilder::new();
+        for (i, (x, y)) in pts.iter().enumerate() {
+            if i == 0 {
+                pb.move_to(*x, *y);
+            } else {
+                pb.line_to(*x, *y);
+            }
+        }
+        self.stroke(&pb.finish(), c, w);
     }
 }
 
@@ -202,7 +308,7 @@ pub fn render_card(pm: &mut Pixmap, sc: &Scene, scale: f32) {
 fn draw_scene(pm: &mut Pixmap, sc: &Scene, scale: f32) {
     let mut cv = Cv {
         pm,
-        ts: Transform::from_scale(scale, scale),
+        ts: Transform::from_scale(scale, scale).pre_translate(sc.origin.0, sc.origin.1),
     };
 
     let breath_dy = -sc.breath * 1.6;
@@ -314,6 +420,11 @@ fn draw_scene(pm: &mut Pixmap, sc: &Scene, scale: f32) {
     draw_paw(&mut cv, 96.0, sc.paw_l, false, breath_dy);
     draw_paw(&mut cv, 144.0, sc.paw_r, true, breath_dy);
 
+    // in-flight fish (over the cat, under particles/toast)
+    if let Some(f) = &sc.fish {
+        draw_fish(&mut cv, f);
+    }
+
     // particles
     for p in sc.particles {
         draw_particle(&mut cv, p);
@@ -334,7 +445,7 @@ fn draw_scene(pm: &mut Pixmap, sc: &Scene, scale: f32) {
     // stats bubble
     if sc.bubble_alpha > 0.01 {
         if let Some(b) = &sc.bubble {
-            draw_bubble(&mut cv, b, sc.bubble_alpha);
+            draw_bubble(&mut cv, b, sc.bubble_alpha, sc.lang);
         }
     }
 }
@@ -342,10 +453,11 @@ fn draw_scene(pm: &mut Pixmap, sc: &Scene, scale: f32) {
 fn draw_face(cv: &mut Cv, sc: &Scene, t: Transform) {
     let closed = sc.blink.max(sc.sleep);
     let happy = sc.happy > 0.35 && sc.sleep < 0.5;
+    let chase = sc.mouth_open > 0.05 && sc.sleep < 0.5; // eyeing the fish
 
     for (ex, dir) in [(92.0f32, -1.0f32), (148.0, 1.0)] {
         let _ = dir;
-        if happy {
+        if happy && !chase {
             // ∩ shaped happy eyes
             let mut pb = PathBuilder::new();
             pb.move_to(ex - 7.0, 124.0);
@@ -359,15 +471,23 @@ fn draw_face(cv: &mut Cv, sc: &Scene, t: Transform) {
             cv.stroke_t(&pb.finish(), OUTLINE, 2.6, t);
         } else {
             let ry = 5.2 * (1.0 - closed * 0.85);
-            cv.fill_t(&oval(ex, 122.0, 5.2, ry.max(0.8)), OUTLINE, t);
+            // big sparkly eyes while a fish is incoming
+            let r = if chase { 6.2 } else { 5.2 };
+            cv.fill_t(&oval(ex, 122.0, r, (ry * r / 5.2).max(0.8)), OUTLINE, t);
             if ry > 2.0 {
                 cv.fill_t(&oval(ex - 1.6, 120.2, 1.7, 1.7 * (ry / 5.2)), (255, 255, 255, 230), t);
             }
         }
     }
 
-    // ω mouth
-    {
+    if sc.mouth_open > 0.05 {
+        // open mouth, ready to nom
+        let o = sc.mouth_open.clamp(0.0, 1.0);
+        let mouth = oval(120.0, 138.0, 4.5 + 3.5 * o, 3.0 + 5.5 * o);
+        cv.fill_t(&mouth, (164, 88, 92, 255), t);
+        cv.stroke_t(&mouth, OUTLINE, 2.2, t);
+    } else {
+        // ω mouth
         let mut pb = PathBuilder::new();
         pb.move_to(112.0, 136.0);
         pb.quad_to(116.0, 141.0, 120.0, 136.5);
@@ -406,6 +526,91 @@ fn draw_paw(cv: &mut Cv, cx: f32, press: f32, right: bool, breath_dy: f32) {
         pb.move_to(cx + dx, y + 3.0);
         pb.line_to(cx + dx, y + 9.0);
         cv.stroke_t(&pb.finish(), fade(OUTLINE, a), 2.0, t);
+    }
+}
+
+// ---- fish -------------------------------------------------------------------
+
+fn lighten(c: (u8, u8, u8), f: f32) -> (u8, u8, u8, u8) {
+    let l = |v: u8| (v as f32 + (255.0 - v as f32) * f) as u8;
+    (l(c.0), l(c.1), l(c.2), 255)
+}
+
+fn darken(c: (u8, u8, u8), f: f32) -> (u8, u8, u8, u8) {
+    let d = |v: u8| (v as f32 * (1.0 - f)) as u8;
+    (d(c.0), d(c.1), d(c.2), 255)
+}
+
+/// Draws the fish at `f.x/f.y` (cat-local), facing left toward the cat.
+fn draw_fish(cv: &mut Cv, f: &FishView) {
+    let s_at = Transform::from_translate(f.x, f.y)
+        .pre_scale(f.scale, f.scale)
+        .pre_translate(-f.x, -f.y);
+    let t = Transform::from_rotate_at(f.rot, f.x, f.y).pre_concat(s_at);
+    let (x, y) = (f.x, f.y);
+
+    let body_c = lighten(f.badge.color, 0.35);
+    let dark_c = darken(f.badge.color, 0.18);
+
+    // tail (two-lobe fin at the right/back)
+    {
+        let mut pb = PathBuilder::new();
+        pb.move_to(x + 12.0, y);
+        pb.line_to(x + 24.0, y - 9.0);
+        pb.quad_to(x + 20.0, y, x + 24.0, y + 9.0);
+        pb.close();
+        let tail = pb.finish();
+        cv.fill_t(&tail, dark_c, t);
+        cv.stroke_t(&tail, OUTLINE, 2.4, t);
+    }
+    // body
+    let body = oval(x, y, 16.0, 10.0);
+    cv.fill_t(&body, body_c, t);
+    cv.stroke_t(&body, OUTLINE, 2.6, t);
+    // top fin
+    {
+        let mut pb = PathBuilder::new();
+        pb.move_to(x - 4.0, y - 9.0);
+        pb.quad_to(x + 1.0, y - 15.0, x + 7.0, y - 8.5);
+        let fin = pb.finish();
+        cv.fill_t(&fin, dark_c, t);
+        cv.stroke_t(&fin, OUTLINE, 2.2, t);
+    }
+    // eye
+    cv.fill_t(&oval(x - 10.0, y - 2.5, 1.9, 1.9), OUTLINE, t);
+
+    // badge: real app icon if present, else letter chip
+    if let Some(icon) = &f.badge.icon {
+        let size = 13.0;
+        let chip = round_rect(x - size / 2.0 - 1.5, y - size / 2.0 - 1.5, size + 3.0, size + 3.0, 4.0);
+        cv.fill_t(&chip, (255, 255, 255, 235), t);
+        cv.stroke_t(&chip, fade(OUTLINE, 0.7), 1.6, t);
+        let k = size / icon.width() as f32;
+        let it = t
+            .post_concat(cv.ts)
+            .pre_translate(x - size / 2.0, y - size / 2.0)
+            .pre_scale(k, k);
+        let pp = PixmapPaint {
+            quality: FilterQuality::Bilinear,
+            ..Default::default()
+        };
+        cv.pm.draw_pixmap(0, 0, icon.as_ref(), &pp, it, None);
+    } else {
+        let chip = oval(x + 1.0, y + 0.5, 7.0, 7.0);
+        cv.fill_t(&chip, (255, 255, 255, 235), t);
+        cv.stroke_t(&chip, fade(OUTLINE, 0.7), 1.6, t);
+        // center the letter in the chip (5x7 glyph at px 1.6)
+        let px = 1.6;
+        let lw = font::measure(&f.badge.letter.to_string(), px);
+        font::draw(
+            cv.pm,
+            &f.badge.letter.to_string(),
+            x + 1.0 - lw / 2.0,
+            y + 0.5 - 3.5 * px,
+            px,
+            TEXT,
+            t.post_concat(cv.ts),
+        );
     }
 }
 
@@ -571,23 +776,23 @@ fn fmt_thousands(n: u64) -> String {
     out
 }
 
-fn draw_bubble(cv: &mut Cv, b: &BubbleData, alpha: f32) {
+fn draw_bubble(cv: &mut Cv, b: &BubbleData, alpha: f32, lang: Lang) {
     let a = alpha;
-    let rect = round_rect(14.0, 4.0, 212.0, 74.0, 11.0);
+    let rect = round_rect(14.0, 2.0, 212.0, 84.0, 11.0);
     cv.fill(&rect, fade((255, 255, 255, 242), a));
     cv.stroke(&rect, fade(OUTLINE, a), 2.5);
     // tail pointing to the cat
     {
         let mut pb = PathBuilder::new();
-        pb.move_to(112.0, 77.0);
-        pb.line_to(128.0, 77.0);
-        pb.line_to(121.0, 90.0);
+        pb.move_to(112.0, 85.0);
+        pb.line_to(128.0, 85.0);
+        pb.line_to(121.0, 97.0);
         pb.close();
         let tail = pb.finish();
         cv.fill(&tail, fade((255, 255, 255, 242), a));
         cv.stroke(&tail, fade(OUTLINE, a), 2.0);
         // cover the seam
-        if let Some(r) = Rect::from_xywh(113.5, 74.5, 13.0, 4.0) {
+        if let Some(r) = Rect::from_xywh(113.5, 82.5, 13.0, 4.0) {
             cv.pm.fill_rect(
                 r,
                 &paint(fade((255, 255, 255, 242), a)),
@@ -599,30 +804,275 @@ fn draw_bubble(cv: &mut Cv, b: &BubbleData, alpha: f32) {
 
     let tc = fade(TEXT, a);
     // row 1: level + xp bar
-    cv.text(&format!("LV {}", b.level), 24.0, 11.0, 2.0, tc);
-    let bar_bg = round_rect(82.0, 11.5, 134.0, 12.0, 6.0);
+    cv.text(&format!("LV {}", b.level), 24.0, 8.0, 2.0, tc);
+    let bar_bg = round_rect(82.0, 8.5, 134.0, 12.0, 6.0);
     cv.fill(&bar_bg, fade((231, 224, 214, 255), a));
     let w = (134.0 * b.pct.clamp(0.0, 1.0)).max(10.0);
-    let bar_fg = round_rect(82.0, 11.5, w, 12.0, 6.0);
+    let bar_fg = round_rect(82.0, 8.5, w, 12.0, 6.0);
     cv.fill(&bar_fg, fade((126, 201, 110, 255), a));
     cv.stroke(&bar_bg, fade(OUTLINE, 0.8 * a), 2.0);
 
-    // rows 2-4
-    cv.text(&format!("KEYS   {}", fmt_thousands(b.keys)), 24.0, 30.0, 2.0, tc);
+    // rows 2-5: today's keys / clicks / copies / active time
+    let px = 1.7;
+    let rows: [(Msg, String); 4] = [
+        (Msg::BubbleKeys, fmt_thousands(b.keys)),
+        (Msg::BubbleClicks, fmt_thousands(b.clicks)),
+        (Msg::BubbleClips, fmt_thousands(b.copies)),
+        (Msg::BubbleActive, {
+            let (h, m) = (b.minutes / 60, b.minutes % 60);
+            format!("{}H {:02}M", h, m)
+        }),
+    ];
+    for (i, (label, value)) in rows.iter().enumerate() {
+        let y = 27.0 + i as f32 * 14.0;
+        cv.text(t(lang, *label), 24.0, y, px, fade(TEXT_DIM, a));
+        cv.text(value, 96.0, y, px, tc);
+    }
+}
+
+// ---- clipboard panel --------------------------------------------------------
+
+/// Everything the panel needs to draw one frame.
+pub struct PanelView<'a> {
+    pub panel: &'a Panel,
+    pub store: &'a ClipStore,
+    pub lang: Lang,
+    pub capture: bool,
+    /// Short hotkey hint shown in the footer (backend-specific).
+    pub hint: &'a str,
+    pub caret: bool,
+}
+
+/// Draws the clipboard panel card (geometry from [`crate::panel`]).
+pub fn draw_panel(pm: &mut Pixmap, v: &PanelView, scale: f32) {
+    let mut cv = Cv {
+        pm,
+        ts: Transform::from_scale(scale, scale),
+    };
+    let lang = v.lang;
+
+    let card = round_rect(pl::CARD_X, pl::CARD_Y, pl::CARD_W, pl::CARD_H, 10.0);
+    cv.fill(&card, (255, 255, 255, 247));
+    cv.stroke(&card, OUTLINE, 2.5);
+
+    // header: fish mark + title
+    {
+        let mut pb = PathBuilder::new();
+        pb.move_to(26.0, 17.0);
+        pb.quad_to(20.0, 11.5, 14.5, 17.0);
+        pb.quad_to(20.0, 22.5, 26.0, 17.0);
+        pb.close();
+        let fish = pb.finish();
+        cv.fill(&fish, (FISH_BLUE.0, FISH_BLUE.1, FISH_BLUE.2, 255));
+        cv.stroke(&fish, OUTLINE, 1.8);
+        cv.line(&[(26.0, 17.0), (30.5, 13.0), (30.5, 21.0), (26.0, 17.0)], OUTLINE, 1.8);
+        cv.fill(&oval(18.5, 15.8, 1.0, 1.0), OUTLINE);
+    }
+    cv.text(t(lang, Msg::PanelTitle), 36.0, 11.0, 1.8, TEXT);
+    if !v.capture {
+        // capture paused: small red pause bars next to the title
+        let tx = 36.0 + font::measure(t(lang, Msg::PanelTitle), 1.8) + 8.0;
+        cv.fill(&round_rect(tx, 11.0, 3.0, 11.0, 1.2), (217, 79, 79, 255));
+        cv.fill(&round_rect(tx + 5.0, 11.0, 3.0, 11.0, 1.2), (217, 79, 79, 255));
+    }
+
+    // header buttons
+    draw_btn(&mut cv, pl::BTN_PAUSE_X, BtnIcon::Pause(v.capture));
+    draw_btn(&mut cv, pl::BTN_CLEAR_X, BtnIcon::Trash);
+    draw_btn(&mut cv, pl::BTN_LANG_X, BtnIcon::Lang(lang));
+    draw_btn(&mut cv, pl::BTN_CLOSE_X, BtnIcon::Close);
+
+    // search box
+    let sb = round_rect(pl::SEARCH_X, pl::SEARCH_Y, pl::SEARCH_W, pl::SEARCH_H, 8.0);
+    cv.fill(&sb, (243, 240, 235, 255));
+    cv.stroke(&sb, fade(OUTLINE, 0.5), 1.6);
+    // magnifier
+    cv.stroke(&oval(22.0, 38.0, 3.4, 3.4), TEXT_DIM, 1.8);
+    cv.line(&[(25.0, 41.0), (28.0, 44.0)], TEXT_DIM, 1.8);
+    let qx = 34.0;
+    let qmax = pl::SEARCH_X + pl::SEARCH_W - 8.0 - qx;
+    if v.panel.query.is_empty() {
+        cv.text(t(lang, Msg::SearchHint), qx, 33.5, 1.6, fade(TEXT_DIM, 0.8));
+        if v.caret {
+            cv.fill(&round_rect(qx - 3.0, 33.0, 1.6, 12.0, 0.8), fade(TEXT, 0.7));
+        }
+    } else {
+        // show the tail of long queries
+        let mut q: &str = &v.panel.query;
+        while font::measure(q, 1.6) > qmax - 6.0 {
+            let mut it = q.chars();
+            it.next();
+            q = it.as_str();
+        }
+        cv.text(q, qx, 33.5, 1.6, TEXT);
+        if v.caret {
+            let cx = qx + font::measure(q, 1.6) + 2.0;
+            cv.fill(&round_rect(cx, 33.0, 1.6, 12.0, 0.8), fade(TEXT, 0.7));
+        }
+    }
+
+    // rows
+    let visible = v.store.visible(&v.panel.query);
+    let total = visible.len();
+    if total == 0 {
+        let msg = if v.store.is_empty() {
+            t(lang, Msg::PanelEmpty)
+        } else {
+            t(lang, Msg::PanelNoMatch)
+        };
+        let w = font::measure(msg, 1.6);
+        cv.text(
+            msg,
+            pl::CARD_X + (pl::CARD_W - w) / 2.0,
+            pl::ROWS_Y + 60.0,
+            1.6,
+            TEXT_DIM,
+        );
+    }
+    let hover_row = v
+        .panel
+        .cursor
+        .and_then(|(x, y)| {
+            (pl::ROW_X..=pl::ROW_X + pl::ROW_W).contains(&x)
+                .then(|| v.panel.row_at(y, total))
+                .flatten()
+        });
+    let now = crate::clipboard::now_ts();
+    for i in 0..pl::VISIBLE_ROWS {
+        let idx = v.panel.scroll + i;
+        let Some(clip) = visible.get(idx) else { break };
+        let ry = pl::ROWS_Y + i as f32 * pl::ROW_H;
+
+        if idx == v.panel.sel {
+            cv.fill(&round_rect(pl::ROW_X, ry + 1.0, pl::ROW_W, pl::ROW_H - 2.0, 6.0), ROW_SEL);
+        } else if hover_row == Some(idx) {
+            cv.fill(&round_rect(pl::ROW_X, ry + 1.0, pl::ROW_W, pl::ROW_H - 2.0, 6.0), ROW_HOVER);
+        }
+
+        // pin star
+        let star = star_path(24.0, ry + 11.0, 6.0, 0.0);
+        if clip.pinned {
+            cv.fill(&star, PIN_GOLD);
+            cv.stroke(&star, (180, 140, 30, 255), 1.4);
+        } else {
+            cv.stroke(&star, fade(TEXT_DIM, 0.55), 1.4);
+        }
+
+        // preview + meta
+        let tx = 38.0;
+        let tmax = pl::ROW_X + pl::ROW_W - pl::DEL_ZONE - tx - 4.0;
+        let prev = font::truncate_to_width(&clip.preview(), 1.6, tmax);
+        cv.text(&prev, tx, ry + 3.5, 1.6, TEXT);
+        let mut meta = i18n::time_ago(lang, now.saturating_sub(clip.ts));
+        if let Some(src) = &clip.source {
+            meta = format!("{src} - {meta}");
+        }
+        let meta = font::truncate_to_width(&meta, 1.2, tmax);
+        cv.text(&meta, tx, ry + 17.0, 1.2, TEXT_DIM);
+
+        // delete x
+        let dx = pl::ROW_X + pl::ROW_W - 12.0;
+        let dy = ry + pl::ROW_H / 2.0;
+        cv.line(&[(dx - 3.2, dy - 3.2), (dx + 3.2, dy + 3.2)], fade(TEXT_DIM, 0.7), 1.8);
+        cv.line(&[(dx - 3.2, dy + 3.2), (dx + 3.2, dy - 3.2)], fade(TEXT_DIM, 0.7), 1.8);
+
+        // separator
+        if i + 1 < pl::VISIBLE_ROWS {
+            cv.line(
+                &[(pl::ROW_X + 4.0, ry + pl::ROW_H), (pl::ROW_X + pl::ROW_W - 4.0, ry + pl::ROW_H)],
+                fade(OUTLINE, 0.12),
+                1.0,
+            );
+        }
+    }
+
+    // scrollbar
+    if total > pl::VISIBLE_ROWS {
+        let track_h = pl::ROW_H * pl::VISIBLE_ROWS as f32 - 4.0;
+        let tx = pl::CARD_X + pl::CARD_W - 6.0;
+        cv.fill(&round_rect(tx, pl::ROWS_Y + 2.0, 3.0, track_h, 1.5), fade(OUTLINE, 0.12));
+        let th = (track_h * pl::VISIBLE_ROWS as f32 / total as f32).max(14.0);
+        let ty = pl::ROWS_Y + 2.0
+            + (track_h - th) * v.panel.scroll as f32 / (total - pl::VISIBLE_ROWS) as f32;
+        cv.fill(&round_rect(tx, ty, 3.0, th, 1.5), fade(OUTLINE, 0.45));
+    }
+
+    // footer
+    let count = i18n::clip_count(lang, v.store.len(), v.store.pinned_count());
+    cv.text(&count, 14.0, pl::FOOTER_Y + 4.0, 1.3, TEXT_DIM);
+    let hw = font::measure(v.hint, 1.3);
     cv.text(
-        &format!("CLICKS {}", fmt_thousands(b.clicks)),
-        24.0,
-        46.0,
-        2.0,
-        tc,
+        v.hint,
+        pl::CARD_X + pl::CARD_W - 10.0 - hw,
+        pl::FOOTER_Y + 4.0,
+        1.3,
+        fade(TEXT_DIM, 0.8),
     );
-    let (h, m) = (b.minutes / 60, b.minutes % 60);
-    cv.text(&format!("ACTIVE {}H {:02}M", h, m), 24.0, 62.0, 2.0, tc);
+}
+
+enum BtnIcon {
+    Pause(bool), // capture currently on?
+    Trash,
+    Lang(Lang),
+    Close,
+}
+
+fn draw_btn(cv: &mut Cv, bx: f32, icon: BtnIcon) {
+    let by = pl::BTN_Y;
+    let b = pl::BTN;
+    let bg = round_rect(bx, by, b, b, 5.0);
+    let alert = matches!(icon, BtnIcon::Pause(false));
+    if alert {
+        cv.fill(&bg, (250, 224, 224, 255));
+        cv.stroke(&bg, (217, 79, 79, 255), 1.6);
+    } else {
+        cv.fill(&bg, (243, 240, 235, 255));
+        cv.stroke(&bg, fade(OUTLINE, 0.45), 1.6);
+    }
+    let (cx, cy) = (bx + b / 2.0, by + b / 2.0);
+    match icon {
+        BtnIcon::Pause(true) => {
+            // capture running -> show pause bars
+            cv.fill(&round_rect(cx - 3.6, cy - 4.0, 2.6, 8.0, 1.1), TEXT);
+            cv.fill(&round_rect(cx + 1.0, cy - 4.0, 2.6, 8.0, 1.1), TEXT);
+        }
+        BtnIcon::Pause(false) => {
+            // paused -> show play triangle
+            let mut pb = PathBuilder::new();
+            pb.move_to(cx - 2.8, cy - 4.2);
+            pb.line_to(cx + 4.0, cy);
+            pb.line_to(cx - 2.8, cy + 4.2);
+            pb.close();
+            cv.fill(&pb.finish(), (217, 79, 79, 255));
+        }
+        BtnIcon::Trash => {
+            cv.line(&[(cx - 4.5, cy - 3.5), (cx + 4.5, cy - 3.5)], TEXT, 1.7);
+            cv.line(&[(cx - 1.6, cy - 5.2), (cx + 1.6, cy - 5.2)], TEXT, 1.7);
+            let mut pb = PathBuilder::new();
+            pb.move_to(cx - 3.4, cy - 3.5);
+            pb.line_to(cx - 2.8, cy + 5.0);
+            pb.line_to(cx + 2.8, cy + 5.0);
+            pb.line_to(cx + 3.4, cy - 3.5);
+            cv.stroke(&pb.finish(), TEXT, 1.7);
+        }
+        BtnIcon::Lang(lang) => {
+            let s = match lang {
+                Lang::En => "EN",
+                Lang::Ko => "KO",
+            };
+            let w = font::measure(s, 1.1);
+            font::draw(cv.pm, s, cx - w / 2.0, cy - 3.8, 1.1, TEXT, cv.ts);
+        }
+        BtnIcon::Close => {
+            cv.line(&[(cx - 3.6, cy - 3.6), (cx + 3.6, cy + 3.6)], TEXT, 2.0);
+            cv.line(&[(cx - 3.6, cy + 3.6), (cx + 3.6, cy - 3.6)], TEXT, 2.0);
+        }
+    }
 }
 
 // ---- tray icon -------------------------------------------------------------
 
-/// Draws a 32x32 cat face for the tray/window icon.
+/// Draws a 32x32 cat face (with its little fish) for the tray/window icon.
 pub fn draw_icon(pm: &mut Pixmap) {
     draw_icon_scaled(pm, 1.0);
 }
@@ -663,4 +1113,20 @@ pub fn draw_icon_scaled(pm: &mut Pixmap, k: f32) {
     pb.quad_to(14.5, 24.0, 16.0, 22.3);
     pb.quad_to(17.5, 24.0, 19.0, 22.0);
     cv.stroke(&pb.finish(), OUTLINE, 1.4);
+    // the clipboard fish, held proudly at the bottom-right
+    {
+        let fc = (FISH_BLUE.0, FISH_BLUE.1, FISH_BLUE.2, 255);
+        let body = oval(24.0, 27.5, 6.0, 3.6);
+        cv.fill(&body, fc);
+        cv.stroke(&body, OUTLINE, 1.6);
+        let mut tb = PathBuilder::new();
+        tb.move_to(28.5, 27.5);
+        tb.line_to(31.5, 24.8);
+        tb.line_to(31.5, 30.2);
+        tb.close();
+        let tail = tb.finish();
+        cv.fill(&tail, fc);
+        cv.stroke(&tail, OUTLINE, 1.4);
+        cv.fill(&oval(21.0, 26.8, 0.9, 0.9), OUTLINE);
+    }
 }

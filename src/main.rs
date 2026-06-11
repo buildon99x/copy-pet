@@ -1,13 +1,15 @@
-//! DeskCat — a desktop cat that types along with you.
+//! ClipCat — a desktop cat that manages your clipboard.
 //!
-//! The simulation and rendering are platform-agnostic (`deskcat::pet`,
-//! `deskcat::render`); the OS event loop, window and global input hooks live
-//! in `deskcat::platform`, which selects the native Win32 backend on Windows
-//! and a portable `winit`/`softbuffer`/`rdev` backend on macOS and Linux.
+//! The simulation, clipboard store and rendering are platform-agnostic
+//! (`clipcat::pet`, `clipcat::clipboard`, `clipcat::render`); the OS event
+//! loop, window, clipboard watcher and global input hooks live in
+//! `clipcat::platform`, which selects the native Win32 backend on Windows
+//! and a portable `winit`/`softbuffer`/`rdev`/`arboard` backend on macOS
+//! and Linux.
 
 // Hide the console window on release Windows builds (GUI subsystem).
 #![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
 
 fn main() {
-    deskcat::platform::run();
+    clipcat::platform::run();
 }

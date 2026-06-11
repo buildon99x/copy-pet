@@ -1,8 +1,12 @@
 //! Persistent state: lifetime stats, daily stats, settings.
-//! Saved as JSON under %APPDATA%\DeskCat\state.json.
+//! Saved as JSON under %APPDATA%\ClipCat\state.json (clip history lives in
+//! clips.json beside it — see [`crate::clipboard`]). A pre-2.0 DeskCat
+//! config dir is migrated on first launch.
 
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
+
+use crate::i18n::Lang;
 
 #[derive(Serialize, Deserialize, Clone)]
 #[serde(default)]
@@ -17,14 +21,20 @@ pub struct Persist {
     pub sound_mode: u8,    // 0 off, 1 events only, 2 taps + events
     pub bubble_pinned: bool,
     pub locked: bool,
+    /// "en" / "ko"; empty means "not chosen yet" -> detected from the OS.
+    pub lang: String,
+    /// When false, copy events are ignored (privacy pause).
+    pub clip_capture: bool,
     // lifetime
     pub total_keys: u64,
     pub total_clicks: u64,
+    pub total_copies: u64,
     pub total_xp: u64,
     // daily
     pub today: String,
     pub keys_today: u64,
     pub clicks_today: u64,
+    pub copies_today: u64,
     pub active_min_today: u32,
 }
 
@@ -39,45 +49,71 @@ impl Default for Persist {
             sound_mode: 1,
             bubble_pinned: false,
             locked: false,
+            lang: String::new(),
+            clip_capture: true,
             total_keys: 0,
             total_clicks: 0,
+            total_copies: 0,
             total_xp: 0,
             today: String::new(),
             keys_today: 0,
             clicks_today: 0,
+            copies_today: 0,
             active_min_today: 0,
         }
     }
 }
 
 /// Per-user config directory, following each platform's convention:
-/// Windows `%APPDATA%\DeskCat`, macOS `~/Library/Application Support/DeskCat`,
-/// Linux `$XDG_CONFIG_HOME/DeskCat` (or `~/.config/DeskCat`).
-fn state_dir() -> Option<PathBuf> {
+/// Windows `%APPDATA%\ClipCat`, macOS `~/Library/Application Support/ClipCat`,
+/// Linux `$XDG_CONFIG_HOME/ClipCat` (or `~/.config/ClipCat`).
+fn dir_named(name: &str) -> Option<PathBuf> {
     #[cfg(windows)]
     {
-        std::env::var_os("APPDATA").map(|a| PathBuf::from(a).join("DeskCat"))
+        std::env::var_os("APPDATA").map(|a| PathBuf::from(a).join(name))
     }
     #[cfg(target_os = "macos")]
     {
         std::env::var_os("HOME")
-            .map(|h| PathBuf::from(h).join("Library/Application Support/DeskCat"))
+            .map(|h| PathBuf::from(h).join("Library/Application Support").join(name))
     }
     #[cfg(all(unix, not(target_os = "macos")))]
     {
         std::env::var_os("XDG_CONFIG_HOME")
             .map(PathBuf::from)
             .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".config")))
-            .map(|base| base.join("DeskCat"))
+            .map(|base| base.join(name))
     }
 }
 
+pub fn config_dir() -> Option<PathBuf> {
+    dir_named("ClipCat")
+}
+
 fn state_file() -> Option<PathBuf> {
-    state_dir().map(|d| d.join("state.json"))
+    config_dir().map(|d| d.join("state.json"))
+}
+
+/// One-time migration of a pre-2.0 "DeskCat" config dir: copies the files
+/// into the ClipCat dir if the new one doesn't exist yet.
+fn migrate_legacy_dir() {
+    let (Some(old), Some(new)) = (dir_named("DeskCat"), config_dir()) else {
+        return;
+    };
+    if new.join("state.json").exists() || !old.join("state.json").exists() {
+        return;
+    }
+    let _ = std::fs::create_dir_all(&new);
+    for f in ["state.json", "clips.json"] {
+        if old.join(f).exists() {
+            let _ = std::fs::copy(old.join(f), new.join(f));
+        }
+    }
 }
 
 impl Persist {
     pub fn load() -> Persist {
+        migrate_legacy_dir();
         let mut st: Persist = state_file()
             .and_then(|p| std::fs::read_to_string(p).ok())
             .and_then(|s| serde_json::from_str(&s).ok())
@@ -87,18 +123,30 @@ impl Persist {
             st.today = today;
             st.keys_today = 0;
             st.clicks_today = 0;
+            st.copies_today = 0;
             st.active_min_today = 0;
+        }
+        if Lang::from_code(&st.lang).is_none() {
+            st.lang = detect_lang().code().to_string();
         }
         st
     }
 
     pub fn save(&self) {
-        if let (Some(dir), Some(file)) = (state_dir(), state_file()) {
+        if let (Some(dir), Some(file)) = (config_dir(), state_file()) {
             let _ = std::fs::create_dir_all(&dir);
             if let Ok(json) = serde_json::to_string_pretty(self) {
                 let _ = std::fs::write(file, json);
             }
         }
+    }
+
+    pub fn lang(&self) -> Lang {
+        Lang::from_code(&self.lang).unwrap_or(Lang::En)
+    }
+
+    pub fn set_lang(&mut self, lang: Lang) {
+        self.lang = lang.code().to_string();
     }
 
     /// Resets daily counters if the local date rolled over.
@@ -108,12 +156,39 @@ impl Persist {
             self.today = today;
             self.keys_today = 0;
             self.clicks_today = 0;
+            self.copies_today = 0;
             self.active_min_today = 0;
             true
         } else {
             false
         }
     }
+}
+
+/// Default UI language from the OS (Korean locale -> Korean, else English).
+/// Like `today_string`, this is a tiny per-OS leaf the core may call.
+#[cfg(windows)]
+pub fn detect_lang() -> Lang {
+    use windows_sys::Win32::Globalization::GetUserDefaultUILanguage;
+    const LANG_KOREAN: u16 = 0x12;
+    let id = unsafe { GetUserDefaultUILanguage() };
+    if id & 0x3FF == LANG_KOREAN {
+        Lang::Ko
+    } else {
+        Lang::En
+    }
+}
+
+#[cfg(not(windows))]
+pub fn detect_lang() -> Lang {
+    for var in ["LC_ALL", "LC_MESSAGES", "LANG"] {
+        if let Ok(v) = std::env::var(var) {
+            if !v.is_empty() {
+                return if v.starts_with("ko") { Lang::Ko } else { Lang::En };
+            }
+        }
+    }
+    Lang::En
 }
 
 /// Local date as "YYYY-MM-DD". `std` has no local-time support, so each
@@ -171,6 +246,15 @@ pub struct AccessoryDef {
     pub name_en: &'static str,
 }
 
+impl AccessoryDef {
+    pub fn name(&self, lang: Lang) -> &'static str {
+        match lang {
+            Lang::En => self.name_en,
+            Lang::Ko => self.name_kr,
+        }
+    }
+}
+
 /// Index in this array + 1 == Persist::accessory id (0 = none).
 pub const ACCESSORIES: [AccessoryDef; 6] = [
     AccessoryDef { level: 2, name_kr: "빨간 목도리", name_en: "RED SCARF" },
@@ -212,6 +296,7 @@ mod tests {
         for acc in ACCESSORIES.iter() {
             assert!(acc.level >= 2 && acc.level <= 99);
             assert!(!acc.name_en.is_empty());
+            assert!(!acc.name_kr.is_empty());
         }
     }
 
@@ -221,5 +306,20 @@ mod tests {
         assert_eq!(s.len(), 10, "YYYY-MM-DD");
         assert_eq!(s.as_bytes()[4], b'-');
         assert_eq!(s.as_bytes()[7], b'-');
+    }
+
+    #[test]
+    fn old_state_json_still_deserializes() {
+        // pre-2.0 state.json (no lang / clip fields) must load via defaults
+        let old = r#"{"pos_x":10,"pos_y":20,"has_pos":true,"scale_idx":1,
+            "accessory":2,"sound_mode":1,"bubble_pinned":false,"locked":false,
+            "total_keys":5000,"total_clicks":900,"total_xp":12000,
+            "today":"2025-01-01","keys_today":1,"clicks_today":2,
+            "active_min_today":3}"#;
+        let st: Persist = serde_json::from_str(old).unwrap();
+        assert_eq!(st.total_keys, 5000);
+        assert!(st.clip_capture, "clip capture defaults on");
+        assert_eq!(st.total_copies, 0);
+        assert!(st.lang.is_empty());
     }
 }
