@@ -20,6 +20,7 @@ use crate::pet::Pet;
 use crate::state::{Persist, ACCESSORIES};
 use std::num::NonZeroU32;
 use std::rc::Rc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{Receiver, Sender};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -52,6 +53,9 @@ struct PortableApp {
     // clipboard
     clip_rx: Receiver<String>,
     suppress: Suppress,
+    /// Mirror of `st.clip_capture` for the watcher thread: while false the
+    /// clipboard is not even read.
+    capture_flag: Arc<AtomicBool>,
     // interaction
     cursor: PhysicalPosition<f64>,
     mouse_down: bool,
@@ -62,7 +66,12 @@ struct PortableApp {
 }
 
 impl PortableApp {
-    fn new(pet: Pet, clip_rx: Receiver<String>, suppress: Suppress) -> Self {
+    fn new(
+        pet: Pet,
+        clip_rx: Receiver<String>,
+        suppress: Suppress,
+        capture_flag: Arc<AtomicBool>,
+    ) -> Self {
         let (w, h) = pet.canvas_size();
         PortableApp {
             pet,
@@ -75,6 +84,7 @@ impl PortableApp {
             last_frame: Instant::now(),
             clip_rx,
             suppress,
+            capture_flag,
             cursor: PhysicalPosition::new(0.0, 0.0),
             mouse_down: false,
             dragging: false,
@@ -395,6 +405,8 @@ impl ApplicationHandler for PortableApp {
         if now.duration_since(self.last_frame) >= TICK {
             self.last_frame = now;
             // copy events observed by the clipboard watcher
+            self.capture_flag
+                .store(self.pet.st.clip_capture, Ordering::Relaxed);
             while let Ok(text) = self.clip_rx.try_recv() {
                 self.pet.on_copy(text, None, None);
             }
@@ -432,17 +444,28 @@ fn spawn_global_input() {
 
 /// Spawns the clipboard watcher: polls `arboard` for text changes and sends
 /// new copies down the channel. Skips (once) whatever we set ourselves via
-/// the shared `suppress` marker, and ignores whatever was already on the
-/// clipboard at startup.
-fn spawn_clipboard_watcher(tx: Sender<String>, suppress: Suppress) {
+/// the shared `suppress` marker, ignores whatever was already on the
+/// clipboard at startup, and — while capture is paused — doesn't read the
+/// clipboard at all (resyncing silently on resume so paused-time copies are
+/// never retroactively captured).
+fn spawn_clipboard_watcher(tx: Sender<String>, suppress: Suppress, capture: Arc<AtomicBool>) {
     std::thread::spawn(move || {
         let Ok(mut cb) = arboard::Clipboard::new() else {
             return; // no clipboard (e.g. pure Wayland without XWayland)
         };
         let mut last: Option<String> = cb.get_text().ok();
+        let mut paused = false;
         loop {
             std::thread::sleep(CLIP_POLL);
+            if !capture.load(Ordering::Relaxed) {
+                paused = true;
+                continue;
+            }
             let Ok(text) = cb.get_text() else { continue };
+            if std::mem::take(&mut paused) {
+                last = Some(text); // resume: resync without emitting
+                continue;
+            }
             if last.as_deref() == Some(text.as_str()) {
                 continue;
             }
@@ -467,12 +490,13 @@ pub fn run() {
 
     let (tx, rx) = std::sync::mpsc::channel();
     let suppress: Suppress = Arc::new(Mutex::new(None));
-    spawn_clipboard_watcher(tx, suppress.clone());
-
     let st = Persist::load();
+    let capture_flag = Arc::new(AtomicBool::new(st.clip_capture));
+    spawn_clipboard_watcher(tx, suppress.clone(), capture_flag.clone());
+
     let mut pet = Pet::new(st);
     pet.set_panel_hint("C / ESC");
-    let mut app = PortableApp::new(pet, rx, suppress);
+    let mut app = PortableApp::new(pet, rx, suppress, capture_flag);
 
     let event_loop = match EventLoop::new() {
         Ok(el) => el,

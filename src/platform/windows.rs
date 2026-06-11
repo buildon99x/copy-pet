@@ -999,20 +999,27 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
             0
         }
         WM_CLIPBOARDUPDATE => {
-            // read first (cheap, no app borrow), then feed the pet
-            let text = read_clipboard_text(hwnd);
-            if let Some(text) = text {
-                with_app(|a| {
-                    if a.suppress_clip.as_deref() == Some(text.as_str()) {
-                        a.suppress_clip = None;
-                        return;
-                    }
-                    if !a.pet.st.clip_capture {
-                        return;
-                    }
-                    let (source, badge) = clipboard_source();
-                    a.pet.on_copy(text, source, badge);
-                });
+            // while capture is paused the clipboard is not even read
+            let capture = with_app(|a| {
+                if !a.pet.st.clip_capture {
+                    a.suppress_clip = None; // don't let a stale marker linger
+                    false
+                } else {
+                    true
+                }
+            })
+            .unwrap_or(false);
+            if capture {
+                if let Some(text) = read_clipboard_text(hwnd) {
+                    with_app(|a| {
+                        if a.suppress_clip.as_deref() == Some(text.as_str()) {
+                            a.suppress_clip = None;
+                            return;
+                        }
+                        let (source, badge) = clipboard_source();
+                        a.pet.on_copy(text, source, badge);
+                    });
+                }
             }
             0
         }
