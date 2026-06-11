@@ -1,4 +1,4 @@
-//! Dev tool: regenerates assets/deskcat.ico from the vector cat art.
+//! Dev tool: regenerates assets/clipcat.ico from the vector cat art.
 //! Run once with `cargo run --bin gen_icon`; the result is committed and
 //! embedded into the exe by build.rs.
 
@@ -54,7 +54,7 @@ fn main() {
     let mut images = Vec::new();
     for &s in &sizes {
         let mut pm = Pixmap::new(s, s).unwrap();
-        deskcat::render::draw_icon_scaled(&mut pm, s as f32 / 32.0);
+        clipcat::render::draw_icon_scaled(&mut pm, s as f32 / 32.0);
         let png = s == 256;
         let data = if png {
             pm.encode_png().unwrap()
@@ -86,6 +86,6 @@ fn main() {
     }
 
     std::fs::create_dir_all("assets").unwrap();
-    std::fs::write("assets/deskcat.ico", &ico).unwrap();
-    println!("wrote assets/deskcat.ico ({} bytes)", ico.len());
+    std::fs::write("assets/clipcat.ico", &ico).unwrap();
+    println!("wrote assets/clipcat.ico ({} bytes)", ico.len());
 }

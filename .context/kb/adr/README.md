@@ -11,3 +11,5 @@ rather than rewrite.
 | [0002](0002-audio-strategy.md) | winmm audio on Windows, silent no-op elsewhere (v1) | Accepted |
 | [0003](0003-portable-rendering-card.md) | Opaque "card" on the portable backend (no per-pixel alpha) | Accepted |
 | [0004](0004-portable-settings-keyboard.md) | Keyboard shortcuts instead of a tray menu on portable | Accepted |
+| [0005](0005-clipboard-manager.md) | Clipboard manager: native listener on Windows, arboard polling on portable, text-only | Accepted |
+| [0006](0006-i18n-vector-hangul.md) | English/Korean i18n with an in-code vector Hangul font | Accepted |

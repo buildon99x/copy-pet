@@ -1,95 +1,188 @@
-# 🐱 DeskCat — 데스크탑 타이핑 컴패니언
+# 🐱 ClipCat — the desktop cat that eats your clipboard
 
-키보드와 함께 자라는 데스크탑 고양이. Bongo Cat처럼 여러분의 타이핑을 따라 치고,
-열심히 일할수록 레벨이 올라 새 액세서리를 잠금해제합니다.
+*[한국어는 아래에 ↓](#-clipcat--클립보드를-먹는-데스크탑-고양이)*
 
-**Windows · macOS · Linux** 지원 — Windows는 완전 투명·클릭 통과 네이티브 빌드,
-macOS/Linux는 동일한 코어를 공유하는 portable 빌드로 동작합니다.
+A clipboard manager with a heartbeat. A small cat sits at the bottom of your
+screen and types along with you (à la Bongo Cat) — and **every time you copy
+something, anywhere, it eats a fish badged with the app you copied from** and
+files the clip into its history. Click a clip to copy it back. Pin, search,
+delete — all inside one tiny (~1 MB) native binary.
 
-![DeskCat](assets/screenshot.png)
+**Windows · macOS · Linux** — fully transparent click-through native build on
+Windows; a portable build sharing the same core on macOS/Linux.
+
+![ClipCat](assets/screenshot.png)
+
+## Features
+
+- **Clipboard history** — every text copy is captured system-wide and stored
+  locally (up to 100 clips + pinned clips that never expire).
+- **The fish** 🐟 — each copy sends a fish flying into the cat's mouth, tinted
+  and badged with the source app (its real icon on Windows, an initial
+  elsewhere). Copying feeds the cat: +5 XP per clip.
+- **Panel** — `Ctrl+Shift+V` (Windows), middle-click, or the tray/`C` key
+  opens the history: type to search (Korean included), click to copy back,
+  ★ to pin, ✕ to delete, 🗑 to clear, ⏸ to pause capture (privacy pause).
+- **English + Korean** — full UI in both, switchable at runtime; Hangul is
+  rendered by an in-code vector font (no font files).
+- **Bongo-cat core loop** — global input *counts* drive paw taps, XP and
+  levels: 2 XP/key, 1 XP/click & scroll, 5 XP/copy. Level-ups unlock
+  accessories (scarf, glasses, beanie, headphones, crown, wizard hat).
+- **Today's stats bubble** — hover the cat: keys, clicks, copies, active time.
+- **Alive** — breathing, blinking, tail, sweat when you type fast, sleep
+  after 75 s idle, hearts when petted.
+- **Unobtrusive & light** — always-on-top without stealing focus, transparent
+  pixels click through (Windows), single exe, no installer, ~12-16 MB RAM.
+
+## Controls
+
+| Gesture | Effect |
+|---------|--------|
+| Copy anywhere (Ctrl+C) | Cat eats a fish; clip saved to history |
+| `Ctrl+Shift+V` (Windows) / middle-click | Toggle the clipboard panel |
+| Click a clip row | Copy it back to the clipboard |
+| Star / ✕ on a row | Pin / delete the clip |
+| Type while panel is open | Search (arrows + Enter work too; Esc closes) |
+| Drag | Move the pet (unless position-locked) |
+| Click | Boop (squash bounce, +1 XP) |
+| Double-click | Pet it (+10 XP, hearts) |
+| Hover | Today's stats bubble |
+| Right-click (Windows) | Menu: clipboard, capture pause, size, accessory, sound, lock, language, autostart, reset |
+| Tray icon click (Windows) | Hide/show the cat |
+
+### Portable build (macOS / Linux) keyboard shortcuts
+
+With the window focused (and the panel closed):
+`C` clipboard panel · `S` size · `A` accessory · `M` sound · `B` stats bubble ·
+`L` lock · `G` language · `Q`/`Esc` quit.
+
+## Platform differences
+
+| | Windows (native) | macOS / Linux (portable) |
+|---|---|---|
+| Window | fully transparent, click-through | opaque "card" (softbuffer has no per-pixel alpha) |
+| Clipboard watch | `WM_CLIPBOARDUPDATE` listener | `arboard` polling (~0.4 s) |
+| Fish badge | real app icon | colored initial |
+| Panel hotkey | global `Ctrl+Shift+V` | `C` / middle-click (window-local) |
+| Settings UI | tray menu | keyboard shortcuts |
+| Sound | winmm synth | (silent in v2) |
+| Global input | `WH_*_LL` hooks | `rdev` (macOS needs Accessibility; X11 only on Linux) |
+
+Design history lives in [`.context/kb/adr/`](.context/kb/adr/), the spec in
+[`docs/specs/clipcat-spec.md`](docs/specs/clipcat-spec.md).
+
+## Build
+
+```bash
+# default backend (Windows=native, macOS/Linux=portable)
+cargo build --release          # binary: target/release/clipcat[.exe]
+
+# test the portable backend on Windows
+cargo build --release --features portable
+
+# regenerate the icon / preview frames after art changes
+cargo run --bin gen_icon
+cargo run --release --example preview
+```
+
+Requires Rust (MSVC toolchain on Windows). macOS/Linux need system libraries
+for the portable stack — see the *Install Linux system dependencies* step in
+the [CI workflow](.github/workflows/ci.yml). CI builds all three OSes.
+
+## Data & privacy
+
+Everything stays on your machine — **there is no network code in the binary**.
+
+- Input hooks count keystrokes/clicks only; **which** key is pressed is never
+  read, stored or transmitted (`src/input.rs` atomic counters).
+- Clipboard history is stored locally in `clips.json`; capture can be paused
+  any time (⏸ in the panel / tray menu), clips > 256 KB are ignored, and
+  stats/settings live in `state.json` next to it:
+  Windows `%APPDATA%\ClipCat`, macOS `~/Library/Application Support/ClipCat`,
+  Linux `$XDG_CONFIG_HOME/ClipCat`. A pre-2.0 `DeskCat` config dir is
+  migrated automatically.
+
+## Tech notes
+
+- No GUI framework — [tiny-skia](https://github.com/linebender/tiny-skia)
+  vector rendering + direct OS APIs per backend.
+- One platform-agnostic core (`pet`, `clipboard`, `panel`, `render`, `state`,
+  `i18n`) + two backends: native Win32 (layered window, tray, clipboard
+  listener) and portable (`winit` + `softbuffer` + `rdev` + `arboard`).
+- Icon, sounds, ASCII font **and the Korean vector font** are all generated
+  from code — no bundled assets, single binary.
+
+---
+
+# 🐱 ClipCat — 클립보드를 먹는 데스크탑 고양이
+
+살아있는 클립보드 매니저. 화면 아래에 앉은 고양이가 봉고캣처럼 타이핑을 따라
+치고 — **어디서든 복사(Ctrl+C)할 때마다 복사한 앱의 뱃지가 붙은 생선을 냠**
+하고 먹으며 클립을 히스토리에 저장합니다. 클립을 클릭하면 다시 복사되고,
+고정·검색·삭제까지 — 전부 ~1MB짜리 네이티브 바이너리 하나로.
 
 ## 특징
 
-- **봉고캣 코어 루프** — 키보드/마우스 입력을 전역으로 감지해 고양이가 앞발로 키보드를 따라 칩니다.
-- **성장 시스템** — 키 입력 1회 = 2 XP, 클릭/스크롤 = 1 XP. 레벨업하면 액세서리가 잠금해제되고 자동 장착됩니다.
-- **생산성 통계** — 고양이에 마우스를 올리면 오늘의 키 입력 / 클릭 / 활동 시간이 말풍선으로 표시됩니다.
-- **살아있는 애니메이션** — 호흡, 깜박임, 꼬리 흔들기, 빠른 타이핑 시 땀방울, 75초 이상 자리를 비우면 잠들기(Zzz), 더블클릭으로 쓰다듬기(하트).
-- **방해 없는 디자인** — 항상 위에 떠 있지만 포커스를 훔치지 않고, 투명한 부분은 클릭이 통과합니다.
-- **가벼움** — 단일 exe (~600KB), 메모리 ~11MB, CPU ~3% (유휴 시 더 낮음). 설치 불필요.
-
-## 레벨 보상
-
-| 레벨 | 잠금해제 |
-|-----|---------|
-| 2  | 빨간 목도리 |
-| 3  | 동그란 안경 |
-| 5  | 파란 비니 |
-| 7  | 헤드폰 |
-| 10 | 황금 왕관 |
-| 15 | 마법사 모자 |
+- **클립보드 히스토리** — 시스템 전역의 텍스트 복사를 감지해 로컬에 저장
+  (히스토리 100개 + 만료되지 않는 고정 클립).
+- **생선** 🐟 — 복사할 때마다 출처 앱의 아이콘(Windows) 또는 이니셜 뱃지가
+  붙은 생선이 고양이 입으로 날아갑니다. 복사 1회 = +5 XP.
+- **패널** — `Ctrl+Shift+V`(Windows), 휠클릭, 트레이 메뉴 또는 `C` 키로 열기:
+  타이핑으로 검색(한글 지원), 클릭으로 재복사, ★ 고정, ✕ 삭제, 🗑 비우기,
+  ⏸ 수집 일시정지(프라이버시 모드).
+- **영어 + 한국어** — 런타임에 전환 가능한 완전한 양국어 UI. 한글은 폰트
+  파일 없이 코드로 생성한 벡터 폰트로 렌더링합니다.
+- **봉고캣 코어 루프** — 키 1회 = 2 XP, 클릭/스크롤 = 1 XP, 복사 = 5 XP.
+  레벨업하면 액세서리가 잠금해제됩니다 (목도리·안경·비니·헤드폰·왕관·마법사 모자).
+- **오늘의 통계** — 마우스를 올리면 키 입력 / 클릭 / 복사 / 활동 시간 표시.
+- **살아있는 애니메이션** — 호흡, 깜박임, 꼬리, 빠른 타이핑 시 땀방울, 75초
+  방치 시 잠들기, 더블클릭 쓰다듬기.
+- **가벼움** — 포커스를 훔치지 않는 항상 위 창, 투명 부분 클릭 통과(Windows),
+  단일 exe, 설치 불필요, 메모리 ~12-16MB.
 
 ## 조작법
 
 | 동작 | 효과 |
 |------|------|
-| 드래그 | 위치 이동 |
-| 클릭 | 콩— (살짝 눌림) |
+| 어디서든 복사 (Ctrl+C) | 고양이가 생선을 먹고 클립 저장 |
+| `Ctrl+Shift+V` (Windows) / 휠클릭 | 클립보드 패널 열기/닫기 |
+| 클립 행 클릭 | 클립보드로 재복사 |
+| 행의 별 / ✕ | 고정 / 삭제 |
+| 패널 열고 타이핑 | 검색 (방향키 + Enter, Esc로 닫기) |
+| 드래그 | 위치 이동 (잠금 시 제외) |
+| 클릭 | 콩— (+1 XP) |
 | 더블클릭 | 쓰다듬기 (+10 XP, 하트) |
 | 마우스 올리기 | 오늘의 통계 말풍선 |
-| 우클릭 (Windows 네이티브) | 설정 메뉴 (크기 · 액세서리 · 소리 · 위치 잠금 · 자동 실행 · 초기화) |
+| 우클릭 (Windows) | 메뉴: 클립보드 · 수집 일시정지 · 크기 · 액세서리 · 소리 · 위치 잠금 · 언어 · 자동 실행 · 초기화 |
 | 트레이 아이콘 클릭 (Windows) | 고양이 숨기기/보이기 |
 
-### portable 빌드 (macOS / Linux) 키보드 단축키
+### portable 빌드 (macOS / Linux) 단축키
 
-시스템 트레이 대신 키보드로 설정합니다 (창을 클릭해 포커스를 준 뒤):
+창에 포커스를 준 뒤 (패널이 닫힌 상태에서):
+`C` 클립보드 패널 · `S` 크기 · `A` 액세서리 · `M` 소리 · `B` 통계 고정 ·
+`L` 위치 잠금 · `G` 언어 · `Q`/`Esc` 종료
 
-`S` 크기 · `A` 액세서리(잠금해제된 것만) · `M` 소리 · `B` 통계 고정 · `L` 위치 잠금 · `Q`/`Esc` 종료
+## 데이터 & 프라이버시
 
-## 플랫폼별 차이
+모든 데이터는 이 PC에만 저장됩니다 — **바이너리에 네트워크 코드가 없습니다**.
 
-| | Windows (네이티브) | macOS / Linux (portable) |
-|---|---|---|
-| 창 | 완전 투명 · 클릭 통과 (레이어드 윈도우) | 불투명 "카드" 위에 표시 (softbuffer는 픽셀 단위 투명 미지원) |
-| 설정 UI | 트레이 우클릭 메뉴 | 키보드 단축키 |
-| 소리 | winmm 합성음 | (v1은 무음) |
-| 전역 입력 | `WH_*_LL` 훅 | `rdev` (macOS는 손쉬운 사용 권한 필요, Linux는 X11에서만) |
-
-자세한 설계 배경은 [`.context/kb/adr/`](.context/kb/adr/), 스펙은
-[`docs/specs/deskcat-spec.md`](docs/specs/deskcat-spec.md) 참고.
+- 입력 훅은 횟수만 셉니다. 어떤 키인지는 절대 읽지/저장하지/전송하지
+  않습니다 (`src/input.rs`의 원자 카운터).
+- 클립 히스토리는 로컬 `clips.json`에 저장되며 언제든 수집을 일시정지할 수
+  있습니다 (패널 ⏸ / 트레이 메뉴). 256KB 초과 텍스트는 무시됩니다.
+  저장 위치: Windows `%APPDATA%\ClipCat`, macOS
+  `~/Library/Application Support/ClipCat`, Linux `$XDG_CONFIG_HOME/ClipCat`.
+  기존 DeskCat(1.x) 설정은 자동 마이그레이션됩니다.
 
 ## 빌드
 
 ```bash
-# 기본 백엔드 (Windows=네이티브, macOS/Linux=portable)
-cargo build --release          # 실행 파일: target/release/deskcat[.exe]
-
-# Windows에서 portable 백엔드를 테스트
-cargo build --release --features portable
-
-# 아이콘 재생성 (render.rs 아트 변경 후)
-cargo run --bin gen_icon
+cargo build --release                       # 실행 파일: target/release/clipcat[.exe]
+cargo build --release --features portable   # Windows에서 portable 백엔드 테스트
+cargo run --bin gen_icon                    # 아트 변경 후 아이콘 재생성
+cargo run --release --example preview       # 렌더링 프리뷰 PNG 생성
 ```
 
-요구 사항: Rust (Windows는 MSVC 툴체인). macOS/Linux는 portable 스택용 시스템
-라이브러리가 필요합니다 — 정확한 목록은 [CI 워크플로](.github/workflows/ci.yml)의
-*Install Linux system dependencies* 단계를 참고하세요. 세 OS 모두에서의 빌드는
-CI(GitHub Actions)가 검증합니다.
-
-## 데이터
-
-통계와 설정은 OS별 설정 디렉터리의 `state.json`에 저장됩니다:
-Windows `%APPDATA%\DeskCat`, macOS `~/Library/Application Support/DeskCat`,
-Linux `$XDG_CONFIG_HOME/DeskCat`. Windows의 "시작 시 자동 실행"은 `HKCU\...\Run`
-레지스트리 키를 사용합니다.
-
-## 기술 노트
-
-- GUI 프레임워크 없음 — [tiny-skia](https://github.com/linebender/tiny-skia) 벡터 렌더링 + 각 OS API 직접 사용
-- 플랫폼 분리: 네이티브 Win32 백엔드(레이어드 윈도우·트레이) / portable 백엔드(`winit` + `softbuffer` + `rdev`), 공통 코어(`pet`, `render`, `state`)
-- 전역 입력은 키 내용을 읽지 않고 **횟수만** 셉니다 (`src/input.rs`의 원자 카운터)
-- 효과음·아이콘·폰트 모두 코드에서 생성 — 번들 에셋 없음 (단일 바이너리)
-
-## 프라이버시
-
-DeskCat은 어떤 키가 눌렸는지 **기록하지 않습니다**. 입력 훅 콜백은 이벤트 횟수를
-세는 원자 카운터만 증가시키며, 네트워크 통신이 전혀 없습니다.
+요구 사항: Rust (Windows는 MSVC). macOS/Linux 시스템 라이브러리는
+[CI 워크플로](.github/workflows/ci.yml)의 *Install Linux system dependencies*
+단계를 참고하세요.

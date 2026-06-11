@@ -1,34 +1,45 @@
 //! Portable backend for macOS, Linux and (with `--features portable`) Windows.
 //!
-//! Windowing via `winit`, software presentation via `softbuffer`, and global
-//! keyboard/mouse activity via `rdev` running on its own listener thread. The
-//! pet is drawn on an opaque rounded "card" because `softbuffer` cannot carry
+//! Windowing via `winit`, software presentation via `softbuffer`, global
+//! keyboard/mouse activity via `rdev` on its own listener thread, and the
+//! clipboard via `arboard` (a polling watcher thread; ADR-0005). The pet is
+//! drawn on an opaque rounded "card" because `softbuffer` cannot carry
 //! per-pixel alpha to the desktop compositor (the native Win32 backend keeps
 //! the fully transparent, click-through look). See ADR-0001 / ADR-0003.
 //!
 //! Interactions: drag to move, double-click to pet, single-click to bounce,
-//! hover to show today's stats. Settings have no system tray here; when the
-//! window is focused these keys apply (also shown via `--help`-style tooltip):
-//!   S size · A accessory · M sound · B stats bubble · L lock · Q/Esc quit.
+//! middle-click to toggle the clipboard panel, hover to show today's stats.
+//! Settings have no system tray here; when the window is focused these keys
+//! apply: S size · A accessory · M sound · B stats bubble · L lock ·
+//! G language · C clipboard panel · Q/Esc quit. While the panel is open the
+//! keyboard drives it instead (type to search, arrows/enter, Esc closes).
 
 use crate::input;
-use crate::pet::{window_size, Pet};
+use crate::panel::NavKey;
+use crate::pet::Pet;
 use crate::state::{Persist, ACCESSORIES};
 use std::num::NonZeroU32;
 use std::rc::Rc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::mpsc::{Receiver, Sender};
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use winit::application::ApplicationHandler;
 use winit::dpi::{PhysicalPosition, PhysicalSize};
-use winit::event::{ElementState, MouseButton, MouseScrollDelta, WindowEvent};
+use winit::event::{ElementState, Ime, MouseButton, MouseScrollDelta, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
 use winit::keyboard::{KeyCode, PhysicalKey};
 use winit::window::{Window, WindowId, WindowLevel};
 
 const TICK: Duration = Duration::from_millis(33);
 const DBLCLICK: Duration = Duration::from_millis(350);
+/// Clipboard poll cadence (arboard has no change notifications).
+const CLIP_POLL: Duration = Duration::from_millis(400);
 
 type Surface = softbuffer::Surface<Rc<Window>, Rc<Window>>;
+/// Text we just wrote to the clipboard ourselves; the watcher skips it once.
+type Suppress = Arc<Mutex<Option<String>>>;
 
 struct PortableApp {
     pet: Pet,
@@ -39,6 +50,12 @@ struct PortableApp {
     w: u32,
     h: u32,
     last_frame: Instant,
+    // clipboard
+    clip_rx: Receiver<String>,
+    suppress: Suppress,
+    /// Mirror of `st.clip_capture` for the watcher thread: while false the
+    /// clipboard is not even read.
+    capture_flag: Arc<AtomicBool>,
     // interaction
     cursor: PhysicalPosition<f64>,
     mouse_down: bool,
@@ -49,8 +66,13 @@ struct PortableApp {
 }
 
 impl PortableApp {
-    fn new(pet: Pet) -> Self {
-        let (w, h) = window_size(pet.scale());
+    fn new(
+        pet: Pet,
+        clip_rx: Receiver<String>,
+        suppress: Suppress,
+        capture_flag: Arc<AtomicBool>,
+    ) -> Self {
+        let (w, h) = pet.canvas_size();
         PortableApp {
             pet,
             window: None,
@@ -60,6 +82,9 @@ impl PortableApp {
             w: w as u32,
             h: h as u32,
             last_frame: Instant::now(),
+            clip_rx,
+            suppress,
+            capture_flag,
             cursor: PhysicalPosition::new(0.0, 0.0),
             mouse_down: false,
             dragging: false,
@@ -69,13 +94,13 @@ impl PortableApp {
         }
     }
 
-    /// Resizes the window/buffers to the current scale, keeping the bottom
-    /// edge roughly anchored, then repaints.
-    fn apply_scale(&mut self) {
+    /// Resizes the window/buffers to the wanted size (scale or panel state
+    /// changed), keeping the bottom edge roughly anchored, then repaints.
+    fn apply_size(&mut self) {
         let Some(window) = self.window.clone() else {
             return;
         };
-        let (nw, nh) = window_size(self.pet.scale());
+        let (nw, nh) = self.pet.canvas_size();
         let (nw, nh) = (nw as u32, nh as u32);
 
         // anchor bottom-center
@@ -132,13 +157,22 @@ impl PortableApp {
         self.pet.save();
     }
 
-    /// Applies a keyboard shortcut. Returns true if it requested quit.
+    /// Puts text on the OS clipboard (a clip picked from the panel).
+    fn set_clipboard(&self, text: String) {
+        if let Ok(mut guard) = self.suppress.lock() {
+            *guard = Some(text.clone());
+        }
+        if let Ok(mut cb) = arboard::Clipboard::new() {
+            let _ = cb.set_text(text);
+        }
+    }
+
+    /// Applies a keyboard shortcut (panel closed).
     fn shortcut(&mut self, code: KeyCode, event_loop: &ActiveEventLoop) {
         match code {
             KeyCode::KeyS => {
-                self.pet.st.scale_idx = (self.pet.st.scale_idx + 1) % 3;
-                self.pet.dirty = true;
-                self.apply_scale();
+                self.pet
+                    .set_scale_idx((self.pet.st.scale_idx + 1) % 3);
             }
             KeyCode::KeyA => {
                 // cycle through none + unlocked accessories only
@@ -165,11 +199,43 @@ impl PortableApp {
                 self.pet.st.locked = !self.pet.st.locked;
                 self.pet.dirty = true;
             }
+            KeyCode::KeyG => {
+                let lang = self.pet.lang().toggled();
+                self.pet.st.set_lang(lang);
+                self.pet.dirty = true;
+            }
+            KeyCode::KeyC => self.pet.toggle_panel(),
             KeyCode::KeyQ | KeyCode::Escape => {
                 self.save_position();
                 event_loop.exit();
             }
             _ => {}
+        }
+    }
+
+    /// Keyboard input while the panel is open: search + navigation.
+    fn panel_key(&mut self, event: &winit::event::KeyEvent) {
+        let nav = match event.physical_key {
+            PhysicalKey::Code(KeyCode::ArrowUp) => Some(NavKey::Up),
+            PhysicalKey::Code(KeyCode::ArrowDown) => Some(NavKey::Down),
+            PhysicalKey::Code(KeyCode::PageUp) => Some(NavKey::PageUp),
+            PhysicalKey::Code(KeyCode::PageDown) => Some(NavKey::PageDown),
+            PhysicalKey::Code(KeyCode::Enter | KeyCode::NumpadEnter) => Some(NavKey::Enter),
+            PhysicalKey::Code(KeyCode::Delete) => Some(NavKey::Delete),
+            PhysicalKey::Code(KeyCode::Backspace) => Some(NavKey::Backspace),
+            PhysicalKey::Code(KeyCode::Escape) => Some(NavKey::Esc),
+            _ => None,
+        };
+        if let Some(key) = nav {
+            if let Some(text) = self.pet.panel_nav(key) {
+                self.set_clipboard(text);
+            }
+            return;
+        }
+        if let Some(txt) = &event.text {
+            for c in txt.chars() {
+                self.pet.panel_char(c);
+            }
         }
     }
 }
@@ -193,7 +259,7 @@ impl ApplicationHandler for PortableApp {
         };
 
         let attrs = Window::default_attributes()
-            .with_title("DeskCat")
+            .with_title("ClipCat")
             .with_inner_size(PhysicalSize::new(w as u32, h as u32))
             .with_position(pos)
             .with_decorations(false)
@@ -208,6 +274,8 @@ impl ApplicationHandler for PortableApp {
                 return;
             }
         };
+        // Korean search input needs the IME (composition arrives as Ime::Commit)
+        window.set_ime_allowed(true);
 
         let context = softbuffer::Context::new(window.clone()).ok();
         let surface = context
@@ -231,9 +299,14 @@ impl ApplicationHandler for PortableApp {
             WindowEvent::Focused(f) => self.focused = f,
             WindowEvent::RedrawRequested => self.paint(),
             WindowEvent::CursorEntered { .. } => self.pet.set_hover(true),
-            WindowEvent::CursorLeft { .. } => self.pet.set_hover(false),
+            WindowEvent::CursorLeft { .. } => {
+                self.pet.set_hover(false);
+                self.pet.clear_cursor();
+            }
             WindowEvent::CursorMoved { position, .. } => {
                 self.cursor = position;
+                let (cx, cy) = self.canvas_xy();
+                self.pet.set_cursor(cx, cy);
                 if self.mouse_down && !self.dragging && !self.pet.st.locked {
                     let dx = position.x - self.press_pos.x;
                     let dy = position.y - self.press_pos.y;
@@ -246,50 +319,79 @@ impl ApplicationHandler for PortableApp {
                     }
                 }
             }
-            WindowEvent::MouseInput { state, button, .. } => {
-                if button == MouseButton::Left {
-                    match state {
-                        ElementState::Pressed => {
-                            let now = Instant::now();
-                            let is_double = self
-                                .last_click
-                                .map(|t| now.duration_since(t) < DBLCLICK)
-                                .unwrap_or(false);
-                            if is_double {
-                                self.pet.pet();
-                                self.last_click = None;
-                                self.mouse_down = false;
-                            } else {
-                                self.last_click = Some(now);
-                                self.mouse_down = true;
-                                self.dragging = false;
-                                self.press_pos = self.cursor;
-                            }
-                        }
-                        ElementState::Released => {
-                            if self.mouse_down && !self.dragging {
-                                let (cx, cy) = self.canvas_xy();
-                                self.pet.click_bounce(cx, cy);
+            WindowEvent::MouseInput { state, button, .. } => match button {
+                MouseButton::Left => match state {
+                    ElementState::Pressed => {
+                        let (cx, cy) = self.canvas_xy();
+                        if self.pet.panel_hit(cx, cy) {
+                            // panel interactions act on press; no drag/petting
+                            if let Some(text) = self.pet.panel_click(cx, cy) {
+                                self.set_clipboard(text);
                             }
                             self.mouse_down = false;
+                            self.last_click = None;
+                            return;
+                        }
+                        let now = Instant::now();
+                        let is_double = self
+                            .last_click
+                            .map(|t| now.duration_since(t) < DBLCLICK)
+                            .unwrap_or(false);
+                        if is_double {
+                            self.pet.pet();
+                            self.last_click = None;
+                            self.mouse_down = false;
+                        } else {
+                            self.last_click = Some(now);
+                            self.mouse_down = true;
                             self.dragging = false;
+                            self.press_pos = self.cursor;
                         }
                     }
+                    ElementState::Released => {
+                        if self.mouse_down && !self.dragging {
+                            let (cx, cy) = self.canvas_xy();
+                            let (lx, ly) = self.pet.cat_point(cx, cy);
+                            self.pet.click_bounce(lx, ly);
+                        }
+                        self.mouse_down = false;
+                        self.dragging = false;
+                    }
+                },
+                MouseButton::Middle => {
+                    if state == ElementState::Pressed {
+                        self.pet.toggle_panel();
+                    }
+                }
+                _ => {}
+            },
+            WindowEvent::MouseWheel { delta, .. } => {
+                let dy = match delta {
+                    MouseScrollDelta::LineDelta(_, y) => y,
+                    MouseScrollDelta::PixelDelta(p) => p.y as f32,
+                };
+                let (cx, cy) = self.canvas_xy();
+                if self.pet.panel_hit(cx, cy) {
+                    if dy != 0.0 {
+                        self.pet.panel_wheel(if dy < 0.0 { 1 } else { -1 });
+                    }
+                } else if dy != 0.0 {
+                    // a local scroll over the pet still counts as activity
+                    input::wheel();
                 }
             }
-            WindowEvent::MouseWheel { delta, .. } => {
-                // a local scroll over the pet still counts as activity
-                let moved = match delta {
-                    MouseScrollDelta::LineDelta(_, y) => y != 0.0,
-                    MouseScrollDelta::PixelDelta(p) => p.y != 0.0,
-                };
-                if moved {
-                    input::wheel();
+            WindowEvent::Ime(Ime::Commit(s)) => {
+                if self.pet.panel_open() {
+                    for c in s.chars() {
+                        self.pet.panel_char(c);
+                    }
                 }
             }
             WindowEvent::KeyboardInput { event, .. } => {
                 if event.state == ElementState::Pressed {
-                    if let PhysicalKey::Code(code) = event.physical_key {
+                    if self.pet.panel_open() {
+                        self.panel_key(&event);
+                    } else if let PhysicalKey::Code(code) = event.physical_key {
                         self.shortcut(code, event_loop);
                     }
                 }
@@ -302,9 +404,18 @@ impl ApplicationHandler for PortableApp {
         let now = Instant::now();
         if now.duration_since(self.last_frame) >= TICK {
             self.last_frame = now;
+            // copy events observed by the clipboard watcher
+            self.capture_flag
+                .store(self.pet.st.clip_capture, Ordering::Relaxed);
+            while let Ok(text) = self.clip_rx.try_recv() {
+                self.pet.on_copy(text, None, None);
+            }
             let (k, c, wh) = input::drain();
             let redraw = self.pet.advance(k, c, wh);
             let _ = self.pet.take_level_changed(); // no tray to update here
+            if self.pet.take_size_changed() {
+                self.apply_size();
+            }
             if self.pet.should_autosave() {
                 self.save_position();
             }
@@ -331,12 +442,61 @@ fn spawn_global_input() {
     });
 }
 
+/// Spawns the clipboard watcher: polls `arboard` for text changes and sends
+/// new copies down the channel. Skips (once) whatever we set ourselves via
+/// the shared `suppress` marker, ignores whatever was already on the
+/// clipboard at startup, and — while capture is paused — doesn't read the
+/// clipboard at all (resyncing silently on resume so paused-time copies are
+/// never retroactively captured).
+fn spawn_clipboard_watcher(tx: Sender<String>, suppress: Suppress, capture: Arc<AtomicBool>) {
+    std::thread::spawn(move || {
+        let Ok(mut cb) = arboard::Clipboard::new() else {
+            return; // no clipboard (e.g. pure Wayland without XWayland)
+        };
+        let mut last: Option<String> = cb.get_text().ok();
+        let mut paused = false;
+        loop {
+            std::thread::sleep(CLIP_POLL);
+            if !capture.load(Ordering::Relaxed) {
+                paused = true;
+                continue;
+            }
+            let Ok(text) = cb.get_text() else { continue };
+            if std::mem::take(&mut paused) {
+                last = Some(text); // resume: resync without emitting
+                continue;
+            }
+            if last.as_deref() == Some(text.as_str()) {
+                continue;
+            }
+            last = Some(text.clone());
+            // our own copy-back? consume the marker and skip one event
+            if let Ok(mut guard) = suppress.lock() {
+                if guard.as_deref() == Some(text.as_str()) {
+                    *guard = None;
+                    continue;
+                }
+            }
+            if tx.send(text).is_err() {
+                return;
+            }
+        }
+    });
+}
+
 pub fn run() {
     crate::sound::init();
     spawn_global_input();
 
+    let (tx, rx) = std::sync::mpsc::channel();
+    let suppress: Suppress = Arc::new(Mutex::new(None));
     let st = Persist::load();
-    let mut app = PortableApp::new(Pet::new(st));
+    let capture_flag = Arc::new(AtomicBool::new(st.clip_capture));
+    spawn_clipboard_watcher(tx, suppress.clone(), capture_flag.clone());
+
+    let mut pet = Pet::new(st);
+    pet.set_panel_hint("C / ESC");
+    let mut app = PortableApp::new(pet, rx, suppress, capture_flag);
 
     let event_loop = match EventLoop::new() {
         Ok(el) => el,

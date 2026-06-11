@@ -55,8 +55,8 @@ jobs:
       - name: Upload binary
         uses: actions/upload-artifact@v4
         with:
-          name: deskcat-${{ matrix.os }}
+          name: clipcat-${{ matrix.os }}
           path: |
-            target/release/deskcat
-            target/release/deskcat.exe
+            target/release/clipcat
+            target/release/clipcat.exe
           if-no-files-found: ignore

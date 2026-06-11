@@ -27,6 +27,12 @@ pub fn play_pop() {
     win::play_pop();
 }
 
+/// Crunchy double-bite when the cat eats a copy-event fish.
+pub fn play_nom() {
+    #[cfg(windows)]
+    win::play_nom();
+}
+
 #[cfg(windows)]
 mod win {
     use std::sync::OnceLock;
@@ -99,16 +105,38 @@ mod win {
         wav(&s)
     }
 
+    /// Two quick low "bites" with a pitch drop — the fish nom.
+    fn nom() -> Vec<u8> {
+        let bite = |f0: f32, s: &mut Vec<i16>| {
+            let n = (RATE as f32 * 0.05) as usize;
+            for i in 0..n {
+                let t = i as f32 / RATE as f32;
+                let f = f0 * (1.0 - t * 4.0);
+                let env = (-t * 90.0).exp();
+                let v = (t * f * std::f32::consts::TAU).sin() * 0.7
+                    + (t * f * 2.7 * std::f32::consts::TAU).sin() * 0.3;
+                s.push((v * env * 0.4 * i16::MAX as f32) as i16);
+            }
+        };
+        let mut s = Vec::new();
+        bite(340.0, &mut s);
+        s.extend(std::iter::repeat_n(0i16, (RATE as f32 * 0.035) as usize));
+        bite(270.0, &mut s);
+        wav(&s)
+    }
+
     static TAP_L: OnceLock<Vec<u8>> = OnceLock::new();
     static TAP_R: OnceLock<Vec<u8>> = OnceLock::new();
     static CHIME: OnceLock<Vec<u8>> = OnceLock::new();
     static POP: OnceLock<Vec<u8>> = OnceLock::new();
+    static NOM: OnceLock<Vec<u8>> = OnceLock::new();
 
     pub fn init() {
         TAP_L.get_or_init(|| tap(880.0));
         TAP_R.get_or_init(|| tap(660.0));
         CHIME.get_or_init(chime);
         POP.get_or_init(pop);
+        NOM.get_or_init(nom);
     }
 
     fn play(data: &'static [u8]) {
@@ -137,6 +165,12 @@ mod win {
 
     pub fn play_pop() {
         if let Some(s) = POP.get() {
+            play(s);
+        }
+    }
+
+    pub fn play_nom() {
+        if let Some(s) = NOM.get() {
             play(s);
         }
     }
