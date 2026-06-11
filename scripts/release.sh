@@ -133,8 +133,12 @@ fi
 
 # ---- bump + rotate ---------------------------------------------------------------
 
-# Cargo.toml: first version line is the package version.
-sed -i.bak "0,/^version = \"$CUR\"/s//version = \"$NEW\"/" Cargo.toml && rm -f Cargo.toml.bak
+# Cargo.toml: bump the first version line (the package version). awk, not
+# sed: BSD sed (macOS) silently ignores GNU's 0,/re/ first-match addressing.
+awk -v cur="$CUR" -v ver="$NEW" '
+    !done && $0 == "version = \"" cur "\"" { print "version = \"" ver "\""; done = 1; next }
+    { print }' Cargo.toml > Cargo.toml.tmp && mv Cargo.toml.tmp Cargo.toml
+[ "$(current_version)" = "$NEW" ] || err "failed to bump Cargo.toml to $NEW"
 
 # Cargo.lock: keep the clipcat entry in sync without needing the network.
 if [ -f Cargo.lock ]; then
