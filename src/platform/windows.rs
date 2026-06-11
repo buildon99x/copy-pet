@@ -1,14 +1,16 @@
 //! Native Win32 backend: a per-pixel-alpha layered window (transparent pixels
 //! are click-through), low-level keyboard/mouse hooks feeding `crate::input`,
-//! a clipboard-format listener feeding `crate::clipboard`, a global
-//! Ctrl+Shift+V hotkey for the panel, and a Shell notification-area (tray)
-//! icon with a localized context menu. This is the release target on
-//! Windows; the cross-platform simulation lives in [`crate::pet::Pet`].
+//! a clipboard-format listener feeding `crate::clipboard`, a global panel
+//! hotkey (Win+Shift+V by default, configurable — see [`crate::hotkey`]),
+//! and a Shell notification-area (tray) icon with a localized context menu.
+//! This is the release target on Windows; the cross-platform simulation
+//! lives in [`crate::pet::Pet`].
 //!
 //! While the clipboard panel is open the window temporarily drops
 //! `WS_EX_NOACTIVATE` and takes focus so the search box can receive
 //! keyboard input (incl. IME-composed Hangul via WM_CHAR).
 
+use crate::hotkey::{self, Hotkey};
 use crate::i18n::{self, t, Lang, Msg};
 use crate::input;
 use crate::panel::NavKey;
@@ -37,7 +39,7 @@ use windows_sys::Win32::System::Threading::{
 use windows_sys::Win32::UI::HiDpi::SetProcessDpiAwarenessContext;
 use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
     RegisterHotKey, ReleaseCapture, SetCapture, SetFocus, TrackMouseEvent, UnregisterHotKey,
-    MOD_CONTROL, MOD_NOREPEAT, MOD_SHIFT, TME_LEAVE, TRACKMOUSEEVENT,
+    MOD_ALT, MOD_CONTROL, MOD_NOREPEAT, MOD_SHIFT, MOD_WIN, TME_LEAVE, TRACKMOUSEEVENT,
 };
 use windows_sys::Win32::UI::Shell::{
     ExtractIconExW, Shell_NotifyIconW, NIF_ICON, NIF_MESSAGE, NIF_TIP, NIM_ADD, NIM_DELETE,
@@ -102,6 +104,9 @@ struct App {
     mouse_hook: HHOOK,
     icon: HICON,
     taskbar_created: u32,
+    /// Display label of the actually registered panel hotkey (tray menu,
+    /// About dialog); empty when no hotkey could be registered.
+    hotkey_label: String,
 }
 
 thread_local! {
@@ -580,6 +585,42 @@ unsafe fn icon_to_rgba(icon: HICON) -> Option<(u32, Vec<u8>)> {
     Some((w as u32, rgba))
 }
 
+// ---- panel hotkey -------------------------------------------------------------
+
+/// Registers `hk` as the global panel hotkey. Best-effort: returns false on
+/// a clash with another app's registration (or a combo Windows reserves).
+unsafe fn register_hotkey(hwnd: HWND, hk: &Hotkey) -> bool {
+    let mut mods = MOD_NOREPEAT;
+    if hk.win {
+        mods |= MOD_WIN;
+    }
+    if hk.ctrl {
+        mods |= MOD_CONTROL;
+    }
+    if hk.shift {
+        mods |= MOD_SHIFT;
+    }
+    if hk.alt {
+        mods |= MOD_ALT;
+    }
+    // A-Z / 0-9 virtual-key codes equal their ASCII uppercase values
+    RegisterHotKey(hwnd, HOTKEY_ID, mods, hk.key as u32) != 0
+}
+
+/// Tries the configured hotkey, then the Ctrl+Shift+V fallback. Returns the
+/// display label of whichever stuck (empty: tray/middle-click only).
+unsafe fn register_panel_hotkey(hwnd: HWND, spec: &str) -> String {
+    let configured = Hotkey::from_spec(spec);
+    if register_hotkey(hwnd, &configured) {
+        return configured.display();
+    }
+    let fallback = Hotkey::from_spec(hotkey::FALLBACK);
+    if fallback != configured && register_hotkey(hwnd, &fallback) {
+        return fallback.display();
+    }
+    String::new()
+}
+
 // ---- hooks -------------------------------------------------------------------
 
 unsafe extern "system" fn kbd_hook(code: i32, wp: WPARAM, lp: LPARAM) -> LRESULT {
@@ -711,6 +752,7 @@ struct MenuSnapshot {
     lang: Lang,
     capture: bool,
     panel_open: bool,
+    hotkey_label: String,
 }
 
 unsafe fn show_menu(hwnd: HWND, ms: &MenuSnapshot) -> usize {
@@ -723,7 +765,7 @@ unsafe fn show_menu(hwnd: HWND, ms: &MenuSnapshot) -> usize {
         menu,
         MF_STRING | chk(ms.panel_open),
         CMD_PANEL,
-        wz(t(lang, Msg::MenuClipboard)).as_ptr(),
+        wz(&i18n::menu_clipboard(lang, &ms.hotkey_label)).as_ptr(),
     );
     AppendMenuW(
         menu,
@@ -892,6 +934,7 @@ fn menu_snapshot() -> Option<MenuSnapshot> {
         lang: a.pet.lang(),
         capture: a.pet.st.clip_capture,
         panel_open: a.pet.panel_open(),
+        hotkey_label: a.hotkey_label.clone(),
     })
 }
 
@@ -907,8 +950,14 @@ unsafe fn open_menu(hwnd: HWND) {
                 let (lv, keys, clips) =
                     with_app(|a| (a.pet.level(), a.pet.st.total_keys, a.pet.clips.len()))
                         .unwrap_or((1, 0, 0));
-                let text =
-                    i18n::about_text(ms.lang, env!("CARGO_PKG_VERSION"), lv, keys, clips);
+                let text = i18n::about_text(
+                    ms.lang,
+                    env!("CARGO_PKG_VERSION"),
+                    &ms.hotkey_label,
+                    lv,
+                    keys,
+                    clips,
+                );
                 MessageBoxW(
                     hwnd,
                     wz(&text).as_ptr(),
@@ -1162,6 +1211,7 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
                     0x2E => Some(NavKey::Delete),   // VK_DELETE
                     0x08 => Some(NavKey::Backspace),// VK_BACK
                     0x1B => Some(NavKey::Esc),      // VK_ESCAPE
+                    0x09 => Some(NavKey::Tab),      // VK_TAB: source filter
                     _ => None,
                 };
                 if let Some(key) = key {
@@ -1351,8 +1401,12 @@ pub fn run() {
 
         let (mem_dc, dib, bits) = create_surface(w, h);
 
+        // global panel hotkey (best-effort: a clash with another app falls
+        // back to Ctrl+Shift+V; failing that, tray/middle-click still work)
+        let hotkey_label = register_panel_hotkey(hwnd, &st.hotkey);
+
         let mut pet = Pet::new(st);
-        pet.set_panel_hint("CTRL+SHIFT+V");
+        pet.set_panel_hint(hotkey_label.clone());
 
         let app = App {
             hwnd,
@@ -1375,19 +1429,12 @@ pub fn run() {
             mouse_hook: SetWindowsHookExW(WH_MOUSE_LL, Some(mouse_hook), null_mut(), 0),
             icon,
             taskbar_created: RegisterWindowMessageW(wz("TaskbarCreated").as_ptr()),
+            hotkey_label,
         };
 
         APP.with(|cell| *cell.borrow_mut() = Some(app));
 
-        // clipboard listener + global panel hotkey (best-effort: a hotkey
-        // clash with another app simply leaves the tray/middle-click paths)
         AddClipboardFormatListener(hwnd);
-        RegisterHotKey(
-            hwnd,
-            HOTKEY_ID,
-            MOD_CONTROL | MOD_SHIFT | MOD_NOREPEAT,
-            0x56, // 'V'
-        );
 
         tray_add(hwnd, icon);
         with_app(|a| a.update_tray_tip());

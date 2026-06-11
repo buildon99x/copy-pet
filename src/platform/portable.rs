@@ -12,7 +12,9 @@
 //! Settings have no system tray here; when the window is focused these keys
 //! apply: S size · A accessory · M sound · B stats bubble · L lock ·
 //! G language · C clipboard panel · Q/Esc quit. While the panel is open the
-//! keyboard drives it instead (type to search, arrows/enter, Esc closes).
+//! keyboard drives it instead (type to search, arrows/enter, Tab cycles the
+//! source-app filter, Esc closes). There is no *global* panel hotkey here:
+//! the rdev listener may only count events, never inspect keys (privacy).
 
 use crate::input;
 use crate::panel::NavKey;
@@ -224,6 +226,7 @@ impl PortableApp {
             PhysicalKey::Code(KeyCode::Delete) => Some(NavKey::Delete),
             PhysicalKey::Code(KeyCode::Backspace) => Some(NavKey::Backspace),
             PhysicalKey::Code(KeyCode::Escape) => Some(NavKey::Esc),
+            PhysicalKey::Code(KeyCode::Tab) => Some(NavKey::Tab), // source filter
             _ => None,
         };
         if let Some(key) = nav {

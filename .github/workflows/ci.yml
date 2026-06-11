@@ -47,6 +47,11 @@ jobs:
       - name: Test
         run: cargo test --release
 
+      # CHANGELOG.md policy lint (format + version sync with Cargo.toml)
+      - name: Changelog lint
+        if: runner.os == 'Linux'
+        run: bash scripts/release.sh verify
+
       # Also exercise the portable backend on Windows so it can't bit-rot.
       - name: Clippy (portable backend on Windows)
         if: runner.os == 'Windows'

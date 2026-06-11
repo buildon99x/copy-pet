@@ -8,6 +8,7 @@ use crate::font;
 use crate::i18n::{self, t, Lang, Msg};
 use crate::panel as pl;
 use crate::panel::Panel;
+use crate::sysfont;
 use tiny_skia::{
     FillRule, FilterQuality, LineCap, LineJoin, Paint, Path, PathBuilder, Pixmap, PixmapPaint,
     Rect, Stroke, Transform,
@@ -252,8 +253,13 @@ impl<'a> Cv<'a> {
                 .stroke_path(p, &paint(c), &stroke, t.post_concat(self.ts), None);
         }
     }
+    /// Pixel-font text: the pet's own decorations (stats tooltip, badge).
     fn text(&mut self, s: &str, x: f32, y: f32, px: f32, c: (u8, u8, u8, u8)) {
         font::draw(self.pm, s, x, y, px, c, self.ts);
+    }
+    /// UI text (panel, toast): the system font, pixel-font fallback.
+    fn ui_text(&mut self, s: &str, x: f32, y: f32, px: f32, c: (u8, u8, u8, u8)) {
+        sysfont::draw(self.pm, s, x, y, px, c, self.ts);
     }
     fn line(&mut self, pts: &[(f32, f32)], c: (u8, u8, u8, u8), w: f32) {
         let mut pb = PathBuilder::new();
@@ -433,12 +439,12 @@ fn draw_scene(pm: &mut Pixmap, sc: &Scene, scale: f32) {
     // toast pill
     if let Some((text, a)) = sc.toast {
         if a > 0.01 {
-            let w = font::measure(text, 2.0) + 20.0;
+            let w = sysfont::measure(text, 2.0) + 20.0;
             let x = 120.0 - w / 2.0;
             let pill = round_rect(x, 80.0, w, 20.0, 9.0);
             cv.fill(&pill, fade((255, 233, 168, 255), a));
             cv.stroke(&pill, fade(OUTLINE, a), 2.0);
-            cv.text(text, x + 10.0, 83.0, 2.0, fade(TEXT, a));
+            cv.ui_text(text, x + 10.0, 83.0, 2.0, fade(TEXT, a));
         }
     }
 
@@ -868,15 +874,16 @@ pub fn draw_panel(pm: &mut Pixmap, v: &PanelView, scale: f32) {
         cv.line(&[(26.0, 17.0), (30.5, 13.0), (30.5, 21.0), (26.0, 17.0)], OUTLINE, 1.8);
         cv.fill(&oval(18.5, 15.8, 1.0, 1.0), OUTLINE);
     }
-    cv.text(t(lang, Msg::PanelTitle), 36.0, 11.0, 1.8, TEXT);
+    cv.ui_text(t(lang, Msg::PanelTitle), 36.0, 11.0, 1.8, TEXT);
     if !v.capture {
         // capture paused: small red pause bars next to the title
-        let tx = 36.0 + font::measure(t(lang, Msg::PanelTitle), 1.8) + 8.0;
+        let tx = 36.0 + sysfont::measure(t(lang, Msg::PanelTitle), 1.8) + 8.0;
         cv.fill(&round_rect(tx, 11.0, 3.0, 11.0, 1.2), (217, 79, 79, 255));
         cv.fill(&round_rect(tx + 5.0, 11.0, 3.0, 11.0, 1.2), (217, 79, 79, 255));
     }
 
     // header buttons
+    draw_btn(&mut cv, pl::BTN_FILTER_X, BtnIcon::Filter(v.panel.source.is_some()));
     draw_btn(&mut cv, pl::BTN_PAUSE_X, BtnIcon::Pause(v.capture));
     draw_btn(&mut cv, pl::BTN_CLEAR_X, BtnIcon::Trash);
     draw_btn(&mut cv, pl::BTN_LANG_X, BtnIcon::Lang(lang));
@@ -889,30 +896,40 @@ pub fn draw_panel(pm: &mut Pixmap, v: &PanelView, scale: f32) {
     // magnifier
     cv.stroke(&oval(22.0, 38.0, 3.4, 3.4), TEXT_DIM, 1.8);
     cv.line(&[(25.0, 41.0), (28.0, 44.0)], TEXT_DIM, 1.8);
-    let qx = 34.0;
+    let mut qx = 34.0;
+    // active source filter: a chip inside the search box; query starts after
+    if let Some(src) = &v.panel.source {
+        let label = sysfont::truncate_to_width(src, 1.3, 80.0);
+        let cw = sysfont::measure(&label, 1.3) + 10.0;
+        let chip = round_rect(qx - 2.0, 32.5, cw, 13.0, 6.5);
+        cv.fill(&chip, (208, 228, 248, 255));
+        cv.stroke(&chip, fade(OUTLINE, 0.45), 1.2);
+        cv.ui_text(&label, qx + 3.0, 34.5, 1.3, TEXT);
+        qx += cw + 4.0;
+    }
     let qmax = pl::SEARCH_X + pl::SEARCH_W - 8.0 - qx;
     if v.panel.query.is_empty() {
-        cv.text(t(lang, Msg::SearchHint), qx, 33.5, 1.6, fade(TEXT_DIM, 0.8));
+        cv.ui_text(t(lang, Msg::SearchHint), qx, 33.5, 1.6, fade(TEXT_DIM, 0.8));
         if v.caret {
             cv.fill(&round_rect(qx - 3.0, 33.0, 1.6, 12.0, 0.8), fade(TEXT, 0.7));
         }
     } else {
         // show the tail of long queries
         let mut q: &str = &v.panel.query;
-        while font::measure(q, 1.6) > qmax - 6.0 {
+        while sysfont::measure(q, 1.6) > qmax - 6.0 {
             let mut it = q.chars();
             it.next();
             q = it.as_str();
         }
-        cv.text(q, qx, 33.5, 1.6, TEXT);
+        cv.ui_text(q, qx, 33.5, 1.6, TEXT);
         if v.caret {
-            let cx = qx + font::measure(q, 1.6) + 2.0;
+            let cx = qx + sysfont::measure(q, 1.6) + 2.0;
             cv.fill(&round_rect(cx, 33.0, 1.6, 12.0, 0.8), fade(TEXT, 0.7));
         }
     }
 
     // rows
-    let visible = v.store.visible(&v.panel.query);
+    let visible = v.panel.visible(v.store);
     let total = visible.len();
     if total == 0 {
         let msg = if v.store.is_empty() {
@@ -920,8 +937,8 @@ pub fn draw_panel(pm: &mut Pixmap, v: &PanelView, scale: f32) {
         } else {
             t(lang, Msg::PanelNoMatch)
         };
-        let w = font::measure(msg, 1.6);
-        cv.text(
+        let w = sysfont::measure(msg, 1.6);
+        cv.ui_text(
             msg,
             pl::CARD_X + (pl::CARD_W - w) / 2.0,
             pl::ROWS_Y + 60.0,
@@ -961,14 +978,14 @@ pub fn draw_panel(pm: &mut Pixmap, v: &PanelView, scale: f32) {
         // preview + meta
         let tx = 38.0;
         let tmax = pl::ROW_X + pl::ROW_W - pl::DEL_ZONE - tx - 4.0;
-        let prev = font::truncate_to_width(&clip.preview(), 1.6, tmax);
-        cv.text(&prev, tx, ry + 3.5, 1.6, TEXT);
+        let prev = sysfont::truncate_to_width(&clip.preview(), 1.6, tmax);
+        cv.ui_text(&prev, tx, ry + 3.5, 1.6, TEXT);
         let mut meta = i18n::time_ago(lang, now.saturating_sub(clip.ts));
         if let Some(src) = &clip.source {
             meta = format!("{src} - {meta}");
         }
-        let meta = font::truncate_to_width(&meta, 1.2, tmax);
-        cv.text(&meta, tx, ry + 17.0, 1.2, TEXT_DIM);
+        let meta = sysfont::truncate_to_width(&meta, 1.2, tmax);
+        cv.ui_text(&meta, tx, ry + 17.0, 1.2, TEXT_DIM);
 
         // delete x
         let dx = pl::ROW_X + pl::ROW_W - 12.0;
@@ -999,9 +1016,9 @@ pub fn draw_panel(pm: &mut Pixmap, v: &PanelView, scale: f32) {
 
     // footer
     let count = i18n::clip_count(lang, v.store.len(), v.store.pinned_count());
-    cv.text(&count, 14.0, pl::FOOTER_Y + 4.0, 1.3, TEXT_DIM);
-    let hw = font::measure(v.hint, 1.3);
-    cv.text(
+    cv.ui_text(&count, 14.0, pl::FOOTER_Y + 4.0, 1.3, TEXT_DIM);
+    let hw = sysfont::measure(v.hint, 1.3);
+    cv.ui_text(
         v.hint,
         pl::CARD_X + pl::CARD_W - 10.0 - hw,
         pl::FOOTER_Y + 4.0,
@@ -1011,7 +1028,8 @@ pub fn draw_panel(pm: &mut Pixmap, v: &PanelView, scale: f32) {
 }
 
 enum BtnIcon {
-    Pause(bool), // capture currently on?
+    Filter(bool), // source filter currently active?
+    Pause(bool),  // capture currently on?
     Trash,
     Lang(Lang),
     Close,
@@ -1021,16 +1039,35 @@ fn draw_btn(cv: &mut Cv, bx: f32, icon: BtnIcon) {
     let by = pl::BTN_Y;
     let b = pl::BTN;
     let bg = round_rect(bx, by, b, b, 5.0);
-    let alert = matches!(icon, BtnIcon::Pause(false));
-    if alert {
+    if matches!(icon, BtnIcon::Pause(false)) {
         cv.fill(&bg, (250, 224, 224, 255));
         cv.stroke(&bg, (217, 79, 79, 255), 1.6);
+    } else if matches!(icon, BtnIcon::Filter(true)) {
+        cv.fill(&bg, (208, 228, 248, 255));
+        cv.stroke(&bg, (91, 141, 217, 255), 1.6);
     } else {
         cv.fill(&bg, (243, 240, 235, 255));
         cv.stroke(&bg, fade(OUTLINE, 0.45), 1.6);
     }
     let (cx, cy) = (bx + b / 2.0, by + b / 2.0);
     match icon {
+        BtnIcon::Filter(active) => {
+            // funnel
+            let mut pb = PathBuilder::new();
+            pb.move_to(cx - 4.6, cy - 4.2);
+            pb.line_to(cx + 4.6, cy - 4.2);
+            pb.line_to(cx + 1.2, cy + 0.6);
+            pb.line_to(cx + 1.2, cy + 4.8);
+            pb.line_to(cx - 1.2, cy + 3.4);
+            pb.line_to(cx - 1.2, cy + 0.6);
+            pb.close();
+            let funnel = pb.finish();
+            if active {
+                cv.fill(&funnel, (74, 118, 184, 255));
+            } else {
+                cv.stroke(&funnel, TEXT, 1.5);
+            }
+        }
         BtnIcon::Pause(true) => {
             // capture running -> show pause bars
             cv.fill(&round_rect(cx - 3.6, cy - 4.0, 2.6, 8.0, 1.1), TEXT);
@@ -1060,8 +1097,8 @@ fn draw_btn(cv: &mut Cv, bx: f32, icon: BtnIcon) {
                 Lang::En => "EN",
                 Lang::Ko => "KO",
             };
-            let w = font::measure(s, 1.1);
-            font::draw(cv.pm, s, cx - w / 2.0, cy - 3.8, 1.1, TEXT, cv.ts);
+            let w = sysfont::measure(s, 1.1);
+            sysfont::draw(cv.pm, s, cx - w / 2.0, cy - 3.8, 1.1, TEXT, cv.ts);
         }
         BtnIcon::Close => {
             cv.line(&[(cx - 3.6, cy - 3.6), (cx + 3.6, cy + 3.6)], TEXT, 2.0);

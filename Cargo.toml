@@ -16,6 +16,9 @@ portable = ["dep:winit", "dep:softbuffer", "dep:rdev", "dep:arboard"]
 tiny-skia = "0.11"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+# System-font rasterizer for UI text (panel, toast). Pure Rust, no font files
+# bundled — fonts are loaded from the OS at runtime. See ADR-0007.
+ab_glyph = "0.2"
 
 # Portable backend — optional here (enabled by the `portable` feature on
 # Windows); always required on non-Windows via the target table below.

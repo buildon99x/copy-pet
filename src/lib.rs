@@ -8,6 +8,7 @@
 pub mod clipboard;
 pub mod font;
 pub mod hangul;
+pub mod hotkey;
 pub mod i18n;
 pub mod input;
 pub mod panel;
@@ -16,3 +17,4 @@ pub mod platform;
 pub mod render;
 pub mod sound;
 pub mod state;
+pub mod sysfont;
