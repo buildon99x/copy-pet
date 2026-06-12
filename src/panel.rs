@@ -3,6 +3,13 @@
 //! when open; both backends route mouse/keyboard events here and execute the
 //! returned [`PanelAction`]s (only clipboard writes need the OS).
 //!
+//! The card is movable and resizable: its size and its offset relative to
+//! the cat are user state (persisted in `state.json`), and [`Panel::layout`]
+//! derives the whole geometry — including the window canvas, which is the
+//! union of the cat's canvas and the card — from them. Dragging the header
+//! strip moves the card, dragging the bottom-right grip resizes it (see
+//! [`Panel::drag_hit`] / [`Panel::drag_by`]).
+//!
 //! All coordinates are in canvas units (window pixels / global scale).
 
 use crate::clipboard::{Clip, ClipStore};
@@ -10,44 +17,79 @@ use std::cell::RefCell;
 
 // ---- layout (canvas units) --------------------------------------------------
 
-/// Full canvas size while the panel is open. The cat keeps its own
-/// 240x256 canvas, drawn at [`CAT_ORIGIN`]; the panel card overlaps the
-/// cat's (empty) bubble zone so the window doesn't get absurdly tall.
-pub const CANVAS_W: f32 = 360.0;
-pub const CANVAS_H: f32 = 542.0;
-/// Top-left of the cat's 240x256 canvas inside the panel canvas.
-pub const CAT_ORIGIN: (f32, f32) = (60.0, 286.0);
+/// Card size limits. The defaults reproduce the original fixed panel.
+pub const MIN_W: f32 = 280.0;
+pub const MAX_W: f32 = 600.0;
+pub const MIN_H: f32 = 220.0;
+pub const MAX_H: f32 = 700.0;
+pub const DEFAULT_W: f32 = 352.0;
+pub const DEFAULT_H: f32 = 362.0;
+/// Default card offset relative to the cat's top-left: centered above it.
+pub const DEFAULT_OFF: (f32, f32) = (-56.0, -282.0);
+/// How far the card may wander from the cat (keeps the union canvas sane).
+pub const MAX_OFF: f32 = 480.0;
 
-pub const CARD_X: f32 = 4.0;
-pub const CARD_Y: f32 = 4.0;
-pub const CARD_W: f32 = 352.0;
-pub const CARD_H: f32 = 362.0;
-
-/// Header buttons, 18x18, right-aligned: source filter, pause, clear,
-/// language, close.
-pub const BTN_Y: f32 = 10.0;
 pub const BTN: f32 = 18.0;
-pub const BTN_CLOSE_X: f32 = 330.0;
-pub const BTN_LANG_X: f32 = 308.0;
-pub const BTN_CLEAR_X: f32 = 286.0;
-pub const BTN_PAUSE_X: f32 = 264.0;
-pub const BTN_FILTER_X: f32 = 242.0;
-
-pub const SEARCH_X: f32 = 12.0;
-pub const SEARCH_Y: f32 = 34.0;
-pub const SEARCH_W: f32 = 336.0;
-pub const SEARCH_H: f32 = 20.0;
-
-pub const ROWS_Y: f32 = 60.0;
 pub const ROW_H: f32 = 34.0;
-pub const VISIBLE_ROWS: usize = 8;
 /// Row x-zones: pin toggle | clip body | delete.
-pub const ROW_X: f32 = 12.0;
-pub const ROW_W: f32 = 332.0;
-pub const PIN_ZONE: f32 = 34.0; // x < ROW_X + PIN_ZONE
-pub const DEL_ZONE: f32 = 28.0; // x > ROW_X + ROW_W - DEL_ZONE
+pub const PIN_ZONE: f32 = 34.0; // x < row_x + PIN_ZONE
+pub const DEL_ZONE: f32 = 28.0; // x > row_x + row_w - DEL_ZONE
+/// Quick-copy hotkeys cover the first `QUICK_KEYS` rows (Ctrl+0..9).
+pub const QUICK_KEYS: usize = 10;
+/// Side of the square resize grip in the card's bottom-right corner.
+pub const GRIP: f32 = 18.0;
 
-pub const FOOTER_Y: f32 = 334.0;
+/// Card-top to first clip row (title/buttons + search box).
+const HEADER_H: f32 = 56.0;
+/// Last clip row to card bottom (count + shortcut help lines).
+const FOOTER_H: f32 = 32.0;
+/// Canvas margin around the card.
+const MARGIN: f32 = 4.0;
+
+/// Clamps persisted card geometry to sane bounds: hand-edited or legacy
+/// `state.json` values (including NaN/inf) must never produce an absurd
+/// layout. Returns (w, h, off_x, off_y).
+pub fn clamp_geometry(w: f32, h: f32, off_x: f32, off_y: f32) -> (f32, f32, f32, f32) {
+    let or = |v: f32, d: f32| if v.is_finite() { v } else { d };
+    (
+        or(w, DEFAULT_W).clamp(MIN_W, MAX_W),
+        or(h, DEFAULT_H).clamp(MIN_H, MAX_H),
+        or(off_x, DEFAULT_OFF.0).clamp(-MAX_OFF, MAX_OFF),
+        or(off_y, DEFAULT_OFF.1).clamp(-MAX_OFF, MAX_OFF),
+    )
+}
+
+/// Computed panel geometry for the current card size/offset, all in canvas
+/// units. The canvas is the union of the cat's 240x256 canvas and the card
+/// (plus a margin); `cat` is where the cat canvas sits inside it.
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub struct Layout {
+    pub canvas_w: f32,
+    pub canvas_h: f32,
+    /// Top-left of the cat canvas inside the window canvas.
+    pub cat: (f32, f32),
+    pub card_x: f32,
+    pub card_y: f32,
+    pub card_w: f32,
+    pub card_h: f32,
+    /// Header buttons, right-aligned: filter, pause, clear, language, close.
+    pub btn_y: f32,
+    pub btn_close_x: f32,
+    pub btn_lang_x: f32,
+    pub btn_clear_x: f32,
+    pub btn_pause_x: f32,
+    pub btn_filter_x: f32,
+    pub search_x: f32,
+    pub search_y: f32,
+    pub search_w: f32,
+    pub search_h: f32,
+    pub rows_y: f32,
+    pub row_x: f32,
+    pub row_w: f32,
+    /// Clip rows that fit between the header and the footer.
+    pub rows: usize,
+    pub footer_y: f32,
+}
 
 /// What a panel interaction asks the app to do. Pure state changes
 /// (scrolling, typing in search) are handled internally and return None.
@@ -88,9 +130,18 @@ pub enum NavKey {
     Pin,
     /// Restore the most recently deleted clip(s) (Ctrl+Z).
     Undo,
+    /// Quick copy (Ctrl+0..9): copies the nth visible clip from the top
+    /// (0 = the topmost row, matching the digit badges on the rows).
+    Quick(u8),
 }
 
-#[derive(Default)]
+/// A drag started on the card: the header strip moves it, the grip resizes.
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub enum PanelDrag {
+    Move,
+    Resize,
+}
+
 pub struct Panel {
     pub open: bool,
     pub query: String,
@@ -105,9 +156,32 @@ pub struct Panel {
     /// The clear button was pressed once; the next press really clears.
     /// Any other interaction disarms it.
     pub clear_armed: bool,
+    /// Card size in canvas units (user-resizable, persisted).
+    pub w: f32,
+    pub h: f32,
+    /// Card top-left relative to the cat's top-left (user-movable, persisted).
+    pub off: (f32, f32),
     /// Cached filtered row order (the panel is redrawn every tick while
     /// open; without this the query would re-scan every clip text per frame).
     cache: RefCell<ViewCache>,
+}
+
+impl Default for Panel {
+    fn default() -> Panel {
+        Panel {
+            open: false,
+            query: String::new(),
+            source: None,
+            scroll: 0,
+            sel: 0,
+            cursor: None,
+            clear_armed: false,
+            w: DEFAULT_W,
+            h: DEFAULT_H,
+            off: DEFAULT_OFF,
+            cache: RefCell::new(ViewCache::default()),
+        }
+    }
 }
 
 #[derive(Default)]
@@ -120,6 +194,61 @@ struct ViewCache {
 }
 
 impl Panel {
+    /// Panel with persisted card geometry (clamped to sane bounds).
+    pub fn with_geometry(w: f32, h: f32, off: (f32, f32)) -> Panel {
+        let (w, h, ox, oy) = clamp_geometry(w, h, off.0, off.1);
+        Panel {
+            w,
+            h,
+            off: (ox, oy),
+            ..Default::default()
+        }
+    }
+
+    /// The full geometry for the current card size/offset.
+    pub fn layout(&self) -> Layout {
+        let (w, h) = (self.w, self.h);
+        let (off_x, off_y) = self.off;
+        // canvas = union of the cat canvas and the margin-padded card
+        let left = (off_x - MARGIN).min(0.0);
+        let top = (off_y - MARGIN).min(0.0);
+        let right = (off_x + w + MARGIN).max(crate::render::CANVAS_W);
+        let bottom = (off_y + h + MARGIN).max(crate::render::CANVAS_H);
+        let cat = (-left, -top);
+        let card_x = cat.0 + off_x;
+        let card_y = cat.1 + off_y;
+        let btn_close_x = card_x + w - 26.0;
+        Layout {
+            canvas_w: right - left,
+            canvas_h: bottom - top,
+            cat,
+            card_x,
+            card_y,
+            card_w: w,
+            card_h: h,
+            btn_y: card_y + 6.0,
+            btn_close_x,
+            btn_lang_x: btn_close_x - 22.0,
+            btn_clear_x: btn_close_x - 44.0,
+            btn_pause_x: btn_close_x - 66.0,
+            btn_filter_x: btn_close_x - 88.0,
+            search_x: card_x + 8.0,
+            search_y: card_y + 30.0,
+            search_w: w - 16.0,
+            search_h: 20.0,
+            rows_y: card_y + HEADER_H,
+            row_x: card_x + 8.0,
+            row_w: w - 20.0,
+            rows: (((h - HEADER_H - FOOTER_H) / ROW_H) as usize).max(1),
+            footer_y: card_y + h - FOOTER_H,
+        }
+    }
+
+    /// Clip rows that fit on screen with the current card height.
+    pub fn visible_rows(&self) -> usize {
+        self.layout().rows
+    }
+
     pub fn toggle(&mut self) {
         self.open = !self.open;
         if self.open {
@@ -131,8 +260,40 @@ impl Panel {
         self.clear_armed = false;
     }
 
+    /// Zones that start a card drag: the bottom-right grip resizes, the
+    /// header strip left of the buttons moves the card.
+    pub fn drag_hit(&self, x: f32, y: f32) -> Option<PanelDrag> {
+        if !self.open {
+            return None;
+        }
+        let l = self.layout();
+        let (x1, y1) = (l.card_x + l.card_w, l.card_y + l.card_h);
+        if x >= x1 - GRIP && x <= x1 + 2.0 && y >= y1 - GRIP && y <= y1 + 2.0 {
+            return Some(PanelDrag::Resize);
+        }
+        if self.hit(x, y) && y < l.search_y - 2.0 && x < l.btn_filter_x - 4.0 {
+            return Some(PanelDrag::Move);
+        }
+        None
+    }
+
+    /// Applies a drag delta in canvas units, clamping to the size/offset
+    /// bounds. The caller re-clamps scroll afterwards ([`Panel::refresh`]).
+    pub fn drag_by(&mut self, kind: PanelDrag, dx: f32, dy: f32) {
+        match kind {
+            PanelDrag::Move => {
+                self.off.0 = (self.off.0 + dx).clamp(-MAX_OFF, MAX_OFF);
+                self.off.1 = (self.off.1 + dy).clamp(-MAX_OFF, MAX_OFF);
+            }
+            PanelDrag::Resize => {
+                self.w = (self.w + dx).clamp(MIN_W, MAX_W);
+                self.h = (self.h + dy).clamp(MIN_H, MAX_H);
+            }
+        }
+    }
+
     /// Re-clamps scroll/selection after the store changed under the panel
-    /// (delete, clear, undo).
+    /// (delete, clear, undo) or the card was resized.
     pub fn refresh(&mut self, store: &ClipStore) {
         let total = self.visible(store).len();
         self.clamp_scroll(total);
@@ -188,31 +349,36 @@ impl Panel {
 
     /// True if the point (canvas coords) is inside the panel card.
     pub fn hit(&self, x: f32, y: f32) -> bool {
-        self.open
-            && (CARD_X..=CARD_X + CARD_W).contains(&x)
-            && (CARD_Y..=CARD_Y + CARD_H).contains(&y)
+        if !self.open {
+            return false;
+        }
+        let l = self.layout();
+        (l.card_x..=l.card_x + l.card_w).contains(&x)
+            && (l.card_y..=l.card_y + l.card_h).contains(&y)
     }
 
     fn clamp_scroll(&mut self, total: usize) {
-        let max = total.saturating_sub(VISIBLE_ROWS);
+        let max = total.saturating_sub(self.visible_rows());
         self.scroll = self.scroll.min(max);
         self.sel = self.sel.min(total.saturating_sub(1));
     }
 
     fn keep_sel_visible(&mut self) {
+        let rows = self.visible_rows();
         if self.sel < self.scroll {
             self.scroll = self.sel;
-        } else if self.sel >= self.scroll + VISIBLE_ROWS {
-            self.scroll = self.sel + 1 - VISIBLE_ROWS;
+        } else if self.sel >= self.scroll + rows {
+            self.scroll = self.sel + 1 - rows;
         }
     }
 
     /// Row index (into the filtered list) under the y coordinate, if any.
     pub fn row_at(&self, y: f32, total: usize) -> Option<usize> {
-        if y < ROWS_Y || y >= ROWS_Y + ROW_H * VISIBLE_ROWS as f32 {
+        let l = self.layout();
+        if y < l.rows_y || y >= l.rows_y + ROW_H * l.rows as f32 {
             return None;
         }
-        let i = self.scroll + ((y - ROWS_Y) / ROW_H) as usize;
+        let i = self.scroll + ((y - l.rows_y) / ROW_H) as usize;
         (i < total).then_some(i)
     }
 
@@ -232,11 +398,14 @@ impl Panel {
         if !self.hit(x, y) {
             return None;
         }
+        let l = self.layout();
         // header buttons
         let on_btn = |bx: f32| {
-            x >= bx - 2.0 && x <= bx + BTN + 2.0 && (BTN_Y - 2.0..=BTN_Y + BTN + 2.0).contains(&y)
+            x >= bx - 2.0
+                && x <= bx + BTN + 2.0
+                && (l.btn_y - 2.0..=l.btn_y + BTN + 2.0).contains(&y)
         };
-        if on_btn(BTN_CLEAR_X) {
+        if on_btn(l.btn_clear_x) {
             // two presses to clear everything: arm first, clear on the second
             self.clear_armed = !self.clear_armed;
             return Some(if self.clear_armed {
@@ -246,16 +415,16 @@ impl Panel {
             });
         }
         self.clear_armed = false;
-        if on_btn(BTN_CLOSE_X) {
+        if on_btn(l.btn_close_x) {
             return Some(PanelAction::Close);
         }
-        if on_btn(BTN_LANG_X) {
+        if on_btn(l.btn_lang_x) {
             return Some(PanelAction::ToggleLang);
         }
-        if on_btn(BTN_PAUSE_X) {
+        if on_btn(l.btn_pause_x) {
             return Some(PanelAction::ToggleCapture);
         }
-        if on_btn(BTN_FILTER_X) {
+        if on_btn(l.btn_filter_x) {
             // pure panel state: cycle the source filter, no action needed
             self.cycle_source(store);
             return None;
@@ -265,10 +434,10 @@ impl Panel {
         if let Some(i) = self.row_at(y, visible.len()) {
             let id = visible[i].id;
             self.sel = i;
-            if x < ROW_X + PIN_ZONE {
+            if x < l.row_x + PIN_ZONE {
                 return Some(PanelAction::TogglePin(id));
             }
-            if x > ROW_X + ROW_W - DEL_ZONE {
+            if x > l.row_x + l.row_w - DEL_ZONE {
                 return Some(PanelAction::Delete(id));
             }
             return Some(PanelAction::Copy(id));
@@ -293,6 +462,7 @@ impl Panel {
     pub fn nav(&mut self, key: NavKey, store: &ClipStore) -> Option<PanelAction> {
         let armed = std::mem::take(&mut self.clear_armed);
         let total = self.visible(store).len();
+        let rows = self.visible_rows();
         match key {
             NavKey::Up => {
                 self.sel = self.sel.saturating_sub(1);
@@ -305,11 +475,11 @@ impl Panel {
                 self.keep_sel_visible();
             }
             NavKey::PageUp => {
-                self.sel = self.sel.saturating_sub(VISIBLE_ROWS);
+                self.sel = self.sel.saturating_sub(rows);
                 self.keep_sel_visible();
             }
             NavKey::PageDown => {
-                self.sel = (self.sel + VISIBLE_ROWS).min(total.saturating_sub(1));
+                self.sel = (self.sel + rows).min(total.saturating_sub(1));
                 self.keep_sel_visible();
             }
             NavKey::Home => {
@@ -323,6 +493,14 @@ impl Panel {
             NavKey::Enter => {
                 let visible = self.visible(store);
                 if let Some(c) = visible.get(self.sel) {
+                    return Some(PanelAction::Copy(c.id));
+                }
+            }
+            NavKey::Quick(n) => {
+                // nth row from the very top of the filtered list (0-based,
+                // matching the digit badges drawn on the rows)
+                let visible = self.visible(store);
+                if let Some(c) = visible.get(n as usize) {
                     return Some(PanelAction::Copy(c.id));
                 }
             }
@@ -382,41 +560,70 @@ mod tests {
         s
     }
 
+    fn open_panel() -> Panel {
+        Panel {
+            open: true,
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn default_layout_matches_legacy_geometry() {
+        // the original fixed panel: any drift here moves every click target
+        let l = open_panel().layout();
+        assert_eq!((l.canvas_w, l.canvas_h), (360.0, 542.0));
+        assert_eq!(l.cat, (60.0, 286.0));
+        assert_eq!((l.card_x, l.card_y, l.card_w, l.card_h), (4.0, 4.0, 352.0, 362.0));
+        assert_eq!(l.btn_y, 10.0);
+        assert_eq!(
+            (l.btn_filter_x, l.btn_pause_x, l.btn_clear_x, l.btn_lang_x, l.btn_close_x),
+            (242.0, 264.0, 286.0, 308.0, 330.0)
+        );
+        assert_eq!((l.search_x, l.search_y, l.search_w, l.search_h), (12.0, 34.0, 336.0, 20.0));
+        assert_eq!((l.rows_y, l.row_x, l.row_w), (60.0, 12.0, 332.0));
+        assert_eq!(l.rows, 8);
+        assert_eq!(l.footer_y, 334.0);
+    }
+
     #[test]
     fn click_routes_rows_and_zones() {
         let s = store(3);
-        let mut p = Panel { open: true, ..Default::default() };
+        let mut p = open_panel();
+        let l = p.layout();
         let ids: Vec<u64> = s.visible("").iter().map(|c| c.id).collect();
         // middle of first row copies
-        let y0 = ROWS_Y + ROW_H / 2.0;
+        let y0 = l.rows_y + ROW_H / 2.0;
         assert_eq!(p.click(150.0, y0, &s), Some(PanelAction::Copy(ids[0])));
         // pin zone
-        assert_eq!(p.click(ROW_X + 5.0, y0, &s), Some(PanelAction::TogglePin(ids[0])));
+        assert_eq!(p.click(l.row_x + 5.0, y0, &s), Some(PanelAction::TogglePin(ids[0])));
         // delete zone
         assert_eq!(
-            p.click(ROW_X + ROW_W - 5.0, y0, &s),
+            p.click(l.row_x + l.row_w - 5.0, y0, &s),
             Some(PanelAction::Delete(ids[0]))
         );
         // outside the card
-        assert_eq!(p.click(150.0, 400.0, &s), None);
+        assert_eq!(p.click(150.0, l.card_y + l.card_h + 30.0, &s), None);
         // close button
-        assert_eq!(p.click(BTN_CLOSE_X + 8.0, BTN_Y + 8.0, &s), Some(PanelAction::Close));
+        assert_eq!(
+            p.click(l.btn_close_x + 8.0, l.btn_y + 8.0, &s),
+            Some(PanelAction::Close)
+        );
     }
 
     #[test]
     fn empty_row_area_clicks_do_nothing() {
         let s = store(1);
-        let mut p = Panel { open: true, ..Default::default() };
-        let y = ROWS_Y + ROW_H * 3.5; // row 3, but only 1 clip
+        let mut p = open_panel();
+        let y = p.layout().rows_y + ROW_H * 3.5; // row 3, but only 1 clip
         assert_eq!(p.click(150.0, y, &s), None);
     }
 
     #[test]
     fn scroll_clamps() {
         let s = store(10);
-        let mut p = Panel { open: true, ..Default::default() };
+        let mut p = open_panel();
         p.wheel(100, &s);
-        assert_eq!(p.scroll, 10 - VISIBLE_ROWS);
+        assert_eq!(p.scroll, 10 - p.visible_rows());
         p.wheel(-100, &s);
         assert_eq!(p.scroll, 0);
     }
@@ -424,22 +631,104 @@ mod tests {
     #[test]
     fn keyboard_selection_follows_scroll() {
         let s = store(10);
-        let mut p = Panel { open: true, ..Default::default() };
+        let mut p = open_panel();
         for _ in 0..8 {
             p.nav(NavKey::Down, &s);
         }
         assert_eq!(p.sel, 8);
-        assert!(p.sel >= p.scroll && p.sel < p.scroll + VISIBLE_ROWS);
+        assert!(p.sel >= p.scroll && p.sel < p.scroll + p.visible_rows());
         let act = p.nav(NavKey::Enter, &s);
         let ids: Vec<u64> = s.visible("").iter().map(|c| c.id).collect();
         assert_eq!(act, Some(PanelAction::Copy(ids[8])));
     }
 
     #[test]
+    fn quick_key_copies_nth_from_the_top() {
+        let s = store(12);
+        let mut p = open_panel();
+        let ids: Vec<u64> = s.visible("").iter().map(|c| c.id).collect();
+        assert_eq!(p.nav(NavKey::Quick(0), &s), Some(PanelAction::Copy(ids[0])));
+        assert_eq!(p.nav(NavKey::Quick(9), &s), Some(PanelAction::Copy(ids[9])));
+        // beyond the list: a no-op, not a panic
+        let s3 = store(3);
+        assert_eq!(p.nav(NavKey::Quick(5), &s3), None);
+        // respects the active query (badge order = filtered order)
+        p.input_char('7'); // "clip number 7"
+        let id7 = s.visible("7")[0].id;
+        assert_eq!(p.nav(NavKey::Quick(0), &s), Some(PanelAction::Copy(id7)));
+        assert_eq!(p.nav(NavKey::Quick(1), &s), None);
+    }
+
+    #[test]
+    fn drag_zones_move_and_resize_with_clamps() {
+        let mut p = open_panel();
+        let l = p.layout();
+        // grip = resize, header strip = move, buttons/rows = no drag
+        let (gx, gy) = (l.card_x + l.card_w - 4.0, l.card_y + l.card_h - 4.0);
+        assert_eq!(p.drag_hit(gx, gy), Some(PanelDrag::Resize));
+        assert_eq!(p.drag_hit(l.card_x + 60.0, l.card_y + 10.0), Some(PanelDrag::Move));
+        assert_eq!(p.drag_hit(l.btn_close_x + 8.0, l.btn_y + 8.0), None);
+        assert_eq!(p.drag_hit(l.row_x + 10.0, l.rows_y + 10.0), None);
+        assert_eq!(p.drag_hit(l.search_x + 10.0, l.search_y + 10.0), None);
+        // closed panel never drags
+        let closed = Panel::default();
+        assert_eq!(closed.drag_hit(gx, gy), None);
+
+        // resize grows the card and the row count, clamped to MAX/MIN
+        p.drag_by(PanelDrag::Resize, 60.0, 68.0);
+        assert_eq!((p.w, p.h), (DEFAULT_W + 60.0, DEFAULT_H + 68.0));
+        assert_eq!(p.layout().rows, 10);
+        p.drag_by(PanelDrag::Resize, 9999.0, 9999.0);
+        assert_eq!((p.w, p.h), (MAX_W, MAX_H));
+        p.drag_by(PanelDrag::Resize, -9999.0, -9999.0);
+        assert_eq!((p.w, p.h), (MIN_W, MIN_H));
+        assert!(p.layout().rows >= 1);
+
+        // move shifts the card offset, clamped; the canvas re-origins the cat
+        p.drag_by(PanelDrag::Move, -30.0, -20.0);
+        assert_eq!(p.off, (DEFAULT_OFF.0 - 30.0, DEFAULT_OFF.1 - 20.0));
+        let l = p.layout();
+        assert_eq!(l.cat, (-(p.off.0 - 4.0), -(p.off.1 - 4.0)));
+        p.drag_by(PanelDrag::Move, -9999.0, 9999.0);
+        assert_eq!(p.off, (-MAX_OFF, MAX_OFF));
+    }
+
+    #[test]
+    fn geometry_clamp_rejects_garbage() {
+        let (w, h, x, y) = clamp_geometry(f32::NAN, 1e9, -1e9, 1e9);
+        assert_eq!(w, DEFAULT_W, "NaN falls back to the default");
+        assert_eq!(h, MAX_H, "huge values clamp to the bounds");
+        assert_eq!((x, y), (-MAX_OFF, MAX_OFF));
+        let (w, h, _, _) = clamp_geometry(f32::INFINITY, f32::NEG_INFINITY, 0.0, 0.0);
+        assert_eq!((w, h), (DEFAULT_W, DEFAULT_H), "non-finite falls back");
+        assert_eq!(
+            clamp_geometry(DEFAULT_W, DEFAULT_H, DEFAULT_OFF.0, DEFAULT_OFF.1),
+            (DEFAULT_W, DEFAULT_H, DEFAULT_OFF.0, DEFAULT_OFF.1),
+            "sane values pass through"
+        );
+    }
+
+    #[test]
+    fn resize_keeps_scroll_in_range() {
+        let s = store(20);
+        let mut p = open_panel();
+        p.nav(NavKey::End, &s);
+        let bottom_scroll = p.scroll;
+        assert!(bottom_scroll > 0);
+        // a taller card shows more rows: scroll re-clamps on refresh
+        p.drag_by(PanelDrag::Resize, 0.0, MAX_H);
+        p.refresh(&s);
+        assert!(p.scroll <= 20 - p.visible_rows());
+        assert!(p.scroll < bottom_scroll);
+        // selection still on screen
+        assert!(p.sel >= p.scroll && p.sel < p.scroll + p.visible_rows());
+    }
+
+    #[test]
     fn esc_clears_query_then_filter_then_closes() {
         let mut s = store(2);
         s.add_copy("from chrome".into(), Some("Chrome".into()));
-        let mut p = Panel { open: true, ..Default::default() };
+        let mut p = open_panel();
         p.input_char('a');
         p.cycle_source(&s);
         assert!(p.source.is_some());
@@ -463,7 +752,7 @@ mod tests {
     #[test]
     fn source_filter_cycles_and_filters_rows() {
         let s = store_with_sources();
-        let mut p = Panel { open: true, ..Default::default() };
+        let mut p = open_panel();
         assert_eq!(p.visible(&s).len(), 4);
         // most recent source first: Chrome, then Code, then back to all
         p.cycle_source(&s);
@@ -480,8 +769,9 @@ mod tests {
     #[test]
     fn filter_button_and_tab_cycle_the_source() {
         let s = store_with_sources();
-        let mut p = Panel { open: true, ..Default::default() };
-        assert_eq!(p.click(BTN_FILTER_X + 8.0, BTN_Y + 8.0, &s), None);
+        let mut p = open_panel();
+        let l = p.layout();
+        assert_eq!(p.click(l.btn_filter_x + 8.0, l.btn_y + 8.0, &s), None);
         assert_eq!(p.source.as_deref(), Some("Chrome"));
         assert_eq!(p.nav(NavKey::Tab, &s), None);
         assert_eq!(p.source.as_deref(), Some("Code"));
@@ -498,8 +788,9 @@ mod tests {
     #[test]
     fn clear_needs_a_second_press() {
         let s = store(3);
-        let mut p = Panel { open: true, ..Default::default() };
-        let (bx, by) = (BTN_CLEAR_X + 8.0, BTN_Y + 8.0);
+        let mut p = open_panel();
+        let l = p.layout();
+        let (bx, by) = (l.btn_clear_x + 8.0, l.btn_y + 8.0);
         assert_eq!(p.click(bx, by, &s), Some(PanelAction::ArmClear));
         assert!(p.clear_armed);
         assert_eq!(p.click(bx, by, &s), Some(PanelAction::Clear));
@@ -517,10 +808,10 @@ mod tests {
     #[test]
     fn home_end_jump_selection() {
         let s = store(20);
-        let mut p = Panel { open: true, ..Default::default() };
+        let mut p = open_panel();
         p.nav(NavKey::End, &s);
         assert_eq!(p.sel, 19);
-        assert!(p.sel >= p.scroll && p.sel < p.scroll + VISIBLE_ROWS);
+        assert!(p.sel >= p.scroll && p.sel < p.scroll + p.visible_rows());
         p.nav(NavKey::Home, &s);
         assert_eq!((p.sel, p.scroll), (0, 0));
     }
@@ -528,7 +819,7 @@ mod tests {
     #[test]
     fn pin_and_undo_keys_act_on_selection() {
         let s = store(3);
-        let mut p = Panel { open: true, ..Default::default() };
+        let mut p = open_panel();
         p.nav(NavKey::Down, &s);
         let id = s.visible("")[1].id;
         assert_eq!(p.nav(NavKey::Pin, &s), Some(PanelAction::TogglePin(id)));
@@ -538,7 +829,7 @@ mod tests {
     #[test]
     fn visible_cache_tracks_store_query_and_filter() {
         let mut s = store(3);
-        let p = Panel { open: true, ..Default::default() };
+        let p = open_panel();
         assert_eq!(p.visible(&s).len(), 3);
         // store mutations invalidate the cached view immediately
         s.add_copy("clip number 99".into(), None);
@@ -559,7 +850,7 @@ mod tests {
     #[test]
     fn typing_filters_reset_scroll() {
         let s = store(20);
-        let mut p = Panel { open: true, ..Default::default() };
+        let mut p = open_panel();
         p.wheel(5, &s);
         assert!(p.scroll > 0);
         p.input_char('7');

@@ -1,6 +1,6 @@
 # ADR-0006: English/Korean i18n with an in-code vector Hangul font
 
-- Status: Accepted
+- Status: Superseded by [ADR-0011](0011-remove-pixel-font.md)
 - Date: 2026-06-11
 - Related: [ADR-0000](0000-zero-framework-rendering.md) (no asset pipeline)
 

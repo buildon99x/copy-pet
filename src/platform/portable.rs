@@ -11,11 +11,14 @@
 //! middle-click to toggle the clipboard panel, hover to show today's stats,
 //! and the global panel hotkey (Cmd+Shift+V on macOS, Super+Shift+V on
 //! Linux by default — the configured `win` modifier maps to the OS super
-//! key). Settings have no system tray here; when the window is focused
+//! key). The panel card itself is movable (drag its header strip) and
+//! resizable (drag the bottom-right grip) independently of the cat.
+//! Settings have no system tray here; when the window is focused
 //! these keys apply: S size · A accessory · M sound · B stats bubble ·
-//! L lock · G language · C clipboard panel · U update download page ·
-//! Q/Esc quit. While the panel is open the keyboard drives it instead
-//! (type to search, arrows/Home/End + Enter, Del deletes, Ctrl+Z undoes,
+//! L lock · G language · C clipboard panel · O auto-close after copy ·
+//! U update download page · Q/Esc quit. While the panel is open the
+//! keyboard drives it instead (type to search, arrows/Home/End + Enter,
+//! Ctrl+0..9 quick-copies the badged top rows, Del deletes, Ctrl+Z undoes,
 //! Ctrl+P pins — Cmd works too on macOS — Tab cycles the source-app
 //! filter, Esc closes).
 //!
@@ -27,7 +30,9 @@
 //! Privacy note (ADR-0008): the global-input listener increments the activity
 //! counters and additionally compares each key event against the one
 //! configured hotkey chord, in memory, discarding it immediately — key
-//! identities are never stored, logged, buffered or transmitted.
+//! identities are never stored, logged, buffered or transmitted. The only
+//! other key-shaped state is [`KeyGate`]'s held-keys set, kept solely to
+//! ignore OS auto-repeat and dropped on release.
 //!
 //! macOS uses a bespoke CoreGraphics event tap ([`super::mac_input`]) rather
 //! than `rdev::listen`: rdev translates every keypress to text via Text Input
@@ -98,10 +103,15 @@ struct PortableApp {
     cursor: PhysicalPosition<f64>,
     mouse_down: bool,
     dragging: bool,
+    /// A panel-card drag (header move / grip resize) is in progress; deltas
+    /// are tracked in *screen* coordinates because the window itself moves
+    /// and resizes under the pointer while the card is dragged.
+    panel_dragging: bool,
+    drag_screen: (f64, f64),
     press_pos: PhysicalPosition<f64>,
     last_click: Option<Instant>,
     focused: bool,
-    /// Live keyboard modifiers (for Ctrl+P / Ctrl+Z in the panel).
+    /// Live keyboard modifiers (for Ctrl+P / Ctrl+Z / Ctrl+digits in the panel).
     mods: ModifiersState,
 }
 
@@ -140,6 +150,8 @@ impl PortableApp {
             cursor: PhysicalPosition::new(0.0, 0.0),
             mouse_down: false,
             dragging: false,
+            panel_dragging: false,
+            drag_screen: (0.0, 0.0),
             press_pos: PhysicalPosition::new(0.0, 0.0),
             last_click: None,
             focused: false,
@@ -147,8 +159,9 @@ impl PortableApp {
         }
     }
 
-    /// Resizes the window/buffers to the wanted size (scale or panel state
-    /// changed), keeping the bottom edge roughly anchored, then repaints.
+    /// Resizes the window/buffers to the wanted size (scale or panel layout
+    /// changed), shifted by `Pet::take_window_shift` so the cat stays put
+    /// on screen, then repaints.
     fn apply_size(&mut self) {
         let Some(window) = self.window.clone() else {
             return;
@@ -156,11 +169,11 @@ impl PortableApp {
         let (nw, nh) = self.pet.canvas_size();
         let (nw, nh) = (nw as u32, nh as u32);
 
-        // anchor bottom-center
-        if let Ok(pos) = window.outer_position() {
-            let nx = pos.x + (self.w as i32 - nw as i32) / 2;
-            let ny = pos.y + (self.h as i32 - nh as i32);
-            window.set_outer_position(PhysicalPosition::new(nx, ny));
+        let (dx, dy) = self.pet.take_window_shift();
+        if (dx, dy) != (0, 0) {
+            if let Ok(pos) = window.outer_position() {
+                window.set_outer_position(PhysicalPosition::new(pos.x + dx, pos.y + dy));
+            }
         }
         let _ = window.request_inner_size(PhysicalSize::new(nw, nh));
         self.w = nw;
@@ -168,6 +181,19 @@ impl PortableApp {
         self.pm = tiny_skia::Pixmap::new(nw, nh).unwrap();
         self.resize_surface();
         self.paint();
+    }
+
+    /// Cursor position in screen coordinates (window position + local
+    /// cursor); window-local coordinates would feed back into themselves
+    /// while a panel drag moves/resizes the window under the pointer.
+    fn screen_cursor(&self) -> (f64, f64) {
+        let base = self
+            .window
+            .as_ref()
+            .and_then(|w| w.outer_position().ok())
+            .map(|p| (p.x as f64, p.y as f64))
+            .unwrap_or((0.0, 0.0));
+        (base.0 + self.cursor.x, base.1 + self.cursor.y)
     }
 
     /// Resizes the presentation buffers to the current `w`×`h`. On macOS the
@@ -330,6 +356,7 @@ impl PortableApp {
                 self.pet.dirty = true;
             }
             KeyCode::KeyC => self.pet.toggle_panel(),
+            KeyCode::KeyO => self.pet.toggle_panel_autoclose(),
             KeyCode::KeyU => {
                 // only meaningful once the update toast announced a version
                 if self.pet.update_available().is_some() {
@@ -362,6 +389,8 @@ impl PortableApp {
             PhysicalKey::Code(KeyCode::Tab) => Some(NavKey::Tab), // source filter
             PhysicalKey::Code(KeyCode::KeyP) if ctrl => Some(NavKey::Pin),
             PhysicalKey::Code(KeyCode::KeyZ) if ctrl => Some(NavKey::Undo),
+            // Ctrl/Cmd+0..9: quick-copy the nth row from the top
+            PhysicalKey::Code(code) if ctrl => quick_digit(code).map(NavKey::Quick),
             _ => None,
         };
         if let Some(key) = nav {
@@ -458,7 +487,17 @@ impl ApplicationHandler for PortableApp {
                 self.cursor = position;
                 let (cx, cy) = self.canvas_xy();
                 self.pet.set_cursor(cx, cy);
-                if self.mouse_down && !self.dragging && !self.pet.st.locked {
+                if self.panel_dragging {
+                    // card drag: screen-pixel deltas as canvas units; the
+                    // tick applies the new layout (resize + window shift)
+                    let sc = self.screen_cursor();
+                    let s = self.pet.scale();
+                    let (dx, dy) = (sc.0 - self.drag_screen.0, sc.1 - self.drag_screen.1);
+                    if dx != 0.0 || dy != 0.0 {
+                        self.pet.panel_drag_update(dx as f32 / s, dy as f32 / s);
+                        self.drag_screen = sc;
+                    }
+                } else if self.mouse_down && !self.dragging && !self.pet.st.locked {
                     let dx = position.x - self.press_pos.x;
                     let dy = position.y - self.press_pos.y;
                     if dx * dx + dy * dy > 9.0 {
@@ -474,6 +513,15 @@ impl ApplicationHandler for PortableApp {
                 MouseButton::Left => match state {
                     ElementState::Pressed => {
                         let (cx, cy) = self.canvas_xy();
+                        // header strip / resize grip start a card drag (the
+                        // grip pokes slightly past the card edge)
+                        if self.pet.panel_drag_start(cx, cy) {
+                            self.panel_dragging = true;
+                            self.drag_screen = self.screen_cursor();
+                            self.mouse_down = false;
+                            self.last_click = None;
+                            return;
+                        }
                         if self.pet.panel_hit(cx, cy) {
                             // panel interactions act on press; no drag/petting
                             if let Some(text) = self.pet.panel_click(cx, cy) {
@@ -500,7 +548,10 @@ impl ApplicationHandler for PortableApp {
                         }
                     }
                     ElementState::Released => {
-                        if self.mouse_down && !self.dragging {
+                        if self.panel_dragging {
+                            self.panel_dragging = false;
+                            self.pet.panel_drag_end();
+                        } else if self.mouse_down && !self.dragging {
                             let (cx, cy) = self.canvas_xy();
                             let (lx, ly) = self.pet.cat_point(cx, cy);
                             self.pet.click_bounce(lx, ly);
@@ -599,6 +650,23 @@ impl ApplicationHandler for PortableApp {
     }
 }
 
+/// Ctrl/Cmd+digit → quick-copy slot (0 = the top clip).
+fn quick_digit(code: KeyCode) -> Option<u8> {
+    Some(match code {
+        KeyCode::Digit0 | KeyCode::Numpad0 => 0,
+        KeyCode::Digit1 | KeyCode::Numpad1 => 1,
+        KeyCode::Digit2 | KeyCode::Numpad2 => 2,
+        KeyCode::Digit3 | KeyCode::Numpad3 => 3,
+        KeyCode::Digit4 | KeyCode::Numpad4 => 4,
+        KeyCode::Digit5 | KeyCode::Numpad5 => 5,
+        KeyCode::Digit6 | KeyCode::Numpad6 => 6,
+        KeyCode::Digit7 | KeyCode::Numpad7 => 7,
+        KeyCode::Digit8 | KeyCode::Numpad8 => 8,
+        KeyCode::Digit9 | KeyCode::Numpad9 => 9,
+        _ => return None,
+    })
+}
+
 /// The rdev key the configured hotkey letter/digit corresponds to.
 fn rdev_key_of(c: char) -> Option<rdev::Key> {
     use rdev::Key::*;
@@ -671,11 +739,50 @@ impl ChordTracker {
     }
 }
 
-/// One global input event: bump the shared activity counters and feed the
-/// chord matcher (the only key inspection we permit; see [`ChordTracker`]).
-fn pump(et: rdev::EventType, chord: &mut ChordTracker, panel_toggle: &AtomicBool) {
+/// Suppresses OS key auto-repeat for the activity counters: a key counts
+/// once when pressed and not again until released. Key identities are kept
+/// only while the key is physically held, then dropped — never logged,
+/// persisted or transmitted (ADR-0008 / golden rule 1). On X11, auto-repeat
+/// arrives as release+press pairs and passes this gate; macOS (repeated
+/// KeyDown without KeyUp) and Windows-portable are fully filtered.
+struct KeyGate {
+    down: Vec<rdev::Key>,
+}
+
+impl KeyGate {
+    fn new() -> KeyGate {
+        KeyGate { down: Vec::new() }
+    }
+
+    /// True when this press is fresh (the key was not already held).
+    fn fresh_press(&mut self, k: rdev::Key) -> bool {
+        if self.down.contains(&k) {
+            return false;
+        }
+        // a missed release can't wedge the gate: beyond this many "held"
+        // keys the press still counts, it just isn't tracked
+        if self.down.len() < 64 {
+            self.down.push(k);
+        }
+        true
+    }
+
+    fn release(&mut self, k: rdev::Key) {
+        self.down.retain(|d| *d != k);
+    }
+}
+
+/// One global input event: bump the shared activity counters (key presses
+/// gated for auto-repeat) and feed the chord matcher (the only key
+/// inspection we permit; see [`ChordTracker`] / [`KeyGate`]).
+fn pump(et: rdev::EventType, chord: &mut ChordTracker, gate: &mut KeyGate, panel_toggle: &AtomicBool) {
     match et {
-        rdev::EventType::KeyPress(_) => input::key(),
+        rdev::EventType::KeyPress(k) => {
+            if gate.fresh_press(k) {
+                input::key();
+            }
+        }
+        rdev::EventType::KeyRelease(k) => gate.release(k),
         rdev::EventType::ButtonPress(_) => input::click(),
         rdev::EventType::Wheel { .. } => input::wheel(),
         _ => {}
@@ -697,7 +804,9 @@ fn pump(et: rdev::EventType, chord: &mut ChordTracker, panel_toggle: &AtomicBool
 fn spawn_global_input(hk: Hotkey, panel_toggle: Arc<AtomicBool>, perm_needed: Arc<AtomicBool>) {
     std::thread::spawn(move || {
         let mut chord = ChordTracker::new(hk);
-        let res = super::mac_input::listen(move |et| pump(et, &mut chord, &panel_toggle));
+        let mut gate = KeyGate::new();
+        let res =
+            super::mac_input::listen(move |et| pump(et, &mut chord, &mut gate, &panel_toggle));
         if res.is_err() {
             perm_needed.store(true, Ordering::Relaxed);
         }
@@ -708,7 +817,10 @@ fn spawn_global_input(hk: Hotkey, panel_toggle: Arc<AtomicBool>, perm_needed: Ar
 fn spawn_global_input(hk: Hotkey, panel_toggle: Arc<AtomicBool>, _perm_needed: Arc<AtomicBool>) {
     std::thread::spawn(move || {
         let mut chord = ChordTracker::new(hk);
-        let _ = rdev::listen(move |event| pump(event.event_type, &mut chord, &panel_toggle));
+        let mut gate = KeyGate::new();
+        let _ = rdev::listen(move |event| {
+            pump(event.event_type, &mut chord, &mut gate, &panel_toggle)
+        });
     });
 }
 
@@ -843,5 +955,18 @@ mod tests {
         assert!(!t.on_event(&KeyPress(Key::KeyV)));
         // and non-key events are ignored entirely
         assert!(!t.on_event(&rdev::EventType::Wheel { delta_x: 0, delta_y: 1 }));
+    }
+
+    #[test]
+    fn key_gate_ignores_auto_repeat_until_release() {
+        let mut g = KeyGate::new();
+        assert!(g.fresh_press(Key::KeyA));
+        assert!(!g.fresh_press(Key::KeyA), "auto-repeat while held");
+        assert!(g.fresh_press(Key::KeyB), "other keys still count");
+        g.release(Key::KeyA);
+        assert!(g.fresh_press(Key::KeyA), "re-press after release counts");
+        // releasing a key that was never tracked is harmless
+        g.release(Key::KeyZ);
+        assert!(!g.fresh_press(Key::KeyB), "B is still held");
     }
 }

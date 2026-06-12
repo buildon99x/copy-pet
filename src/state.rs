@@ -31,6 +31,15 @@ pub struct Persist {
     /// When false, the daily GitHub release check is skipped entirely
     /// (see [`crate::update`], ADR-0009).
     pub auto_update: bool,
+    // clipboard panel card (canvas units; see crate::panel::Layout)
+    pub panel_w: f32,
+    pub panel_h: f32,
+    /// Card top-left relative to the cat's top-left — the panel can be
+    /// moved independently of the cat (dragged by its header).
+    pub panel_off_x: f32,
+    pub panel_off_y: f32,
+    /// When true (default), picking a clip closes the panel for pasting.
+    pub panel_autoclose: bool,
     // lifetime
     pub total_keys: u64,
     pub total_clicks: u64,
@@ -59,6 +68,11 @@ impl Default for Persist {
             clip_capture: true,
             hotkey: crate::hotkey::DEFAULT.to_string(),
             auto_update: true,
+            panel_w: crate::panel::DEFAULT_W,
+            panel_h: crate::panel::DEFAULT_H,
+            panel_off_x: crate::panel::DEFAULT_OFF.0,
+            panel_off_y: crate::panel::DEFAULT_OFF.1,
+            panel_autoclose: true,
             total_keys: 0,
             total_clicks: 0,
             total_copies: 0,
@@ -153,6 +167,14 @@ impl Persist {
         if crate::hotkey::Hotkey::parse(&st.hotkey).is_none() {
             st.hotkey = crate::hotkey::DEFAULT.to_string();
         }
+        // hand-edited or corrupt panel geometry must never produce an
+        // absurd or NaN layout
+        (st.panel_w, st.panel_h, st.panel_off_x, st.panel_off_y) = crate::panel::clamp_geometry(
+            st.panel_w,
+            st.panel_h,
+            st.panel_off_x,
+            st.panel_off_y,
+        );
         st
     }
 
@@ -344,5 +366,12 @@ mod tests {
         assert!(st.lang.is_empty());
         assert_eq!(st.hotkey, crate::hotkey::DEFAULT, "hotkey defaults in");
         assert!(st.auto_update, "update check defaults on");
+        assert!(st.panel_autoclose, "panel closes after copy by default");
+        assert_eq!(st.panel_w, crate::panel::DEFAULT_W, "panel size defaults in");
+        assert_eq!(
+            (st.panel_off_x, st.panel_off_y),
+            crate::panel::DEFAULT_OFF,
+            "panel offset defaults in"
+        );
     }
 }
