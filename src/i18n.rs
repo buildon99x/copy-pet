@@ -52,7 +52,9 @@ pub enum Msg {
     MenuLock,
     MenuLanguage,
     MenuAutostart,
+    MenuLoginStart,
     MenuReset,
+    Cancel,
     MenuAbout,
     MenuExit,
     ResetTitle,
@@ -69,6 +71,8 @@ pub enum Msg {
     MenuAutoUpdate,
     ToastUpdateDownloading,
     ToastUpdateFailed,
+    // macOS Accessibility permission (global input tap)
+    ToastAccessibility,
     // stats bubble
     BubbleKeys,
     BubbleClicks,
@@ -109,8 +113,12 @@ pub fn t(lang: Lang, msg: Msg) -> &'static str {
         (MenuLanguage, _) => "Language (언어)",
         (MenuAutostart, Lang::En) => "Run at Windows startup",
         (MenuAutostart, Lang::Ko) => "Windows 시작 시 자동 실행",
+        (MenuLoginStart, Lang::En) => "Run at login",
+        (MenuLoginStart, Lang::Ko) => "로그인 시 자동 실행",
         (MenuReset, Lang::En) => "Reset stats...",
         (MenuReset, Lang::Ko) => "통계 초기화...",
+        (Cancel, Lang::En) => "Cancel",
+        (Cancel, Lang::Ko) => "취소",
         (MenuAbout, Lang::En) => "About ClipCat",
         (MenuAbout, Lang::Ko) => "ClipCat 정보",
         (MenuExit, Lang::En) => "Quit",
@@ -143,6 +151,8 @@ pub fn t(lang: Lang, msg: Msg) -> &'static str {
         (ToastUpdateDownloading, Lang::Ko) => "업데이트 다운로드 중...",
         (ToastUpdateFailed, Lang::En) => "UPDATE FAILED",
         (ToastUpdateFailed, Lang::Ko) => "업데이트 실패",
+        (ToastAccessibility, Lang::En) => "ENABLE ACCESSIBILITY IN SYSTEM SETTINGS FOR THE HOTKEY",
+        (ToastAccessibility, Lang::Ko) => "단축키 사용: 시스템 설정 > 손쉬운 사용에서 권한을 허용하세요",
         (BubbleKeys, Lang::En) => "KEYS",
         (BubbleKeys, Lang::Ko) => "키 입력",
         (BubbleClicks, Lang::En) => "CLICKS",
@@ -286,10 +296,12 @@ mod tests {
         let all = [
             MenuShowStats, MenuCapturePause, MenuSize, SizeSmall, SizeNormal,
             SizeLarge, MenuAccessory, AccNone, MenuSound, SoundOff, SoundEvents, SoundAll,
-            MenuLock, MenuLanguage, MenuAutostart, MenuReset, MenuAbout, MenuExit, ResetTitle,
+            MenuLock, MenuLanguage, MenuAutostart, MenuLoginStart, MenuReset, Cancel, MenuAbout,
+            MenuExit, ResetTitle,
             ResetConfirm, PanelTitle, SearchHint, PanelEmpty, PanelNoMatch, ToastCopied,
             ToastCapturePaused, ToastCaptureOn, MenuAutoUpdate, ToastUpdateDownloading,
-            ToastUpdateFailed, BubbleKeys, BubbleClicks, BubbleClips, BubbleActive,
+            ToastUpdateFailed, ToastAccessibility, BubbleKeys, BubbleClicks, BubbleClips,
+            BubbleActive,
         ];
         for msg in all {
             assert!(!t(Lang::En, msg).is_empty());

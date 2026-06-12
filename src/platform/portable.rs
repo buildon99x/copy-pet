@@ -23,16 +23,23 @@
 //! the browser — no self-replacement on the portable backend. The check is
 //! disabled via `auto_update` in `state.json`.
 //!
-//! Privacy note (ADR-0008): the rdev listener increments the activity
+//! Privacy note (ADR-0008): the global-input listener increments the activity
 //! counters and additionally compares each key event against the one
 //! configured hotkey chord, in memory, discarding it immediately — key
 //! identities are never stored, logged, buffered or transmitted.
+//!
+//! macOS uses a bespoke CoreGraphics event tap ([`super::mac_input`]) rather
+//! than `rdev::listen`: rdev translates every keypress to text via Text Input
+//! Source APIs that hard-crash off the main thread on macOS 15 (LNR-0005).
+//! Linux keeps `rdev::listen` (X11). If the macOS tap can't be created
+//! (Accessibility permission missing) the app stays up and shows a hint.
 
 use crate::hotkey::Hotkey;
 use crate::input;
 use crate::panel::NavKey;
 use crate::pet::Pet;
 use crate::state::{Persist, ACCESSORIES};
+#[cfg(not(target_os = "macos"))]
 use std::num::NonZeroU32;
 use std::rc::Rc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -52,6 +59,7 @@ const DBLCLICK: Duration = Duration::from_millis(350);
 /// Clipboard poll cadence (arboard has no change notifications).
 const CLIP_POLL: Duration = Duration::from_millis(400);
 
+#[cfg(not(target_os = "macos"))]
 type Surface = softbuffer::Surface<Rc<Window>, Rc<Window>>;
 /// Text we just wrote to the clipboard ourselves; the watcher skips it once.
 type Suppress = Arc<Mutex<Option<String>>>;
@@ -59,8 +67,14 @@ type Suppress = Arc<Mutex<Option<String>>>;
 struct PortableApp {
     pet: Pet,
     window: Option<Rc<Window>>,
+    // Presentation: softbuffer (opaque card) everywhere except macOS, which
+    // uses a transparent CALayer presenter instead (ADR-0003 / LNR-0001).
+    #[cfg(not(target_os = "macos"))]
     _context: Option<softbuffer::Context<Rc<Window>>>,
+    #[cfg(not(target_os = "macos"))]
     surface: Option<Surface>,
+    #[cfg(target_os = "macos")]
+    presenter: Option<super::mac_present::Presenter>,
     pm: tiny_skia::Pixmap,
     w: u32,
     h: u32,
@@ -73,6 +87,12 @@ struct PortableApp {
     capture_flag: Arc<AtomicBool>,
     /// Raised by the global-input thread when the panel hotkey chord fires.
     panel_toggle: Arc<AtomicBool>,
+    /// Raised by the global-input thread when the (macOS) event tap could not
+    /// be installed — Accessibility permission is not granted yet.
+    perm_needed: Arc<AtomicBool>,
+    /// Panel-hotkey display label (e.g. "CMD+SHIFT+V") for the context menu.
+    #[cfg(target_os = "macos")]
+    hotkey_label: String,
     // interaction
     cursor: PhysicalPosition<f64>,
     mouse_down: bool,
@@ -89,13 +109,20 @@ impl PortableApp {
         suppress: Suppress,
         capture_flag: Arc<AtomicBool>,
         panel_toggle: Arc<AtomicBool>,
+        perm_needed: Arc<AtomicBool>,
+        hotkey_label: String,
     ) -> Self {
         let (w, h) = pet.canvas_size();
+        let _ = &hotkey_label; // used only by the macOS context menu
         PortableApp {
             pet,
             window: None,
+            #[cfg(not(target_os = "macos"))]
             _context: None,
+            #[cfg(not(target_os = "macos"))]
             surface: None,
+            #[cfg(target_os = "macos")]
+            presenter: None,
             pm: tiny_skia::Pixmap::new(w as u32, h as u32).unwrap(),
             w: w as u32,
             h: h as u32,
@@ -104,6 +131,9 @@ impl PortableApp {
             suppress,
             capture_flag,
             panel_toggle,
+            perm_needed,
+            #[cfg(target_os = "macos")]
+            hotkey_label,
             cursor: PhysicalPosition::new(0.0, 0.0),
             mouse_down: false,
             dragging: false,
@@ -136,6 +166,10 @@ impl PortableApp {
         self.paint();
     }
 
+    /// Resizes the presentation buffers to the current `w`×`h`. On macOS the
+    /// view's backing layer follows the window automatically, so this is a
+    /// no-op there (the next `paint` pushes a correctly sized image).
+    #[cfg(not(target_os = "macos"))]
     fn resize_surface(&mut self) {
         if let (Some(surface), Some(w), Some(h)) =
             (self.surface.as_mut(), NonZeroU32::new(self.w), NonZeroU32::new(self.h))
@@ -144,7 +178,23 @@ impl PortableApp {
         }
     }
 
-    /// Renders the pet into the pixmap and presents it via softbuffer.
+    #[cfg(target_os = "macos")]
+    fn resize_surface(&mut self) {}
+
+    /// Renders the pet into the pixmap and presents it. macOS draws onto a
+    /// transparent canvas and pushes it to the window's CALayer (a free-
+    /// floating, background-transparent pet); every other platform draws the
+    /// opaque "card" and blits it with softbuffer (ADR-0003 / LNR-0001).
+    #[cfg(target_os = "macos")]
+    fn paint(&mut self) {
+        self.pet.render(&mut self.pm);
+        let scale = self.window.as_ref().map(|w| w.scale_factor()).unwrap_or(1.0);
+        if let Some(presenter) = self.presenter.as_mut() {
+            presenter.present(&self.pm, scale);
+        }
+    }
+
+    #[cfg(not(target_os = "macos"))]
     fn paint(&mut self) {
         self.pet.render_card(&mut self.pm);
         let Some(surface) = self.surface.as_mut() else {
@@ -183,6 +233,58 @@ impl PortableApp {
         }
         if let Ok(mut cb) = arboard::Clipboard::new() {
             let _ = cb.set_text(text);
+        }
+    }
+
+    /// macOS right-click: build the platform-agnostic menu model, render it as
+    /// a native NSMenu, and apply the chosen action. State changes happen in
+    /// `Pet::apply_menu_action`; the outcomes that need OS work (confirm/reset,
+    /// About dialog, autostart, update page, quit) are finished here.
+    #[cfg(target_os = "macos")]
+    fn show_context_menu(&mut self, event_loop: &ActiveEventLoop) {
+        use crate::i18n::{about_text, t, Msg};
+        use crate::menu::MenuOutcome;
+
+        let Some(window) = self.window.clone() else {
+            return;
+        };
+        let autostart = super::mac_autostart::is_enabled();
+        let entries = self.pet.build_menu(&self.hotkey_label, autostart);
+        let Some(action) = super::mac_menu::popup(&window, &entries) else {
+            return;
+        };
+        let lang = self.pet.lang();
+        match self.pet.apply_menu_action(action) {
+            MenuOutcome::Handled => {}
+            MenuOutcome::Quit => {
+                self.save_position();
+                event_loop.exit();
+            }
+            MenuOutcome::ConfirmReset => {
+                if super::mac_dialogs::confirm(
+                    t(lang, Msg::ResetTitle),
+                    t(lang, Msg::ResetConfirm),
+                    t(lang, Msg::ResetTitle),
+                    t(lang, Msg::Cancel),
+                ) {
+                    self.pet.reset_stats();
+                }
+            }
+            MenuOutcome::ShowAbout => {
+                let body = about_text(
+                    lang,
+                    env!("CARGO_PKG_VERSION"),
+                    &self.hotkey_label,
+                    self.pet.level(),
+                    self.pet.st.total_keys,
+                    self.pet.clips.len(),
+                );
+                super::mac_dialogs::info(t(lang, Msg::MenuAbout), &body);
+            }
+            MenuOutcome::ToggleAutostart => {
+                super::mac_autostart::set(!autostart);
+            }
+            MenuOutcome::InstallUpdate => crate::update::open_releases_page(),
         }
     }
 
@@ -284,12 +386,15 @@ impl ApplicationHandler for PortableApp {
             PhysicalPosition::new(mw - w - 40, mh - h - 64)
         };
 
+        // macOS presents through a non-opaque CALayer (transparent, floating
+        // pet); softbuffer platforms keep the opaque card (ADR-0003).
+        let transparent = cfg!(target_os = "macos");
         let attrs = Window::default_attributes()
             .with_title("ClipCat")
             .with_inner_size(PhysicalSize::new(w as u32, h as u32))
             .with_position(pos)
             .with_decorations(false)
-            .with_transparent(false)
+            .with_transparent(transparent)
             .with_resizable(false)
             .with_window_level(WindowLevel::AlwaysOnTop);
 
@@ -303,14 +408,21 @@ impl ApplicationHandler for PortableApp {
         // Korean search input needs the IME (composition arrives as Ime::Commit)
         window.set_ime_allowed(true);
 
-        let context = softbuffer::Context::new(window.clone()).ok();
-        let surface = context
-            .as_ref()
-            .and_then(|ctx| softbuffer::Surface::new(ctx, window.clone()).ok());
+        #[cfg(not(target_os = "macos"))]
+        {
+            let context = softbuffer::Context::new(window.clone()).ok();
+            let surface = context
+                .as_ref()
+                .and_then(|ctx| softbuffer::Surface::new(ctx, window.clone()).ok());
+            self._context = context;
+            self.surface = surface;
+        }
+        #[cfg(target_os = "macos")]
+        {
+            self.presenter = super::mac_present::Presenter::new(&window);
+        }
 
         self.window = Some(window);
-        self._context = context;
-        self.surface = surface;
         self.resize_surface();
         self.last_frame = Instant::now();
         self.paint();
@@ -389,6 +501,12 @@ impl ApplicationHandler for PortableApp {
                         self.pet.toggle_panel();
                     }
                 }
+                #[cfg(target_os = "macos")]
+                MouseButton::Right => {
+                    if state == ElementState::Pressed {
+                        self.show_context_menu(event_loop);
+                    }
+                }
                 _ => {}
             },
             WindowEvent::MouseWheel { delta, .. } => {
@@ -433,6 +551,10 @@ impl ApplicationHandler for PortableApp {
             // the global panel hotkey fired on the input thread
             if self.panel_toggle.swap(false, Ordering::Relaxed) {
                 self.pet.toggle_panel();
+            }
+            // the macOS event tap couldn't start (Accessibility not granted)
+            if self.perm_needed.swap(false, Ordering::Relaxed) {
+                self.pet.notify_accessibility_needed();
             }
             // the daily release check found a newer version
             if let Some(v) = crate::update::take_found() {
@@ -535,24 +657,44 @@ impl ChordTracker {
     }
 }
 
-/// Spawns the `rdev` global input listener: increments the shared counters
-/// on every key/button/wheel event system-wide and raises `panel_toggle`
-/// when the configured panel chord is pressed (see [`ChordTracker`] for the
-/// privacy boundary).
-fn spawn_global_input(hk: Hotkey, panel_toggle: Arc<AtomicBool>) {
+/// One global input event: bump the shared activity counters and feed the
+/// chord matcher (the only key inspection we permit; see [`ChordTracker`]).
+fn pump(et: rdev::EventType, chord: &mut ChordTracker, panel_toggle: &AtomicBool) {
+    match et {
+        rdev::EventType::KeyPress(_) => input::key(),
+        rdev::EventType::ButtonPress(_) => input::click(),
+        rdev::EventType::Wheel { .. } => input::wheel(),
+        _ => {}
+    }
+    if chord.on_event(&et) {
+        panel_toggle.store(true, Ordering::Relaxed);
+    }
+}
+
+/// Spawns the global input listener: increments the shared counters on every
+/// key/button/wheel event system-wide and raises `panel_toggle` when the
+/// configured panel chord is pressed.
+///
+/// macOS uses [`super::mac_input`] (a TIS-free event tap; LNR-0005); if its
+/// tap can't be installed — Accessibility permission not granted —
+/// `perm_needed` is raised and the listener exits without crashing the app.
+/// Other platforms use `rdev::listen`.
+#[cfg(target_os = "macos")]
+fn spawn_global_input(hk: Hotkey, panel_toggle: Arc<AtomicBool>, perm_needed: Arc<AtomicBool>) {
     std::thread::spawn(move || {
         let mut chord = ChordTracker::new(hk);
-        let _ = rdev::listen(move |event| {
-            match event.event_type {
-                rdev::EventType::KeyPress(_) => input::key(),
-                rdev::EventType::ButtonPress(_) => input::click(),
-                rdev::EventType::Wheel { .. } => input::wheel(),
-                _ => {}
-            }
-            if chord.on_event(&event.event_type) {
-                panel_toggle.store(true, Ordering::Relaxed);
-            }
-        });
+        let res = super::mac_input::listen(move |et| pump(et, &mut chord, &panel_toggle));
+        if res.is_err() {
+            perm_needed.store(true, Ordering::Relaxed);
+        }
+    });
+}
+
+#[cfg(not(target_os = "macos"))]
+fn spawn_global_input(hk: Hotkey, panel_toggle: Arc<AtomicBool>, _perm_needed: Arc<AtomicBool>) {
+    std::thread::spawn(move || {
+        let mut chord = ChordTracker::new(hk);
+        let _ = rdev::listen(move |event| pump(event.event_type, &mut chord, &panel_toggle));
     });
 }
 
@@ -613,11 +755,13 @@ pub fn run() {
 
     let hk = Hotkey::from_spec(&st.hotkey);
     let panel_toggle = Arc::new(AtomicBool::new(false));
-    spawn_global_input(hk, panel_toggle.clone());
+    let perm_needed = Arc::new(AtomicBool::new(false));
+    spawn_global_input(hk, panel_toggle.clone(), perm_needed.clone());
 
     let mut pet = Pet::new(st);
     pet.set_panel_hint(format!("{} / C", hk.display()));
-    let mut app = PortableApp::new(pet, rx, suppress, capture_flag, panel_toggle);
+    let mut app =
+        PortableApp::new(pet, rx, suppress, capture_flag, panel_toggle, perm_needed, hk.display());
 
     let event_loop = match EventLoop::new() {
         Ok(el) => el,

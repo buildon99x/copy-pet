@@ -6,6 +6,7 @@
 
 use crate::clipboard::ClipStore;
 use crate::i18n::{self, t, Lang, Msg};
+use crate::menu::{MenuAction, MenuEntry, MenuItem, MenuOutcome};
 use crate::panel::{self, NavKey, Panel, PanelAction};
 use crate::render::{self, Accessory, Badge, BubbleData, FishView, Particle, ParticleKind, Scene};
 use crate::sound;
@@ -89,6 +90,7 @@ pub struct Pet {
     hover: bool,
     panel_hint: String,
     update_available: Option<String>, // newer release found (crate::update)
+    accessibility_hinted: bool,       // macOS Accessibility hint shown once
     // bookkeeping
     frame: u64,
     rng: u32,
@@ -130,6 +132,7 @@ impl Pet {
             hover: false,
             panel_hint: String::new(),
             update_available: None,
+            accessibility_hinted: false,
             frame: 0,
             rng: seed(),
             level,
@@ -190,6 +193,18 @@ impl Pet {
     /// The update download/install failed; the menu entry stays for a retry.
     pub fn notify_update_failed(&mut self) {
         self.set_toast(t(self.lang(), Msg::ToastUpdateFailed).to_string(), 3.0);
+    }
+
+    /// The macOS global-input event tap could not be installed — Accessibility
+    /// permission has not been granted. Point the user at the setting, once;
+    /// the pet, clipboard history and panel (C / middle-click) keep working,
+    /// only the global hotkey and the keyboard/mouse "tap along" do not.
+    pub fn notify_accessibility_needed(&mut self) {
+        if self.accessibility_hinted {
+            return;
+        }
+        self.accessibility_hinted = true;
+        self.set_toast(t(self.lang(), Msg::ToastAccessibility).to_string(), 8.0);
     }
 
     /// Returns `true` once after a level-up so the platform can refresh tray UI.
@@ -686,6 +701,165 @@ impl Pet {
         });
     }
 
+    /// Builds the right-click / tray context menu for the current state.
+    /// `hotkey` is the live panel-hotkey label; `autostart` is the
+    /// platform-queried "run at login/startup" state (the core does not track
+    /// it). Mirrors the Windows tray menu order so the two stay at parity.
+    pub fn build_menu(&self, hotkey: &str, autostart: bool) -> Vec<MenuEntry> {
+        let lang = self.lang();
+        let level = self.level();
+        let mut m: Vec<MenuEntry> = Vec::new();
+
+        // Update available (top, like the Windows tray).
+        if let Some(ver) = self.update_available() {
+            m.push(MenuItem::leaf(
+                i18n::menu_update(lang, ver),
+                MenuAction::InstallUpdate,
+                false,
+            ));
+            m.push(MenuEntry::Separator);
+        }
+
+        m.push(MenuItem::leaf(
+            i18n::menu_clipboard(lang, hotkey),
+            MenuAction::TogglePanel,
+            self.panel.open,
+        ));
+        m.push(MenuItem::leaf(
+            t(lang, Msg::MenuCapturePause),
+            MenuAction::ToggleCapture,
+            !self.st.clip_capture, // checked == capture is paused
+        ));
+        m.push(MenuEntry::Separator);
+
+        m.push(MenuItem::leaf(
+            t(lang, Msg::MenuShowStats),
+            MenuAction::ToggleStats,
+            self.st.bubble_pinned,
+        ));
+
+        // Size submenu.
+        let sizes = [Msg::SizeSmall, Msg::SizeNormal, Msg::SizeLarge];
+        let size_items = sizes
+            .iter()
+            .enumerate()
+            .map(|(i, msg)| MenuItem::leaf(t(lang, *msg), MenuAction::SetSize(i), self.st.scale_idx == i))
+            .collect();
+        m.push(MenuItem::parent(t(lang, Msg::MenuSize), size_items));
+
+        // Accessory submenu: None + each accessory, locked ones greyed.
+        let mut acc_items = vec![MenuItem::leaf(
+            t(lang, Msg::AccNone),
+            MenuAction::SetAccessory(0),
+            self.st.accessory == 0,
+        )];
+        for (i, acc) in ACCESSORIES.iter().enumerate() {
+            let id = i + 1;
+            let unlocked = level >= acc.level;
+            let label = if unlocked {
+                acc.name(lang).to_string()
+            } else {
+                i18n::accessory_locked(lang, acc.name(lang), acc.level)
+            };
+            acc_items.push(MenuEntry::Item(MenuItem {
+                label,
+                action: Some(MenuAction::SetAccessory(id)),
+                checked: self.st.accessory == id,
+                enabled: unlocked,
+                submenu: Vec::new(),
+            }));
+        }
+        m.push(MenuItem::parent(t(lang, Msg::MenuAccessory), acc_items));
+
+        // Sound submenu.
+        let sounds = [Msg::SoundOff, Msg::SoundEvents, Msg::SoundAll];
+        let sound_items = sounds
+            .iter()
+            .enumerate()
+            .map(|(i, msg)| {
+                MenuItem::leaf(t(lang, *msg), MenuAction::SetSound(i as u8), self.st.sound_mode as usize == i)
+            })
+            .collect();
+        m.push(MenuItem::parent(t(lang, Msg::MenuSound), sound_items));
+
+        m.push(MenuItem::leaf(
+            t(lang, Msg::MenuLock),
+            MenuAction::ToggleLock,
+            self.st.locked,
+        ));
+
+        // Language submenu (labels are language-agnostic, like the Windows menu).
+        let lang_items = vec![
+            MenuItem::leaf("English", MenuAction::SetLang(Lang::En), lang == Lang::En),
+            MenuItem::leaf("한국어", MenuAction::SetLang(Lang::Ko), lang == Lang::Ko),
+        ];
+        m.push(MenuItem::parent(t(lang, Msg::MenuLanguage), lang_items));
+
+        m.push(MenuEntry::Separator);
+        m.push(MenuItem::leaf(
+            t(lang, Msg::MenuLoginStart),
+            MenuAction::ToggleAutostart,
+            autostart,
+        ));
+        m.push(MenuItem::leaf(
+            t(lang, Msg::MenuAutoUpdate),
+            MenuAction::ToggleAutoUpdate,
+            self.st.auto_update,
+        ));
+        m.push(MenuItem::leaf(t(lang, Msg::MenuReset), MenuAction::ResetStats, false));
+        m.push(MenuItem::leaf(t(lang, Msg::MenuAbout), MenuAction::About, false));
+        m.push(MenuEntry::Separator);
+        m.push(MenuItem::leaf(t(lang, Msg::MenuExit), MenuAction::Quit, false));
+        m
+    }
+
+    /// Applies a chosen menu action. Pure state changes happen here and return
+    /// [`MenuOutcome::Handled`]; the rest hand a [`MenuOutcome`] back to the
+    /// backend (confirm/reset, about dialog, autostart, update page, quit).
+    pub fn apply_menu_action(&mut self, action: MenuAction) -> MenuOutcome {
+        match action {
+            MenuAction::TogglePanel => self.toggle_panel(),
+            MenuAction::ToggleCapture => {
+                self.run_action(PanelAction::ToggleCapture);
+            }
+            MenuAction::ToggleStats => {
+                self.st.bubble_pinned = !self.st.bubble_pinned;
+                self.dirty = true;
+            }
+            MenuAction::SetSize(i) => self.set_scale_idx(i),
+            MenuAction::SetAccessory(id) => {
+                // ignore a still-locked accessory (the menu greys it, but guard anyway)
+                if id == 0 || self.level() >= ACCESSORIES[id - 1].level {
+                    self.st.accessory = id;
+                    self.dirty = true;
+                }
+            }
+            MenuAction::SetSound(mode) => {
+                self.st.sound_mode = mode.min(2);
+                self.dirty = true;
+            }
+            MenuAction::ToggleLock => {
+                self.st.locked = !self.st.locked;
+                self.dirty = true;
+            }
+            MenuAction::SetLang(lang) => {
+                self.st.set_lang(lang);
+                self.dirty = true;
+            }
+            MenuAction::ToggleAutoUpdate => {
+                self.st.auto_update = !self.st.auto_update;
+                crate::update::set_enabled(self.st.auto_update);
+                self.dirty = true;
+            }
+            MenuAction::ToggleAutostart => return MenuOutcome::ToggleAutostart,
+            MenuAction::InstallUpdate => return MenuOutcome::InstallUpdate,
+            MenuAction::ResetStats => return MenuOutcome::ConfirmReset,
+            MenuAction::About => return MenuOutcome::ShowAbout,
+            MenuAction::Quit => return MenuOutcome::Quit,
+        }
+        MenuOutcome::Handled
+    }
+
     pub fn reset_stats(&mut self) {
         self.st.total_keys = 0;
         self.st.total_clicks = 0;
@@ -828,6 +1002,97 @@ mod tests {
         assert!(p.clips.is_empty());
         assert!(p.fish_queue.is_empty());
         assert_eq!(p.st.total_xp, 0);
+    }
+
+    /// Finds the first item (recursing into submenus) carrying `action`.
+    fn find(entries: &[MenuEntry], action: MenuAction) -> Option<&MenuItem> {
+        for e in entries {
+            if let MenuEntry::Item(it) = e {
+                if it.action == Some(action) {
+                    return Some(it);
+                }
+                if let Some(found) = find(&it.submenu, action) {
+                    return Some(found);
+                }
+            }
+        }
+        None
+    }
+
+    #[test]
+    fn menu_radio_checks_follow_state() {
+        let mut p = pet();
+        let cur = p.st.scale_idx;
+        assert!(find(&p.build_menu("HK", false), MenuAction::SetSize(cur)).unwrap().checked);
+
+        let other = (cur + 1) % 3;
+        assert_eq!(p.apply_menu_action(MenuAction::SetSize(other)), MenuOutcome::Handled);
+        assert_eq!(p.st.scale_idx, other);
+        let m = p.build_menu("HK", false);
+        assert!(find(&m, MenuAction::SetSize(other)).unwrap().checked);
+        assert!(!find(&m, MenuAction::SetSize(cur)).unwrap().checked);
+    }
+
+    #[test]
+    fn menu_capture_toggle_marks_paused_and_toasts() {
+        let mut p = pet();
+        let on = p.st.clip_capture;
+        // the item is checked when capture is *paused*
+        assert_eq!(
+            find(&p.build_menu("HK", false), MenuAction::ToggleCapture).unwrap().checked,
+            !on
+        );
+        assert_eq!(p.apply_menu_action(MenuAction::ToggleCapture), MenuOutcome::Handled);
+        assert_eq!(p.st.clip_capture, !on);
+        assert!(p.toast.is_some(), "capture toggle shows a toast");
+    }
+
+    #[test]
+    fn menu_autostart_check_reflects_param() {
+        let p = pet();
+        assert!(find(&p.build_menu("HK", true), MenuAction::ToggleAutostart).unwrap().checked);
+        assert!(!find(&p.build_menu("HK", false), MenuAction::ToggleAutostart).unwrap().checked);
+        // the toggle is a backend concern (write the LaunchAgent), so it defers
+        let mut p = p;
+        assert_eq!(p.apply_menu_action(MenuAction::ToggleAutostart), MenuOutcome::ToggleAutostart);
+    }
+
+    #[test]
+    fn menu_locks_accessories_until_their_level() {
+        let mut p = pet(); // level 1: every accessory locked
+        let m = p.build_menu("HK", false);
+        assert!(find(&m, MenuAction::SetAccessory(0)).unwrap().enabled, "None always enabled");
+        assert!(!find(&m, MenuAction::SetAccessory(1)).unwrap().enabled, "locked accessory greyed");
+        // applying a locked accessory is a guarded no-op
+        p.apply_menu_action(MenuAction::SetAccessory(1));
+        assert_eq!(p.st.accessory, 0);
+    }
+
+    #[test]
+    fn menu_reset_waits_for_confirmation() {
+        let mut p = pet();
+        p.st.total_keys = 99;
+        p.st.total_xp = 500;
+        assert_eq!(p.apply_menu_action(MenuAction::ResetStats), MenuOutcome::ConfirmReset);
+        assert_eq!(p.st.total_keys, 99, "ResetStats does not reset until the backend confirms");
+        p.reset_stats();
+        assert_eq!(p.st.total_keys, 0);
+    }
+
+    #[test]
+    fn menu_update_item_appears_only_when_available() {
+        let mut p = pet();
+        assert!(find(&p.build_menu("HK", false), MenuAction::InstallUpdate).is_none());
+        p.notify_update("9.9.9");
+        assert!(find(&p.build_menu("HK", false), MenuAction::InstallUpdate).is_some());
+        assert_eq!(p.apply_menu_action(MenuAction::InstallUpdate), MenuOutcome::InstallUpdate);
+    }
+
+    #[test]
+    fn menu_backend_outcomes_do_not_mutate() {
+        let mut p = pet();
+        assert_eq!(p.apply_menu_action(MenuAction::About), MenuOutcome::ShowAbout);
+        assert_eq!(p.apply_menu_action(MenuAction::Quit), MenuOutcome::Quit);
     }
 
     #[test]

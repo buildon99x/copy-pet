@@ -29,3 +29,11 @@ If you want a free-floating, click-through shaped window cross-platform, plan
 for a GPU path from the start — softbuffer is for opaque/rectangular surfaces.
 Don't assume `winit::with_transparent(true)` alone gives transparency; the
 *presenter* has to support alpha too.
+
+## Update — 2026-06-12
+
+macOS now *does* get a transparent presenter — not via softbuffer but by
+bypassing it: the pixmap is pushed to the window's `CALayer` as a `CGImage`
+with alpha (`src/platform/mac_present.rs`, ADR-0003 update). The softbuffer
+limitation here is unchanged; we just stopped using softbuffer on macOS. Linux
+and Windows-portable still hit this wall and keep the opaque card.

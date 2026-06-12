@@ -35,6 +35,12 @@ versions follow [SemVer](https://semver.org/). Maintenance rules:
   clears it. Search and the app filter combine.
 - The panel hotkey is configurable via `hotkey` in `state.json`
   (e.g. `"ctrl+alt+c"`); invalid values fall back to the default.
+- macOS: right-click the cat for a full context menu at parity with the
+  Windows tray — clipboard panel, pause capture, always-show-stats, Size /
+  Accessory / Sound / Language submenus (with check marks; locked accessories
+  greyed until their level), lock position, run at login, automatic updates,
+  reset stats (with a confirmation), About, an "update to vX.Y.Z" item when a
+  release is found, and quit.
 
 ### Changed
 - The clipboard panel and toast messages now render in your system's UI font
@@ -46,6 +52,15 @@ versions follow [SemVer](https://semver.org/). Maintenance rules:
   Ctrl+Shift+V). If another app already owns the combination, ClipCat
   automatically falls back to Ctrl+Shift+V; the panel footer and tray menu
   always show the hotkey that is actually active.
+- macOS: the cat now floats on your desktop with a transparent background,
+  like the Windows build, instead of sitting on a solid rounded card.
+
+### Fixed
+- macOS: ClipCat no longer crashes the moment you press a key (e.g. Ctrl+C) on
+  macOS 15. If the Accessibility permission needed for the global hotkey and
+  the keyboard/mouse "tap along" hasn't been granted, the cat now shows a hint
+  pointing you to System Settings and keeps running normally instead of failing
+  silently.
 
 ## [2.0.0] - 2026-06-12
 

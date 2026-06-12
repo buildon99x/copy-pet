@@ -11,6 +11,7 @@ pub mod hangul;
 pub mod hotkey;
 pub mod i18n;
 pub mod input;
+pub mod menu;
 pub mod panel;
 pub mod pet;
 pub mod platform;
