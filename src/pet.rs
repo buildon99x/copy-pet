@@ -88,6 +88,7 @@ pub struct Pet {
     // inputs from the platform
     hover: bool,
     panel_hint: String,
+    update_available: Option<String>, // newer release found (crate::update)
     // bookkeeping
     frame: u64,
     rng: u32,
@@ -128,6 +129,7 @@ impl Pet {
             fish_queue: VecDeque::new(),
             hover: false,
             panel_hint: String::new(),
+            update_available: None,
             frame: 0,
             rng: seed(),
             level,
@@ -160,6 +162,34 @@ impl Pet {
     /// Footer hint shown in the panel (backend-specific hotkey text).
     pub fn set_panel_hint(&mut self, hint: impl Into<String>) {
         self.panel_hint = hint.into();
+    }
+
+    // ---- auto-update (crate::update, ADR-0009) -------------------------------
+
+    /// The background checker found a newer release: remember it for the
+    /// menus/shortcuts and toast it, once per version.
+    pub fn notify_update(&mut self, version: &str) {
+        if self.update_available.as_deref() == Some(version) {
+            return;
+        }
+        self.update_available = Some(version.to_string());
+        self.set_toast(i18n::update_available(self.lang(), version), 4.0);
+    }
+
+    /// Newer release version the user can update to, if one was found.
+    pub fn update_available(&self) -> Option<&str> {
+        self.update_available.as_deref()
+    }
+
+    /// The update download/install started (long toast; replaced by the
+    /// restart or by [`Pet::notify_update_failed`]).
+    pub fn notify_update_downloading(&mut self) {
+        self.set_toast(t(self.lang(), Msg::ToastUpdateDownloading).to_string(), 120.0);
+    }
+
+    /// The update download/install failed; the menu entry stays for a retry.
+    pub fn notify_update_failed(&mut self) {
+        self.set_toast(t(self.lang(), Msg::ToastUpdateFailed).to_string(), 3.0);
     }
 
     /// Returns `true` once after a level-up so the platform can refresh tray UI.
@@ -853,6 +883,21 @@ mod tests {
         p.toggle_panel();
         let _ = p.run_action(PanelAction::ToggleLang);
         assert_ne!(p.lang(), before);
+    }
+
+    #[test]
+    fn update_notification_toasts_once_per_version() {
+        let mut p = pet();
+        assert!(p.update_available().is_none());
+        p.notify_update("9.9.9");
+        assert_eq!(p.update_available(), Some("9.9.9"));
+        assert!(p.toast.is_some());
+        p.toast = None;
+        p.notify_update("9.9.9"); // same version re-found: stay quiet
+        assert!(p.toast.is_none());
+        p.notify_update("9.9.10");
+        assert_eq!(p.update_available(), Some("9.9.10"));
+        assert!(p.toast.is_some());
     }
 
     #[test]

@@ -17,6 +17,14 @@ versions follow [SemVer](https://semver.org/). Maintenance rules:
 ## [Unreleased]
 
 ### Added
+- ClipCat can now keep itself up to date: once a day it checks GitHub for a
+  newer release and the cat shows a toast when one exists. On Windows, pick
+  "Update to vX.Y.Z and restart" in the tray menu and ClipCat downloads the
+  new version and restarts itself; on macOS/Linux press **U** to open the
+  download page. The check is on by default, can be turned off via "Check
+  for updates automatically" in the tray menu (or `auto_update` in
+  `state.json`), and sends nothing — it only reads the latest version
+  number from github.com.
 - The clipboard-panel hotkey now also works globally on macOS and Linux:
   **Cmd+Shift+V** on macOS, Super+Shift+V on Linux (the `win` modifier in
   the configurable spec maps to the OS's super key). macOS needs the same

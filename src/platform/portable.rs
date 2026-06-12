@@ -13,9 +13,15 @@
 //! Linux by default — the configured `win` modifier maps to the OS super
 //! key). Settings have no system tray here; when the window is focused
 //! these keys apply: S size · A accessory · M sound · B stats bubble ·
-//! L lock · G language · C clipboard panel · Q/Esc quit. While the panel is
-//! open the keyboard drives it instead (type to search, arrows/enter, Tab
-//! cycles the source-app filter, Esc closes).
+//! L lock · G language · C clipboard panel · U update download page ·
+//! Q/Esc quit. While the panel is open the keyboard drives it instead
+//! (type to search, arrows/enter, Tab cycles the source-app filter, Esc
+//! closes).
+//!
+//! Updates (ADR-0009): the shared daily release check (`crate::update`)
+//! toasts when a newer version exists; `U` then opens the releases page in
+//! the browser — no self-replacement on the portable backend. The check is
+//! disabled via `auto_update` in `state.json`.
 //!
 //! Privacy note (ADR-0008): the rdev listener increments the activity
 //! counters and additionally compares each key event against the one
@@ -218,6 +224,12 @@ impl PortableApp {
                 self.pet.dirty = true;
             }
             KeyCode::KeyC => self.pet.toggle_panel(),
+            KeyCode::KeyU => {
+                // only meaningful once the update toast announced a version
+                if self.pet.update_available().is_some() {
+                    crate::update::open_releases_page();
+                }
+            }
             KeyCode::KeyQ | KeyCode::Escape => {
                 self.save_position();
                 event_loop.exit();
@@ -422,6 +434,10 @@ impl ApplicationHandler for PortableApp {
             if self.panel_toggle.swap(false, Ordering::Relaxed) {
                 self.pet.toggle_panel();
             }
+            // the daily release check found a newer version
+            if let Some(v) = crate::update::take_found() {
+                self.pet.notify_update(&v);
+            }
             // copy events observed by the clipboard watcher
             self.capture_flag
                 .store(self.pet.st.clip_capture, Ordering::Relaxed);
@@ -590,6 +606,10 @@ pub fn run() {
     let st = Persist::load();
     let capture_flag = Arc::new(AtomicBool::new(st.clip_capture));
     spawn_clipboard_watcher(tx, suppress.clone(), capture_flag.clone());
+
+    // daily GitHub release check (ADR-0009)
+    crate::update::set_enabled(st.auto_update);
+    crate::update::spawn_checker();
 
     let hk = Hotkey::from_spec(&st.hotkey);
     let panel_toggle = Arc::new(AtomicBool::new(false));

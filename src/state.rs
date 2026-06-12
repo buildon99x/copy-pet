@@ -28,6 +28,9 @@ pub struct Persist {
     /// Global panel hotkey spec, e.g. "win+shift+v" (see [`crate::hotkey`]).
     /// Editable in state.json; invalid values reset to the default on load.
     pub hotkey: String,
+    /// When false, the daily GitHub release check is skipped entirely
+    /// (see [`crate::update`], ADR-0009).
+    pub auto_update: bool,
     // lifetime
     pub total_keys: u64,
     pub total_clicks: u64,
@@ -55,6 +58,7 @@ impl Default for Persist {
             lang: String::new(),
             clip_capture: true,
             hotkey: crate::hotkey::DEFAULT.to_string(),
+            auto_update: true,
             total_keys: 0,
             total_clicks: 0,
             total_copies: 0,
@@ -329,5 +333,6 @@ mod tests {
         assert_eq!(st.total_copies, 0);
         assert!(st.lang.is_empty());
         assert_eq!(st.hotkey, crate::hotkey::DEFAULT, "hotkey defaults in");
+        assert!(st.auto_update, "update check defaults on");
     }
 }

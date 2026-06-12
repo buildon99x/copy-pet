@@ -3,6 +3,8 @@ name = "clipcat"
 version = "2.0.0"
 edition = "2021"
 description = "ClipCat - a desktop cat clipboard manager: every copy feeds the cat"
+# The updater derives the release-check/download URLs from this (src/update.rs).
+repository = "https://github.com/buildon99x/copy-pet"
 
 [features]
 # Force the portable (winit/softbuffer/rdev/arboard) backend even on Windows,

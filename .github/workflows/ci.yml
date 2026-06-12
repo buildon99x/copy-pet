@@ -2,7 +2,9 @@ name: CI
 
 # Quality gates run once per change: on PRs and on main. Release binaries
 # are built ONLY for version tags pushed by scripts/release.sh — never on
-# PR creation or branch pushes.
+# PR creation or branch pushes. Linux is deliberately not built in CI (the
+# portable backend is exercised by the macOS job and by the Windows
+# `--features portable` lint).
 on:
   push:
     branches: [main]
@@ -20,7 +22,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [windows-latest, macos-latest, ubuntu-latest]
+        os: [windows-latest, macos-latest]
     steps:
       - uses: actions/checkout@v4
 
@@ -29,17 +31,6 @@ jobs:
           components: clippy
 
       - uses: Swatinem/rust-cache@v2
-
-      # winit + softbuffer (X11/Wayland) and rdev (XRecord/XTest) system libs
-      - name: Install Linux system dependencies
-        if: runner.os == 'Linux'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            pkg-config \
-            libxkbcommon-dev libwayland-dev \
-            libx11-dev libxi-dev libxtst-dev libxcursor-dev libxrandr-dev \
-            libxcb1-dev libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev
 
       # Default backend: native Win32 on Windows, portable elsewhere.
       - name: Build
@@ -53,7 +44,7 @@ jobs:
 
       # CHANGELOG.md policy lint (format + version sync with Cargo.toml)
       - name: Changelog lint
-        if: runner.os == 'Linux'
+        if: runner.os == 'macOS'
         run: bash scripts/release.sh verify
 
       # Also exercise the portable backend on Windows so it can't bit-rot.
@@ -61,13 +52,56 @@ jobs:
         if: runner.os == 'Windows'
         run: cargo clippy --release --features portable
 
-      # Release artifacts: only for vX.Y.Z tags (cut by scripts/release.sh)
-      - name: Upload release binary
+      # The in-app updater (src/update.rs) downloads release assets from
+      # github.com/<repo>/releases/download/<tag>/<name>; these names are
+      # part of that contract — keep them in sync with update::WINDOWS_ASSET.
+      - name: Prepare release asset (Windows)
+        if: startsWith(github.ref, 'refs/tags/v') && runner.os == 'Windows'
+        shell: bash
+        run: |
+          mkdir dist
+          cp target/release/clipcat.exe dist/clipcat-windows-x86_64.exe
+
+      # tar keeps the executable bit (macos-latest runners are arm64)
+      - name: Prepare release asset (macOS)
+        if: startsWith(github.ref, 'refs/tags/v') && runner.os == 'macOS'
+        run: |
+          mkdir dist
+          tar -czf dist/clipcat-macos-arm64.tar.gz -C target/release clipcat
+
+      - name: Upload release artifact
         if: startsWith(github.ref, 'refs/tags/v')
         uses: actions/upload-artifact@v4
         with:
-          name: clipcat-${{ github.ref_name }}-${{ matrix.os }}
-          path: |
-            target/release/clipcat
-            target/release/clipcat.exe
-          if-no-files-found: ignore
+          name: release-${{ matrix.os }}
+          path: dist/*
+          if-no-files-found: error
+
+  # Publishes the GitHub Release the in-app updater checks against. Runs on
+  # an ubuntu runner but builds nothing — it only attaches the artifacts.
+  release:
+    name: publish release
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      # Release notes come from the annotated tag (scripts/release.sh put
+      # the rotated CHANGELOG section there). Re-runs just re-upload assets.
+      - name: Create GitHub release with binaries
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" dist/* \
+            --verify-tag \
+            --title "ClipCat $GITHUB_REF_NAME" \
+            --notes-from-tag \
+          || gh release upload "$GITHUB_REF_NAME" dist/* --clobber

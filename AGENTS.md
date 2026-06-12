@@ -20,13 +20,17 @@ portable backend.
    user's configured panel-hotkey chord and immediately discards it
    (ADR-0008) — beyond that, never read, store, log or transmit key
    contents, window titles or timings. Clipboard *content* is the product,
-   but it stays local: stored only in the user's config dir, capture can
-   always be paused, and there is **no network code — keep it that way**.
+   but it stays local: stored only in the user's config dir, and capture can
+   always be paused. The **single sanctioned network exception** is the
+   update check/download in `src/update.rs` (ADR-0009): it talks to
+   github.com releases via the system `curl`, transmits nothing beyond the
+   request itself, and is switchable off (`auto_update`). **Add no other
+   network use.**
 2. **Keep the core platform-agnostic.** Simulation, clipboard store, panel
    logic, rendering, i18n, progression and persistence live in the core and
    must not reference any OS API (tiny per-OS leaves like `state::today_string`
-   / `state::detect_lang` are the only sanctioned exceptions). OS code lives
-   only under `src/platform/`.
+   / `state::detect_lang` and the `cfg` leaves in `update.rs` are the only
+   sanctioned exceptions). OS code lives only under `src/platform/`.
 3. **No new heavy dependencies** without an ADR. The whole point is a small
    binary with a handful of crates and no asset pipeline (icon, the built-in
    pixel/vector-Hangul fonts and sounds are generated from code; the UI font
@@ -55,6 +59,8 @@ src/
   i18n.rs              every user-visible string, English + Korean
   sound.rs             synthesized SFX; winmm on Windows, no-op elsewhere
   state.rs             Persist (JSON) + XP/level progression + accessory table
+  update.rs            optional self-update (ADR-0009): daily GitHub release
+                       check via system curl; exe swap + relaunch on Windows
   input.rs             shared atomic activity counters (KEYS/CLICKS/WHEEL)
   platform/
     mod.rs             selects exactly one backend by cfg
@@ -77,7 +83,9 @@ docs/specs/            product & technical specs
 .claude/skills/release/  project skill that drives scripts/release.sh
 .context/kb/adr/       architecture decision records (why)
 .context/kb/lnr/       lessons & near-misses (what bit us)
-.github/workflows/     CI: builds on windows + macos + ubuntu (+ changelog lint)
+.github/workflows/     CI: builds windows + macos (no Linux build; changelog
+                       lint runs on macos); v tags publish the GitHub release
+                       + the binaries the in-app updater downloads
 ```
 
 ## Architecture
@@ -189,7 +197,8 @@ relative markdown links.
    percent and memory ~12–16 MB on release.
 4. Whatever you could not execute locally (e.g. macOS/Linux runtime from a
    Windows box, or any GUI from a headless box) is validated by CI builds +
-   code review — say so honestly in summaries.
+   code review — say so honestly in summaries. Note CI has **no Linux job**;
+   Linux-affecting changes need a local Linux build/test pass.
 
 ## Gotchas (see LNR for detail)
 
@@ -206,3 +215,6 @@ relative markdown links.
 - The native window is `WS_EX_NOACTIVATE`; the panel temporarily removes that
   style to take keyboard focus for search, and restores it on close. Don't
   make the plain pet focusable.
+- The release asset names in `ci.yml` and `update::WINDOWS_ASSET` are a
+  contract — the updater builds its download URLs from them (and from
+  `Cargo.toml`'s `repository`). Change one, change all (ADR-0009).
