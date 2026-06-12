@@ -7,7 +7,7 @@
 use crate::clipboard::ClipStore;
 use crate::i18n::{self, t, Lang, Msg};
 use crate::menu::{MenuAction, MenuEntry, MenuItem, MenuOutcome};
-use crate::panel::{self, NavKey, Panel, PanelAction};
+use crate::panel::{NavKey, Panel, PanelAction, PanelDrag};
 use crate::render::{self, Accessory, Badge, BubbleData, FishView, Particle, ParticleKind, Scene};
 use crate::sound;
 use crate::state::{level_progress, Persist, ACCESSORIES};
@@ -98,16 +98,22 @@ pub struct Pet {
     last_min_bucket: u64,
     level_changed: bool,
     size_changed: bool,
+    /// Window-position delta (physical px) accumulated by layout changes so
+    /// the cat stays put on screen; drained via [`Pet::take_window_shift`].
+    pending_shift: (f32, f32),
+    /// Active panel-card drag (header move / grip resize), if any.
+    drag: Option<PanelDrag>,
 }
 
 impl Pet {
     pub fn new(st: Persist) -> Pet {
         let now = Instant::now();
         let (level, _, _) = level_progress(st.total_xp);
+        let panel = Panel::with_geometry(st.panel_w, st.panel_h, (st.panel_off_x, st.panel_off_y));
         Pet {
             st,
             clips: ClipStore::load(),
-            panel: Panel::default(),
+            panel,
             dirty: false,
             last_save: now,
             start: now,
@@ -139,6 +145,8 @@ impl Pet {
             last_min_bucket: 0,
             level_changed: false,
             size_changed: false,
+            pending_shift: (0.0, 0.0),
+            drag: None,
         }
     }
 
@@ -213,18 +221,33 @@ impl Pet {
     }
 
     /// Returns `true` once after the wanted window size changed (panel
-    /// toggled or scale changed); the platform then resizes its surface.
+    /// toggled/moved/resized or scale changed); the platform then resizes
+    /// its surface and offsets the window by [`Pet::take_window_shift`].
     pub fn take_size_changed(&mut self) -> bool {
         std::mem::take(&mut self.size_changed)
+    }
+
+    /// Pixel delta to add to the window position alongside a size change so
+    /// the cat stays put on screen: opening, moving or resizing the panel
+    /// re-origins the canvas around the cat, and a scale change keeps the
+    /// cat's feet on the same line. Drained on read; sub-pixel remainders
+    /// carry over so slow drags don't drift.
+    pub fn take_window_shift(&mut self) -> (i32, i32) {
+        let dx = self.pending_shift.0.round();
+        let dy = self.pending_shift.1.round();
+        self.pending_shift.0 -= dx;
+        self.pending_shift.1 -= dy;
+        (dx as i32, dy as i32)
     }
 
     /// Window size in physical pixels for the current scale + panel state.
     pub fn canvas_size(&self) -> (i32, i32) {
         let s = self.scale();
         if self.panel.open {
+            let l = self.panel.layout();
             (
-                (panel::CANVAS_W * s).round() as i32,
-                (panel::CANVAS_H * s).round() as i32,
+                (l.canvas_w * s).round() as i32,
+                (l.canvas_h * s).round() as i32,
             )
         } else {
             window_size(s)
@@ -234,10 +257,29 @@ impl Pet {
     /// Top-left of the cat canvas inside the window canvas.
     fn origin(&self) -> (f32, f32) {
         if self.panel.open {
-            panel::CAT_ORIGIN
+            self.panel.layout().cat
         } else {
             (0.0, 0.0)
         }
+    }
+
+    /// The cat's bottom-center in physical pixels — the screen point every
+    /// layout change keeps fixed (see [`Pet::take_window_shift`]).
+    fn cat_anchor(&self) -> (f32, f32) {
+        let (ox, oy) = self.origin();
+        let s = self.scale();
+        ((ox + render::CANVAS_W / 2.0) * s, (oy + render::CANVAS_H) * s)
+    }
+
+    /// Runs a canvas-layout mutation, accumulating the window shift that
+    /// keeps the cat anchored and flagging the size change for the backend.
+    fn relayout(&mut self, f: impl FnOnce(&mut Pet)) {
+        let before = self.cat_anchor();
+        f(self);
+        let after = self.cat_anchor();
+        self.pending_shift.0 += before.0 - after.0;
+        self.pending_shift.1 += before.1 - after.1;
+        self.size_changed = true;
     }
 
     /// Maps window-canvas coords to cat-local coords (for click_bounce).
@@ -248,9 +290,8 @@ impl Pet {
 
     pub fn set_scale_idx(&mut self, idx: usize) {
         if idx != self.st.scale_idx && idx < SCALES.len() {
-            self.st.scale_idx = idx;
+            self.relayout(|p| p.st.scale_idx = idx);
             self.dirty = true;
-            self.size_changed = true;
         }
     }
 
@@ -284,8 +325,42 @@ impl Pet {
     }
 
     pub fn toggle_panel(&mut self) {
-        self.panel.toggle();
-        self.size_changed = true;
+        self.drag = None;
+        self.relayout(|p| p.panel.toggle());
+    }
+
+    // ---- panel card drag (move / resize) -------------------------------------
+
+    /// Begins a card move/resize drag when (cx, cy) — window-canvas coords —
+    /// hits the card's header strip or its resize grip. Returns true when a
+    /// drag started (the backend then feeds deltas and must not treat the
+    /// press as a click).
+    pub fn panel_drag_start(&mut self, cx: f32, cy: f32) -> bool {
+        self.drag = self.panel.drag_hit(cx, cy);
+        self.drag.is_some()
+    }
+
+    pub fn panel_dragging(&self) -> bool {
+        self.drag.is_some()
+    }
+
+    /// Continues the active drag by a cursor delta in canvas units (screen
+    /// pixels / scale). The new geometry is persisted and the backend is
+    /// flagged to re-apply size + window shift.
+    pub fn panel_drag_update(&mut self, dx: f32, dy: f32) {
+        let Some(kind) = self.drag else { return };
+        self.relayout(|p| p.panel.drag_by(kind, dx, dy));
+        // a shorter card may need the scroll re-clamped
+        self.panel.refresh(&self.clips);
+        self.st.panel_w = self.panel.w;
+        self.st.panel_h = self.panel.h;
+        self.st.panel_off_x = self.panel.off.0;
+        self.st.panel_off_y = self.panel.off.1;
+        self.dirty = true;
+    }
+
+    pub fn panel_drag_end(&mut self) {
+        self.drag = None;
     }
 
     /// Tracks the cursor (window-canvas coords) for panel hover highlights.
@@ -315,7 +390,10 @@ impl Pet {
                         sound::play_pop();
                     }
                     // picked a clip: close the panel so the user can paste
-                    self.toggle_panel();
+                    // (switchable off to grab several clips in a row)
+                    if self.st.panel_autoclose {
+                        self.toggle_panel();
+                    }
                 }
                 return text;
             }
@@ -364,6 +442,18 @@ impl Pet {
             PanelAction::Close => self.toggle_panel(),
         }
         None
+    }
+
+    /// Flips "close the panel after copying a clip" and confirms via toast.
+    pub fn toggle_panel_autoclose(&mut self) {
+        self.st.panel_autoclose = !self.st.panel_autoclose;
+        self.dirty = true;
+        let msg = if self.st.panel_autoclose {
+            Msg::ToastAutoCloseOn
+        } else {
+            Msg::ToastAutoCloseOff
+        };
+        self.set_toast(t(self.lang(), msg).to_string(), 2.2);
     }
 
     /// A click at window-canvas coords while the panel is open.
@@ -749,6 +839,11 @@ impl Pet {
             MenuAction::ToggleCapture,
             !self.st.clip_capture, // checked == capture is paused
         ));
+        m.push(MenuItem::leaf(
+            t(lang, Msg::MenuAutoClose),
+            MenuAction::TogglePanelAutoClose,
+            self.st.panel_autoclose,
+        ));
         m.push(MenuEntry::Separator);
 
         m.push(MenuItem::leaf(
@@ -841,6 +936,7 @@ impl Pet {
             MenuAction::ToggleCapture => {
                 self.run_action(PanelAction::ToggleCapture);
             }
+            MenuAction::TogglePanelAutoClose => self.toggle_panel_autoclose(),
             MenuAction::ToggleStats => {
                 self.st.bubble_pinned = !self.st.bubble_pinned;
                 self.dirty = true;
@@ -1184,8 +1280,11 @@ mod tests {
         let open = p.canvas_size();
         assert!(open.0 > closed.0 && open.1 > closed.1);
         // cat-local mapping accounts for the origin shift
-        let (cx, cy) = p.cat_point(crate::panel::CAT_ORIGIN.0, crate::panel::CAT_ORIGIN.1);
+        let cat = p.panel.layout().cat;
+        let (cx, cy) = p.cat_point(cat.0, cat.1);
         assert_eq!((cx, cy), (0.0, 0.0));
+        // the window shifts so the cat itself never moves on screen
+        assert_eq!(p.take_window_shift(), (-(cat.0 as i32), -(cat.1 as i32)));
     }
 
     #[test]

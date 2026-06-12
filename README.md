@@ -28,10 +28,13 @@ Windows; a portable build sharing the same core on macOS/Linux.
 - **Filter by app** — the funnel button (or `Tab`) cycles through the apps
   you copied from; the active app shows as a chip in the search box and
   combines with the text search.
-- **English + Korean** — full UI in both, switchable at runtime. The panel
-  and toasts render in your **system font** (Segoe UI / Malgun Gothic on
-  Windows — read from the OS, never bundled); the cat's own tooltip keeps
-  its pixel font, with in-code vector Hangul as the universal fallback.
+- **Arrange the panel your way** — drag its header to move it (the cat
+  stays put), drag the bottom-right grip to resize it; both persist.
+  **Ctrl+0–9** instantly copies one of the badged top ten rows, and
+  "Close panel after copy" can be switched off to grab several clips.
+- **English + Korean** — full UI in both, switchable at runtime. All text
+  renders in your **system font** (Segoe UI / Malgun Gothic on Windows —
+  read from the OS, never bundled).
 - **Bongo-cat core loop** — global input *counts* drive paw taps, XP and
   levels: 2 XP/key, 1 XP/click & scroll, 5 XP/copy. Level-ups unlock
   accessories (scarf, glasses, beanie, headphones, crown, wizard hat).
@@ -48,22 +51,24 @@ Windows; a portable build sharing the same core on macOS/Linux.
 | Copy anywhere (Ctrl+C) | Cat eats a fish; clip saved to history |
 | `Win+Shift+V` (`Cmd+Shift+V` on macOS) / middle-click | Toggle the clipboard panel |
 | Click a clip row | Copy it back to the clipboard |
+| `Ctrl+0`–`9` (panel open) | Quick-copy the row with that digit badge |
 | Star / ✕ on a row | Pin / delete the clip |
 | Funnel button / `Tab` (panel open) | Cycle the source-app filter |
 | Type while panel is open | Search (arrows + Enter work too; Esc clears query → filter → closes) |
+| Drag the panel header / corner grip | Move / resize the panel (cat stays put) |
 | Drag | Move the pet (unless position-locked) |
 | Click | Boop (squash bounce, +1 XP) |
 | Double-click | Pet it (+10 XP, hearts) |
 | Hover | Today's stats bubble |
-| Right-click (Windows) | Menu: clipboard, capture pause, size, accessory, sound, lock, language, autostart, reset |
+| Right-click (Windows) | Menu: clipboard, capture pause, close-after-copy, size, accessory, sound, lock, language, autostart, reset |
 | Tray icon click (Windows) | Hide/show the cat |
 
 ### Portable build (macOS / Linux) keyboard shortcuts
 
 Global (works everywhere): `Cmd+Shift+V` (macOS) / `Super+Shift+V` (Linux)
 toggles the clipboard panel. With the window focused (and the panel closed):
-`C` clipboard panel · `S` size · `A` accessory · `M` sound · `B` stats bubble ·
-`L` lock · `G` language · `Q`/`Esc` quit.
+`C` clipboard panel · `O` close-after-copy · `S` size · `A` accessory ·
+`M` sound · `B` stats bubble · `L` lock · `G` language · `Q`/`Esc` quit.
 
 ## Platform differences
 
@@ -94,9 +99,10 @@ cargo run --bin gen_icon
 cargo run --release --example preview
 ```
 
-Requires Rust (MSVC toolchain on Windows). macOS/Linux need system libraries
-for the portable stack — see the *Install Linux system dependencies* step in
-the [CI workflow](.github/workflows/ci.yml). CI builds all three OSes.
+Requires Rust (MSVC toolchain on Windows). Linux needs system libraries for
+the portable stack — on Debian/Ubuntu: `apt-get install libx11-dev libxi-dev
+libxtst-dev libxkbcommon-dev libxkbcommon-x11-dev pkg-config`. CI builds
+Windows and macOS.
 
 ## Data & privacy
 
@@ -118,9 +124,9 @@ Everything stays on your machine — **there is no network code in the binary**.
 - One platform-agnostic core (`pet`, `clipboard`, `panel`, `render`, `state`,
   `i18n`) + two backends: native Win32 (layered window, tray, clipboard
   listener) and portable (`winit` + `softbuffer` + `rdev` + `arboard`).
-- Icon, sounds, ASCII font **and the Korean vector font** are all generated
-  from code — no bundled assets, single binary. The panel/toast UI font is
-  the OS's own (loaded at runtime via `ab_glyph`, ADR-0007).
+- Icon and sounds are generated from code — no bundled assets, single
+  binary. All text renders in the OS's own fonts (loaded at runtime via
+  `ab_glyph`, ADR-0007/0011).
 - User-facing changes are tracked in [CHANGELOG.md](CHANGELOG.md); releases
   are cut with `scripts/release.sh`.
 
@@ -146,10 +152,13 @@ Everything stays on your machine — **there is no network code in the binary**.
 - **출처 앱 필터** — 깔때기 버튼(또는 `Tab`)으로 복사해 온 앱별로 클립을
   걸러 봅니다. 활성 필터는 검색창의 칩으로 표시되고 텍스트 검색과 함께
   적용됩니다.
-- **영어 + 한국어** — 런타임에 전환 가능한 완전한 양국어 UI. 패널과 토스트는
-  **시스템 폰트**(Windows: 맑은 고딕/Segoe UI — OS에서 읽어 오며 번들하지
-  않음)로 렌더링하고, 고양이 툴팁(통계 말풍선)은 픽셀 폰트를 유지합니다.
-  한글 벡터 폰트는 폰트가 없는 환경의 폴백으로 계속 내장됩니다.
+- **패널을 내 마음대로** — 헤더를 드래그해 패널만 이동(고양이는 제자리),
+  오른쪽 아래 그립을 드래그해 크기 조절 — 둘 다 기억됩니다. **Ctrl+0~9**로
+  뱃지가 붙은 상위 10개 클립을 즉시 복사하고, "복사 후 패널 자동 닫기"를
+  꺼서 여러 클립을 연달아 가져올 수도 있습니다.
+- **영어 + 한국어** — 런타임에 전환 가능한 완전한 양국어 UI. 통계 말풍선을
+  포함한 모든 텍스트가 **시스템 폰트**(Windows: 맑은 고딕/Segoe UI — OS에서
+  읽어 오며 번들하지 않음)로 렌더링됩니다.
 - **봉고캣 코어 루프** — 키 1회 = 2 XP, 클릭/스크롤 = 1 XP, 복사 = 5 XP.
   레벨업하면 액세서리가 잠금해제됩니다 (목도리·안경·비니·헤드폰·왕관·마법사 모자).
 - **오늘의 통계** — 마우스를 올리면 키 입력 / 클릭 / 복사 / 활동 시간 표시.
@@ -165,21 +174,23 @@ Everything stays on your machine — **there is no network code in the binary**.
 | 어디서든 복사 (Ctrl+C) | 고양이가 생선을 먹고 클립 저장 |
 | `Win+Shift+V` (Windows) / 휠클릭 | 클립보드 패널 열기/닫기 |
 | 클립 행 클릭 | 클립보드로 재복사 |
+| `Ctrl+0`~`9` (패널 열림) | 해당 숫자 뱃지 행을 바로 복사 |
 | 행의 별 / ✕ | 고정 / 삭제 |
 | 깔때기 버튼 / `Tab` (패널 열림) | 출처 앱 필터 순환 |
 | 패널 열고 타이핑 | 검색 (방향키 + Enter, Esc는 검색어 → 필터 → 닫기 순서로 해제) |
+| 패널 헤더 / 모서리 그립 드래그 | 패널만 이동 / 크기 조절 (고양이는 제자리) |
 | 드래그 | 위치 이동 (잠금 시 제외) |
 | 클릭 | 콩— (+1 XP) |
 | 더블클릭 | 쓰다듬기 (+10 XP, 하트) |
 | 마우스 올리기 | 오늘의 통계 말풍선 |
-| 우클릭 (Windows) | 메뉴: 클립보드 · 수집 일시정지 · 크기 · 액세서리 · 소리 · 위치 잠금 · 언어 · 자동 실행 · 초기화 |
+| 우클릭 (Windows) | 메뉴: 클립보드 · 수집 일시정지 · 복사 후 자동 닫기 · 크기 · 액세서리 · 소리 · 위치 잠금 · 언어 · 자동 실행 · 초기화 |
 | 트레이 아이콘 클릭 (Windows) | 고양이 숨기기/보이기 |
 
 ### portable 빌드 (macOS / Linux) 단축키
 
 창에 포커스를 준 뒤 (패널이 닫힌 상태에서):
-`C` 클립보드 패널 · `S` 크기 · `A` 액세서리 · `M` 소리 · `B` 통계 고정 ·
-`L` 위치 잠금 · `G` 언어 · `Q`/`Esc` 종료
+`C` 클립보드 패널 · `O` 복사 후 자동 닫기 · `S` 크기 · `A` 액세서리 ·
+`M` 소리 · `B` 통계 고정 · `L` 위치 잠금 · `G` 언어 · `Q`/`Esc` 종료
 
 ## 데이터 & 프라이버시
 
@@ -202,6 +213,6 @@ cargo run --bin gen_icon                    # 아트 변경 후 아이콘 재생
 cargo run --release --example preview       # 렌더링 프리뷰 PNG 생성
 ```
 
-요구 사항: Rust (Windows는 MSVC). macOS/Linux 시스템 라이브러리는
-[CI 워크플로](.github/workflows/ci.yml)의 *Install Linux system dependencies*
-단계를 참고하세요.
+요구 사항: Rust (Windows는 MSVC). Linux는 portable 스택용 시스템 라이브러리가
+필요합니다 — Debian/Ubuntu: `apt-get install libx11-dev libxi-dev libxtst-dev
+libxkbcommon-dev libxkbcommon-x11-dev pkg-config`.

@@ -16,6 +16,30 @@ versions follow [SemVer](https://semver.org/). Maintenance rules:
 
 ## [Unreleased]
 
+### Added
+- The clipboard panel is now yours to arrange: drag its **header** to move
+  the panel anywhere — the cat stays put — and drag the **grip in its
+  bottom-right corner** to resize it (a taller panel shows more clips).
+  Size and position are remembered across restarts.
+- **Quick copy with Ctrl+0–9** (Cmd works on macOS): while the panel is
+  open, the first ten rows wear small digit badges — pressing Ctrl plus
+  that digit copies the clip instantly, following whatever search or
+  app filter is active. The numpad digits work too.
+- New setting **"Close panel after copy"** (tray/right-click menu; `O` key
+  on Linux): switch it off and the panel stays open after copying, so you
+  can grab several clips in a row. On by default.
+
+### Changed
+- The hover **stats bubble now uses your system font** instead of the
+  built-in pixel font, matching the panel's typography.
+- **Holding a key no longer farms stats**: key auto-repeat is ignored, so
+  the key counter (and its XP) only advances once per actual press.
+
+### Removed
+- The built-in 5×7 pixel font and the hand-drawn vector Hangul are gone;
+  every text surface renders with fonts read from your OS. (On a system
+  with no usable font at all, text shows as placeholder boxes.)
+
 ## [2.1.0] - 2026-06-12
 
 ### Added

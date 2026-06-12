@@ -24,8 +24,8 @@ clips, search, hotkey), **Bongo Cat** (reactive paw-tapping mascot) and
   copy-back, delete/clear, pause — end-to-end on all three OSes.
 - Keep the v1 pet loop intact: input → reaction → XP → level → unlock.
 - A delightful copy feedback: the fish + nom animation, badged per source app.
-- English + Korean UI, switchable at runtime, Hangul rendered without font
-  files.
+- English + Korean UI, switchable at runtime, Hangul rendered through the
+  OS's own fonts (nothing bundled).
 - Single binary, persistence, tray/menu, autostart, graceful shutdown.
 - Privacy-preserving: input contents never read; clips stored locally only;
   no network beyond the optional update check (§10).
@@ -76,15 +76,25 @@ clips, search, hotkey), **Bongo Cat** (reactive paw-tapping mascot) and
     counters; unlike `RegisterHotKey` the chord is not reserved from the
     focused app.
   - Also: middle-click on the cat (both backends), tray menu (Windows),
-    `C` key with the window focused (portable). The window grows upward
-    (360×542 canvas at scale 1.0); the cat stays at the bottom.
+    `C` key with the window focused (portable). The window grows around
+    the cat (360×542 canvas at the default card size, scale 1.0); the cat
+    itself never moves on screen.
+- **Movable + resizable card** (`panel::Layout`): dragging the header strip
+  moves the card independently of the cat; dragging the bottom-right grip
+  resizes it (280–600 × 220–700 canvas units; more rows fit a taller card).
+  The card's size and its offset relative to the cat persist in
+  `state.json` (`panel_w/h`, `panel_off_x/y`; clamped on load). The window
+  canvas is the union of the cat canvas and the card, and every layout
+  change ships a window-position shift (`Pet::take_window_shift`) so the
+  cat stays anchored while the window resizes around it.
 - Contents: title row with source-filter / capture-pause / clear-unpinned /
   language / close buttons; search box (live filter over text + source,
-  Korean supported — IME input works on both backends); 8 visible rows
-  (pin star · preview · source color dot + app + relative time + size for
-  large clips · delete ✕ with a red hover halo) with hover + keyboard
-  selection; scrollbar; footer with counts, a keyboard-shortcut help line
-  and the hotkey hint.
+  Korean supported — IME input works on both backends); as many rows as
+  fit the card height (8 at the default size: pin star · preview · source
+  color dot + app + relative time + size for large clips · quick-copy
+  digit badge on the first ten rows · delete ✕ with a red hover halo)
+  with hover + keyboard selection; scrollbar; footer with counts, a
+  keyboard-shortcut help line and the hotkey hint; resize grip.
 - **Source-app filter**: the funnel button (or Tab) cycles all → app 1 →
   app 2 → … → all over the distinct source apps in the history (most
   recently used first). The active filter renders as a chip (with the
@@ -93,17 +103,23 @@ clips, search, hotkey), **Bongo Cat** (reactive paw-tapping mascot) and
   show when no filter is active. Each row carries the same per-app color
   dot the fish badge uses, so apps are recognizable at a glance.
 - Keyboard while open: type = search, ↑/↓/PgUp/PgDn/Home/End = select,
-  Enter = copy selected (closes the panel), Del = delete (undoable),
-  Ctrl+Z = undo delete/clear, Ctrl+P (Cmd also works on macOS) = pin,
-  Backspace = edit query, Tab = cycle source filter, Esc = disarm clear →
-  clear query → clear filter → close (one layer per press).
+  Enter = copy selected, **Ctrl+0..9 = quick-copy the badged top rows
+  (0 = topmost; follows the active search/filter; numpad works too)**,
+  Del = delete (undoable), Ctrl+Z = undo delete/clear, Ctrl+P (Cmd also
+  works on macOS, including for the digits) = pin, Backspace = edit query,
+  Tab = cycle source filter, Esc = disarm clear → clear query → clear
+  filter → close (one layer per press).
 - **Delete safety**: every delete shows a "CTRL+Z TO UNDO" toast and is
   restorable (up to the last 20 delete/clear operations, session-only);
   the header clear-all button needs a confirming second press (it arms,
   turns red and toasts first — any other interaction disarms it).
 - Clicking a row copies it back (toast "COPIED!", pop sound, happy cat)
-  and closes the panel so the user can paste. Pinned clips sort first;
-  pinning via Ctrl+P keeps the selection on the clip as it re-sorts.
+  and closes the panel so the user can paste. **Auto-close is a setting**
+  ("Close panel after copy", `panel_autoclose` in `state.json`, default
+  on; tray/context menu on Windows+macOS, `O` key on portable): switched
+  off, every copy path (click, Enter, Ctrl+digits) leaves the panel open
+  for grabbing several clips in a row. Pinned clips sort first; pinning
+  via Ctrl+P keeps the selection on the clip as it re-sorts.
 - On the native backend the window is `WS_EX_NOACTIVATE`; opening the panel
   temporarily removes that style and focuses the window so search works,
   closing restores it.
@@ -111,7 +127,9 @@ clips, search, hotkey), **Bongo Cat** (reactive paw-tapping mascot) and
 ## 4. Core loop (pet)
 
 1. The user types/clicks anywhere → global hooks count events (never their
-   content). The user copies → the clipboard watcher delivers the text.
+   content; a held key counts once — OS auto-repeat is filtered out, so
+   holding a key does not farm stats or XP). The user copies → the
+   clipboard watcher delivers the text.
 2. Each ~33 ms tick the pet consumes counts + copy events: paws tap, an
    "excitement" value rises with input rate, and XP is granted:
    **2 XP/key, 1 XP/click, 1 XP/scroll, 5 XP/copy (+10 petting, +1 boop)**.
@@ -141,16 +159,19 @@ clamped at level 99.
 | Copy anywhere | Fish + clip saved (+5 XP) |
 | Win+Shift+V (default) / middle-click / tray / `C` | Toggle clipboard panel |
 | Funnel button / Tab (panel open) | Cycle the source-app filter |
-| Enter / row click (panel open) | Copy the clip back + close the panel |
+| Enter / row click (panel open) | Copy the clip back (+ close the panel, unless auto-close is off) |
+| Ctrl+0..9 (panel open) | Quick-copy the row wearing that digit badge |
 | Del / ✕ (panel open) | Delete the clip (Ctrl+Z undoes) |
 | Ctrl+P (panel open) | Pin/unpin the selected clip |
 | Trash button ×2 (panel open) | Clear unpinned clips (second press confirms) |
+| Drag panel header (panel open) | Move the panel card — the cat stays put |
+| Drag panel grip (panel open) | Resize the panel card (size persists) |
 | Drag | Move the pet (unless position-locked) |
 | Single click | Squash bounce + sparkle (+1 XP) |
 | Double click | Pet it: heart burst (+10 XP) |
 | Hover | Today's stats bubble (level/XP bar, keys, clicks, copies, active time) |
 | `U` (portable, after the update toast) | Open the new release's download page |
-| Right click (native) | Context menu: update (when found), clipboard, capture pause, stats, size, accessory, sound, lock, language, autostart, auto-update toggle, reset, about, quit |
+| Right click (native) | Context menu: update (when found), clipboard, capture pause, panel auto-close, stats, size, accessory, sound, lock, language, autostart, auto-update toggle, reset, about, quit |
 
 ## 6. Internationalization
 
@@ -160,27 +181,21 @@ clamped at level 99.
 - First run picks the language from the OS locale (`GetUserDefaultUILanguage`
   / `$LANG`); after that it's a persisted setting, switchable from the tray
   menu (Windows), the panel's EN/KO button, or `G` (portable).
-- **Text rendering** is split by surface (ADR-0007):
-  - **UI surfaces — panel + toast — use the system font** (`sysfont.rs`):
-    the OS UI font plus a Hangul-capable fallback are loaded at startup
-    from well-known font files (Windows: Segoe UI + Malgun Gothic; macOS:
-    SF/Helvetica + Apple SD Gothic Neo; Linux: Noto/DejaVu + Noto CJK/
-    Nanum) and rasterized with `ab_glyph`. Nothing is bundled or
-    downloaded. Characters no loaded font covers — and systems with no
-    usable font at all — fall back per character to the built-in fonts
-    below, so text never disappears.
-  - **Pet decorations — the hover stats tooltip, fish badge letters, Zzz —
-    keep the built-in pixel look**: the 5×7 bitmap font (all printable
-    ASCII incl. lowercase; unknown glyphs render a hollow box) and
-    **vector Hangul** (`hangul.rs`): syllables are decomposed (U+AC00
-    formula) and composed from ~40 vector jamo stroke shapes with standard
-    vertical/horizontal/mixed vowel layouts, stroked by tiny-skia at any
-    size — no font files (ADR-0006).
+- **Text rendering**: every drawn surface — panel, toast, stats bubble,
+  fish badge letters, Zzz — uses **the system font** (`sysfont.rs`,
+  ADR-0007/0011): the OS UI font plus a Hangul-capable fallback are loaded
+  at startup from well-known font files (Windows: Segoe UI + Malgun
+  Gothic; macOS: SF/Helvetica + Apple SD Gothic Neo; Linux: Noto/DejaVu +
+  Noto CJK/Nanum) and rasterized with `ab_glyph`. Nothing is bundled or
+  downloaded. Characters no loaded font covers — and systems with no
+  usable font at all — draw as a hollow "tofu" box (the former built-in
+  5×7 pixel font and vector Hangul were removed; ADR-0011 supersedes
+  ADR-0006).
 
 ## 7. Platforms & backends
 
 Same split as v1 (ADR-0001): a platform-agnostic core (`pet`, `clipboard`,
-`panel`, `render`, `font`+`hangul`, `i18n`, `state`, `sound`) and exactly one
+`panel`, `render`, `sysfont`, `i18n`, `state`, `sound`) and exactly one
 compiled backend — native Win32, or portable `winit`+`softbuffer`+`rdev`+
 `arboard` (ADR-0005). Platform caveats: global input needs Accessibility on
 macOS and X11 on Linux (Wayland blocks capture; clipboard then needs
@@ -191,8 +206,9 @@ XWayland); audio is Windows-only (ADR-0002).
 JSON at the per-OS config dir: Windows `%APPDATA%\ClipCat`, macOS
 `~/Library/Application Support/ClipCat`, Linux `$XDG_CONFIG_HOME/ClipCat`.
 `state.json` holds lifetime/daily counters (now incl. copies), window
-position, language, the panel hotkey spec and all settings; `clips.json`
-holds the clip history.
+position, language, the panel hotkey spec, the panel card geometry
+(`panel_w/h`, `panel_off_x/y`), the auto-close flag and all other
+settings; `clips.json` holds the clip history.
 Saved on a 30 s dirty throttle, on size change, drag-end and shutdown.
 A v1 `DeskCat` dir (and the HKCU `DeskCat` autostart value on Windows) is
 migrated automatically on first run.
@@ -202,8 +218,12 @@ migrated automatically on first run.
 Input hooks increment three atomic counters (`input::{KEYS,CLICKS,WHEEL}`)
 and — on the portable backend — additionally compare each key event against
 the one configured panel-hotkey chord, discarding it immediately (ADR-0008;
-Windows uses the OS's own `RegisterHotKey` instead). Beyond that, no
-keycodes, characters, window titles or timings are read or stored.
+Windows uses the OS's own `RegisterHotKey` instead). For auto-repeat
+suppression each keycode is additionally reduced to a held/released bit
+(Windows: a 256-bit bitmap in `input.rs`; portable: the `KeyGate` set of
+currently held keys) and discarded — nothing persists past the key
+release. Beyond that, no keycodes, characters, window titles or timings
+are read or stored.
 Clipboard text is stored **locally only**, capture is pausable, oversized
 clips are ignored, and the only network code is the update check below —
 which transmits nothing beyond the request itself.
@@ -233,9 +253,9 @@ Premise: releases are git tags (`scripts/release.sh`) and CI publishes each
 
 ## 11. Quality bar
 
-- Single binary, no installer, no bundled assets (icon, built-in fonts and
-  sounds generated from code; the UI font is read from the OS at runtime,
-  never shipped).
+- Single binary, no installer, no bundled assets (icon and sounds generated
+  from code; all text uses fonts read from the OS at runtime, never
+  shipped).
 - Releases are cut by `scripts/release.sh` (CHANGELOG-gated; see
   `CHANGELOG.md` for the user-facing-only policy).
 - Idle/active CPU ≈ a few percent of one core (release); memory ~12–16 MB.

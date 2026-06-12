@@ -18,6 +18,8 @@ use crate::i18n::Lang;
 pub enum MenuAction {
     TogglePanel,
     ToggleCapture,
+    /// Close the clipboard panel automatically after copying a clip (on/off).
+    TogglePanelAutoClose,
     ToggleStats,
     SetSize(usize),
     SetAccessory(usize),

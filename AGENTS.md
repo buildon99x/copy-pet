@@ -15,11 +15,14 @@ portable backend.
 ## Golden rules
 
 1. **Privacy is non-negotiable.** Global *input* hooks may only increment the
-   atomic counters in `src/input.rs`, with exactly one sanctioned exception:
-   the portable backend's `ChordTracker` compares each key event against the
-   user's configured panel-hotkey chord and immediately discards it
-   (ADR-0008) — beyond that, never read, store, log or transmit key
-   contents, window titles or timings. Clipboard *content* is the product,
+   atomic counters in `src/input.rs`, with exactly two sanctioned exceptions:
+   (a) the portable backend's `ChordTracker` compares each key event against
+   the user's configured panel-hotkey chord and immediately discards it
+   (ADR-0008), and (b) the auto-repeat gate (`input::key_down/key_up` on
+   Windows, the portable `KeyGate`) reduces each keycode to a held/released
+   bit so holding a key counts once, dropping it on release — beyond that,
+   never read, store, log or transmit key contents, window titles or
+   timings. Clipboard *content* is the product,
    but it stays local: stored only in the user's config dir, and capture can
    always be paused. The **single sanctioned network exception** is the
    update check/download in `src/update.rs` (ADR-0009): it talks to
@@ -32,9 +35,9 @@ portable backend.
    / `state::detect_lang` and the `cfg` leaves in `update.rs` are the only
    sanctioned exceptions). OS code lives only under `src/platform/`.
 3. **No new heavy dependencies** without an ADR. The whole point is a small
-   binary with a handful of crates and no asset pipeline (icon, the built-in
-   pixel/vector-Hangul fonts and sounds are generated from code; the UI font
-   is read from the OS at runtime — never bundled, see ADR-0007).
+   binary with a handful of crates and no asset pipeline (icon and sounds
+   are generated from code; all text uses fonts read from the OS at
+   runtime — never bundled, see ADR-0007/ADR-0011).
 4. **Verify by rendering/running, on release.** Build, run the tests, and
    eyeball `cargo run --release --example preview` PNGs (headless-friendly).
    On a Windows dev machine, also launch the exe and screenshot. Benchmark CPU
@@ -49,12 +52,11 @@ src/
   pet.rs               Pet: platform-agnostic simulation, fish animation,
                        clip/panel orchestration + scene building
   clipboard.rs         ClipStore: clip history model + clips.json persistence
-  panel.rs             clipboard panel UI state, layout geometry, hit testing
+  panel.rs             clipboard panel UI state, dynamic Layout geometry
+                       (user-movable/resizable card), hit testing, drag zones
   render.rs            all vector art (cat, fish, panel, accessories, bubble, icon)
-  font.rs              built-in 5×7 pixel font (full printable ASCII)
-  hangul.rs            algorithmic vector Hangul (jamo composition, no font files)
-  sysfont.rs           system-font text for the panel/toast (ab_glyph, ADR-0007);
-                       per-char fallback to font/hangul; the tooltip stays pixel
+  sysfont.rs           system-font text for everything drawn (ab_glyph,
+                       ADR-0007/0011); hollow tofu box for uncovered glyphs
   hotkey.rs            panel-hotkey spec parsing ("win+shift+v") + display label
   i18n.rs              every user-visible string, English + Korean
   sound.rs             synthesized SFX; winmm on Windows, no-op elsewhere
@@ -136,7 +138,12 @@ rasterizes with tiny-skia → the backend presents the pixel buffer. The Pet
 never touches the OS; the backend never touches simulation internals (only the
 public `Pet` API). The only thing a panel interaction asks of the backend is
 "put this text on the OS clipboard" (returned as `Option<String>`); backends
-suppress the resulting self-triggered clipboard event once. Read
+suppress the resulting self-triggered clipboard event once. Window geometry
+is also a Pet contract: when `take_size_changed()` fires, the backend resizes
+to `canvas_size()` **and** offsets the window by `take_window_shift()` — that
+shift keeps the cat anchored on screen while the panel opens, moves, resizes
+or the scale changes (panel-card drags flow through
+`Pet::panel_drag_start/_update/_end` with screen-pixel deltas / scale). Read
 [ADR-0001](.context/kb/adr/0001-cross-platform-architecture.md) and
 [ADR-0005](.context/kb/adr/0005-clipboard-manager.md) first.
 
@@ -168,8 +175,10 @@ scripts/release.sh <patch|minor|major> [--dry-run|--no-push]
 scripts/release.sh verify                   # CHANGELOG lint (also runs in CI)
 ```
 
-macOS/Linux need system libs for the portable stack — see the CI workflow's
-`Install Linux system dependencies` step for the exact apt list. On a Linux
+macOS/Linux need system libs for the portable stack — on Debian/Ubuntu:
+`apt-get install libx11-dev libxi-dev libxtst-dev libxkbcommon-dev
+libxkbcommon-x11-dev pkg-config` (CI has no Linux job to copy this from).
+On a Linux
 box without a display, `cargo check --target x86_64-pc-windows-msvc` (and
 `--features portable`) cross-checks the Windows code without linking;
 `cargo check/clippy --target aarch64-apple-darwin` does the same for the macOS
@@ -193,7 +202,8 @@ a Linux build can't reach.
   (`platform/mac_autostart.rs` is plain `std::fs`, no `unsafe`.)
 - Keep both backends' interaction set in parity (drag, single-click bounce,
   double-click pet, hover stats, middle-click/hotkey panel, panel keyboard
-  control). If you add an interaction, add it to both. The settings menu is the
+  control incl. Ctrl+0-9 quick copy, panel header-drag move + grip-drag
+  resize). If you add an interaction, add it to both. The settings menu is the
   one deliberate split: Windows native uses the Shell tray menu, macOS renders
   the shared `menu::MenuEntry` model (`Pet::build_menu`) as a right-click NSMenu
   (`platform/mac_menu.rs`) at full tray parity; Linux/Windows-portable still

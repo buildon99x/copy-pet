@@ -4,7 +4,6 @@
 //! canvas in `crate::panel` is larger), multiplied by a global scale.
 
 use crate::clipboard::ClipStore;
-use crate::font;
 use crate::i18n::{self, t, Lang, Msg};
 use crate::panel as pl;
 use crate::panel::Panel;
@@ -259,11 +258,7 @@ impl<'a> Cv<'a> {
                 .stroke_path(p, &paint(c), &stroke, t.post_concat(self.ts), None);
         }
     }
-    /// Pixel-font text: the pet's own decorations (stats tooltip, badge).
-    fn text(&mut self, s: &str, x: f32, y: f32, px: f32, c: (u8, u8, u8, u8)) {
-        font::draw(self.pm, s, x, y, px, c, self.ts);
-    }
-    /// UI text (panel, toast): the system font, pixel-font fallback.
+    /// Text via the system font (tofu-box fallback; see [`crate::sysfont`]).
     fn ui_text(&mut self, s: &str, x: f32, y: f32, px: f32, c: (u8, u8, u8, u8)) {
         sysfont::draw(self.pm, s, x, y, px, c, self.ts);
     }
@@ -611,18 +606,17 @@ fn draw_fish(cv: &mut Cv, f: &FishView) {
         let chip = oval(x + 1.0, y + 0.5, 7.0, 7.0);
         cv.fill_t(&chip, (255, 255, 255, 235), t);
         cv.stroke_t(&chip, fade(OUTLINE, 0.7), 1.6, t);
-        // center the letter in the chip (5x7 glyph at px 1.6)
-        let px = 1.6;
-        let lw = font::measure(&f.badge.letter.to_string(), px);
-        font::draw(
-            cv.pm,
-            &f.badge.letter.to_string(),
-            x + 1.0 - lw / 2.0,
-            y + 0.5 - 3.5 * px,
-            px,
-            TEXT,
-            t.post_concat(cv.ts),
-        );
+        // the letter stays upright inside the round chip while the fish
+        // rotates (sysfont rasterizes under scale+translate transforms only)
+        let px = 1.6 * f.scale;
+        let s = cv.ts.sx;
+        let label = f.badge.letter.to_string();
+        let lw = sysfont::measure(&label, px);
+        let mut center = [tiny_skia::Point::from_xy(x + 1.0, y + 0.5)];
+        t.post_concat(cv.ts).map_points(&mut center);
+        let ts = Transform::from_scale(s, s)
+            .post_translate(center[0].x - lw * s / 2.0, center[0].y - 3.5 * px * s);
+        sysfont::draw(cv.pm, &label, 0.0, 0.0, px, TEXT, ts);
     }
 }
 
@@ -763,7 +757,7 @@ fn draw_particle(cv: &mut Cv, p: &Particle) {
         }
         ParticleKind::Zzz => {
             let px = 1.6 + (1.0 - a) * 1.4;
-            font::draw(
+            sysfont::draw(
                 cv.pm,
                 "Z",
                 p.x,
@@ -816,7 +810,7 @@ fn draw_bubble(cv: &mut Cv, b: &BubbleData, alpha: f32, lang: Lang) {
 
     let tc = fade(TEXT, a);
     // row 1: level + xp bar
-    cv.text(&format!("LV {}", b.level), 24.0, 8.0, 2.0, tc);
+    cv.ui_text(&format!("LV {}", b.level), 24.0, 8.0, 2.0, tc);
     let bar_bg = round_rect(82.0, 8.5, 134.0, 12.0, 6.0);
     cv.fill(&bar_bg, fade((231, 224, 214, 255), a));
     let w = (134.0 * b.pct.clamp(0.0, 1.0)).max(10.0);
@@ -837,8 +831,8 @@ fn draw_bubble(cv: &mut Cv, b: &BubbleData, alpha: f32, lang: Lang) {
     ];
     for (i, (label, value)) in rows.iter().enumerate() {
         let y = 27.0 + i as f32 * 14.0;
-        cv.text(t(lang, *label), 24.0, y, px, fade(TEXT_DIM, a));
-        cv.text(value, 96.0, y, px, tc);
+        cv.ui_text(t(lang, *label), 24.0, y, px, fade(TEXT_DIM, a));
+        cv.ui_text(value, 96.0, y, px, tc);
     }
 }
 
@@ -855,53 +849,61 @@ pub struct PanelView<'a> {
     pub caret: bool,
 }
 
-/// Draws the clipboard panel card (geometry from [`crate::panel`]).
+/// Draws the clipboard panel card (geometry from [`crate::panel::Layout`]).
 pub fn draw_panel(pm: &mut Pixmap, v: &PanelView, scale: f32) {
     let mut cv = Cv {
         pm,
         ts: Transform::from_scale(scale, scale),
     };
     let lang = v.lang;
+    let lt = v.panel.layout();
 
-    let card = round_rect(pl::CARD_X, pl::CARD_Y, pl::CARD_W, pl::CARD_H, 12.0);
+    let card = round_rect(lt.card_x, lt.card_y, lt.card_w, lt.card_h, 12.0);
     cv.fill(&card, (255, 255, 255, 247));
     cv.stroke(&card, OUTLINE, 2.5);
 
     // header: fish mark + title, vertically centered on the button row
-    let hcy = pl::BTN_Y + pl::BTN / 2.0;
+    // (the header strip doubles as the card's move-drag handle)
+    let hx = lt.card_x + 10.0;
+    let hcy = lt.btn_y + pl::BTN / 2.0;
     {
         let mut pb = PathBuilder::new();
-        pb.move_to(26.0, hcy);
-        pb.quad_to(20.0, hcy - 5.5, 14.5, hcy);
-        pb.quad_to(20.0, hcy + 5.5, 26.0, hcy);
+        pb.move_to(hx + 12.0, hcy);
+        pb.quad_to(hx + 6.0, hcy - 5.5, hx + 0.5, hcy);
+        pb.quad_to(hx + 6.0, hcy + 5.5, hx + 12.0, hcy);
         pb.close();
         let fish = pb.finish();
         cv.fill(&fish, (FISH_BLUE.0, FISH_BLUE.1, FISH_BLUE.2, 255));
         cv.stroke(&fish, OUTLINE, 1.8);
         cv.line(
-            &[(26.0, hcy), (30.5, hcy - 4.0), (30.5, hcy + 4.0), (26.0, hcy)],
+            &[
+                (hx + 12.0, hcy),
+                (hx + 16.5, hcy - 4.0),
+                (hx + 16.5, hcy + 4.0),
+                (hx + 12.0, hcy),
+            ],
             OUTLINE,
             1.8,
         );
-        cv.fill(&oval(18.5, hcy - 1.2, 1.0, 1.0), OUTLINE);
+        cv.fill(&oval(hx + 4.5, hcy - 1.2, 1.0, 1.0), OUTLINE);
     }
-    cv.ui_text(t(lang, Msg::PanelTitle), 36.0, hcy - 7.0, 2.0, TEXT);
+    cv.ui_text(t(lang, Msg::PanelTitle), hx + 22.0, hcy - 7.0, 2.0, TEXT);
     if !v.capture {
         // capture paused: small red pause bars next to the title
-        let tx = 36.0 + sysfont::measure(t(lang, Msg::PanelTitle), 2.0) + 8.0;
+        let tx = hx + 22.0 + sysfont::measure(t(lang, Msg::PanelTitle), 2.0) + 8.0;
         cv.fill(&round_rect(tx, hcy - 6.5, 3.2, 13.0, 1.3), (217, 79, 79, 255));
         cv.fill(&round_rect(tx + 5.4, hcy - 6.5, 3.2, 13.0, 1.3), (217, 79, 79, 255));
     }
 
     // header buttons
-    draw_btn(&mut cv, pl::BTN_FILTER_X, BtnIcon::Filter(v.panel.source.is_some()));
-    draw_btn(&mut cv, pl::BTN_PAUSE_X, BtnIcon::Pause(v.capture));
-    draw_btn(&mut cv, pl::BTN_CLEAR_X, BtnIcon::Trash(v.panel.clear_armed));
-    draw_btn(&mut cv, pl::BTN_LANG_X, BtnIcon::Lang(lang));
-    draw_btn(&mut cv, pl::BTN_CLOSE_X, BtnIcon::Close);
+    draw_btn(&mut cv, lt.btn_filter_x, lt.btn_y, BtnIcon::Filter(v.panel.source.is_some()));
+    draw_btn(&mut cv, lt.btn_pause_x, lt.btn_y, BtnIcon::Pause(v.capture));
+    draw_btn(&mut cv, lt.btn_clear_x, lt.btn_y, BtnIcon::Trash(v.panel.clear_armed));
+    draw_btn(&mut cv, lt.btn_lang_x, lt.btn_y, BtnIcon::Lang(lang));
+    draw_btn(&mut cv, lt.btn_close_x, lt.btn_y, BtnIcon::Close);
 
     // search box
-    let (sx, sy, sw, sh) = (pl::SEARCH_X, pl::SEARCH_Y, pl::SEARCH_W, pl::SEARCH_H);
+    let (sx, sy, sw, sh) = (lt.search_x, lt.search_y, lt.search_w, lt.search_h);
     let sb = round_rect(sx, sy, sw, sh, 9.0);
     cv.fill(&sb, (243, 240, 235, 255));
     cv.stroke(&sb, fade(OUTLINE, 0.5), 1.6);
@@ -957,21 +959,21 @@ pub fn draw_panel(pm: &mut Pixmap, v: &PanelView, scale: f32) {
         let w = sysfont::measure(msg, 1.8);
         cv.ui_text(
             msg,
-            pl::CARD_X + (pl::CARD_W - w) / 2.0,
-            pl::ROWS_Y + pl::ROW_H * pl::VISIBLE_ROWS as f32 / 2.0 - 8.0,
+            lt.card_x + (lt.card_w - w) / 2.0,
+            lt.rows_y + pl::ROW_H * lt.rows as f32 / 2.0 - 8.0,
             1.8,
             TEXT_DIM,
         );
     }
     let hover = v.panel.cursor.filter(|(x, _)| {
-        (pl::ROW_X..=pl::ROW_X + pl::ROW_W).contains(x)
+        (lt.row_x..=lt.row_x + lt.row_w).contains(x)
     });
     let hover_row = hover.and_then(|(_, y)| v.panel.row_at(y, total));
     let now = crate::clipboard::now_ts();
-    for i in 0..pl::VISIBLE_ROWS {
+    for i in 0..lt.rows {
         let idx = v.panel.scroll + i;
         let Some(clip) = visible.get(idx) else { break };
-        let ry = pl::ROWS_Y + i as f32 * pl::ROW_H;
+        let ry = lt.rows_y + i as f32 * pl::ROW_H;
 
         let row_bg = if idx == v.panel.sel {
             Some(ROW_SEL)
@@ -981,11 +983,11 @@ pub fn draw_panel(pm: &mut Pixmap, v: &PanelView, scale: f32) {
             None
         };
         if let Some(bg) = row_bg {
-            cv.fill(&round_rect(pl::ROW_X, ry + 1.0, pl::ROW_W, pl::ROW_H - 2.0, 7.0), bg);
+            cv.fill(&round_rect(lt.row_x, ry + 1.0, lt.row_w, pl::ROW_H - 2.0, 7.0), bg);
         }
 
         // pin star
-        let star = star_path(pl::ROW_X + 12.0, ry + pl::ROW_H / 2.0, 6.5, 0.0);
+        let star = star_path(lt.row_x + 12.0, ry + pl::ROW_H / 2.0, 6.5, 0.0);
         if clip.pinned {
             cv.fill(&star, PIN_GOLD);
             cv.stroke(&star, (180, 140, 30, 255), 1.4);
@@ -993,9 +995,13 @@ pub fn draw_panel(pm: &mut Pixmap, v: &PanelView, scale: f32) {
             cv.stroke(&star, fade(TEXT_DIM, 0.55), 1.4);
         }
 
+        // quick-copy badge: the first ten rows answer to Ctrl+0..9
+        let quick = idx < pl::QUICK_KEYS;
+        let badge_w = if quick { 18.0 } else { 0.0 };
+
         // preview + meta (source dot + app - age - size)
-        let tx = pl::ROW_X + 28.0;
-        let tmax = pl::ROW_X + pl::ROW_W - pl::DEL_ZONE - tx - 4.0;
+        let tx = lt.row_x + 28.0;
+        let tmax = lt.row_x + lt.row_w - pl::DEL_ZONE - tx - 4.0 - badge_w;
         let prev = sysfont::truncate_to_width(&clip.preview(), 1.9, tmax);
         cv.ui_text(&prev, tx, ry + 4.5, 1.9, TEXT);
         let mut meta = i18n::time_ago(lang, now.saturating_sub(clip.ts));
@@ -1012,11 +1018,21 @@ pub fn draw_panel(pm: &mut Pixmap, v: &PanelView, scale: f32) {
         let meta = sysfont::truncate_to_width(&meta, 1.35, tmax - (mx - tx));
         cv.ui_text(&meta, mx, ry + 20.5, 1.35, TEXT_DIM);
 
+        if quick {
+            let qx = lt.row_x + lt.row_w - pl::DEL_ZONE - 16.0;
+            let chip = round_rect(qx, ry + 4.0, 13.0, 13.0, 4.0);
+            cv.fill(&chip, (243, 240, 235, 255));
+            cv.stroke(&chip, fade(OUTLINE, 0.35), 1.2);
+            let d = char::from(b'0' + idx as u8).to_string();
+            let dw = sysfont::measure(&d, 1.3);
+            cv.ui_text(&d, qx + (13.0 - dw) / 2.0, ry + 6.0, 1.3, fade(TEXT_DIM, 0.9));
+        }
+
         // delete x (red halo while hovered, so a destructive click is obvious)
-        let dx = pl::ROW_X + pl::ROW_W - 14.0;
+        let dx = lt.row_x + lt.row_w - 14.0;
         let dy = ry + pl::ROW_H / 2.0;
         let on_del = hover_row == Some(idx)
-            && hover.is_some_and(|(x, _)| x > pl::ROW_X + pl::ROW_W - pl::DEL_ZONE);
+            && hover.is_some_and(|(x, _)| x > lt.row_x + lt.row_w - pl::DEL_ZONE);
         let xc = if on_del {
             cv.fill(&oval(dx, dy, 8.0, 8.0), (250, 224, 224, 255));
             (217, 79, 79, 255)
@@ -1027,9 +1043,9 @@ pub fn draw_panel(pm: &mut Pixmap, v: &PanelView, scale: f32) {
         cv.line(&[(dx - 3.4, dy + 3.4), (dx + 3.4, dy - 3.4)], xc, 1.8);
 
         // separator
-        if i + 1 < pl::VISIBLE_ROWS {
+        if i + 1 < lt.rows {
             cv.line(
-                &[(pl::ROW_X + 4.0, ry + pl::ROW_H), (pl::ROW_X + pl::ROW_W - 4.0, ry + pl::ROW_H)],
+                &[(lt.row_x + 4.0, ry + pl::ROW_H), (lt.row_x + lt.row_w - 4.0, ry + pl::ROW_H)],
                 fade(OUTLINE, 0.12),
                 1.0,
             );
@@ -1037,41 +1053,50 @@ pub fn draw_panel(pm: &mut Pixmap, v: &PanelView, scale: f32) {
     }
 
     // scrollbar
-    if total > pl::VISIBLE_ROWS {
-        let track_h = pl::ROW_H * pl::VISIBLE_ROWS as f32 - 4.0;
-        let tx = pl::CARD_X + pl::CARD_W - 7.0;
-        cv.fill(&round_rect(tx, pl::ROWS_Y + 2.0, 3.5, track_h, 1.7), fade(OUTLINE, 0.12));
-        let th = (track_h * pl::VISIBLE_ROWS as f32 / total as f32).max(16.0);
-        let ty = pl::ROWS_Y + 2.0
-            + (track_h - th) * v.panel.scroll as f32 / (total - pl::VISIBLE_ROWS) as f32;
+    if total > lt.rows {
+        let track_h = pl::ROW_H * lt.rows as f32 - 4.0;
+        let tx = lt.card_x + lt.card_w - 7.0;
+        cv.fill(&round_rect(tx, lt.rows_y + 2.0, 3.5, track_h, 1.7), fade(OUTLINE, 0.12));
+        let th = (track_h * lt.rows as f32 / total as f32).max(16.0);
+        let ty = lt.rows_y + 2.0
+            + (track_h - th) * v.panel.scroll as f32 / (total - lt.rows) as f32;
         cv.fill(&round_rect(tx, ty, 3.5, th, 1.7), fade(OUTLINE, 0.45));
     }
 
     // footer: count + hotkey hint, then a keyboard-shortcut help line
     cv.line(
-        &[(pl::ROW_X, pl::FOOTER_Y - 1.0), (pl::ROW_X + pl::ROW_W, pl::FOOTER_Y - 1.0)],
+        &[(lt.row_x, lt.footer_y - 1.0), (lt.row_x + lt.row_w, lt.footer_y - 1.0)],
         fade(OUTLINE, 0.18),
         1.0,
     );
     let count = i18n::clip_count(lang, v.store.len(), v.store.pinned_count());
-    cv.ui_text(&count, 14.0, pl::FOOTER_Y + 3.0, 1.4, TEXT_DIM);
+    cv.ui_text(&count, lt.card_x + 10.0, lt.footer_y + 3.0, 1.4, TEXT_DIM);
     let hw = sysfont::measure(v.hint, 1.4);
     cv.ui_text(
         v.hint,
-        pl::CARD_X + pl::CARD_W - 10.0 - hw,
-        pl::FOOTER_Y + 3.0,
+        lt.card_x + lt.card_w - 10.0 - hw,
+        lt.footer_y + 3.0,
         1.4,
         fade(TEXT_DIM, 0.8),
     );
-    let keys = sysfont::truncate_to_width(t(lang, Msg::FooterKeys), 1.25, pl::ROW_W);
+    let keys = sysfont::truncate_to_width(t(lang, Msg::FooterKeys), 1.25, lt.row_w);
     let kw = sysfont::measure(&keys, 1.25);
     cv.ui_text(
         &keys,
-        pl::CARD_X + (pl::CARD_W - kw) / 2.0,
-        pl::FOOTER_Y + 16.0,
+        lt.card_x + (lt.card_w - kw) / 2.0,
+        lt.footer_y + 16.0,
         1.25,
         fade(TEXT_DIM, 0.75),
     );
+
+    // resize grip: three diagonal score lines in the bottom-right corner
+    {
+        let (gx, gy) = (lt.card_x + lt.card_w, lt.card_y + lt.card_h);
+        for i in 0..3 {
+            let d = 5.0 + i as f32 * 4.0;
+            cv.line(&[(gx - d, gy - 3.0), (gx - 3.0, gy - d)], fade(OUTLINE, 0.45), 1.6);
+        }
+    }
 }
 
 enum BtnIcon {
@@ -1082,8 +1107,7 @@ enum BtnIcon {
     Close,
 }
 
-fn draw_btn(cv: &mut Cv, bx: f32, icon: BtnIcon) {
-    let by = pl::BTN_Y;
+fn draw_btn(cv: &mut Cv, bx: f32, by: f32, icon: BtnIcon) {
     let b = pl::BTN;
     let bg = round_rect(bx, by, b, b, 6.0);
     if matches!(icon, BtnIcon::Pause(false) | BtnIcon::Trash(true)) {

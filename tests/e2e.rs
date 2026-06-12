@@ -13,6 +13,7 @@ use clipcat::i18n::Lang;
 use clipcat::menu::{MenuAction, MenuEntry, MenuItem, MenuOutcome};
 use clipcat::panel::{self, NavKey};
 use clipcat::pet::Pet;
+use clipcat::render::{self, Accessory, BubbleData, Scene};
 use clipcat::state::Persist;
 use tiny_skia::Pixmap;
 
@@ -100,29 +101,30 @@ fn filter_button_and_row_clicks() {
     copy(&mut p, "older from chrome", Some("Chrome"));
     copy(&mut p, "newest from code", Some("Code"));
     p.toggle_panel();
+    let lt = p.panel.layout();
 
     // funnel header button engages the filter (pure panel state, no copy)
-    let got = p.panel_click(panel::BTN_FILTER_X + 8.0, panel::BTN_Y + 8.0);
+    let got = p.panel_click(lt.btn_filter_x + 8.0, lt.btn_y + 8.0);
     assert_eq!(got, None);
     assert_eq!(p.panel.source.as_deref(), Some("Code"));
 
     // the second row is empty under the filter -> a click there is a no-op
-    let empty_y = panel::ROWS_Y + panel::ROW_H * 1.5;
+    let empty_y = lt.rows_y + panel::ROW_H * 1.5;
     assert_eq!(p.panel_click(150.0, empty_y), None);
 
     // cycle past the last source: back to all apps, both rows clickable
-    p.panel_click(panel::BTN_FILTER_X + 8.0, panel::BTN_Y + 8.0);
+    p.panel_click(lt.btn_filter_x + 8.0, lt.btn_y + 8.0);
     assert_eq!(p.panel.source.as_deref(), Some("Chrome"));
-    p.panel_click(panel::BTN_FILTER_X + 8.0, panel::BTN_Y + 8.0);
+    p.panel_click(lt.btn_filter_x + 8.0, lt.btn_y + 8.0);
     assert_eq!(p.panel.source, None);
     assert_eq!(p.panel_click(150.0, empty_y).as_deref(), Some("older from chrome"));
     assert!(!p.panel_open(), "a row click copies and closes the panel");
 
     // reopened, filtering again and clicking the first row copies it back
     p.toggle_panel();
-    p.panel_click(panel::BTN_FILTER_X + 8.0, panel::BTN_Y + 8.0);
+    p.panel_click(lt.btn_filter_x + 8.0, lt.btn_y + 8.0);
     assert_eq!(p.panel.source.as_deref(), Some("Code"));
-    let row_y = panel::ROWS_Y + panel::ROW_H / 2.0;
+    let row_y = lt.rows_y + panel::ROW_H / 2.0;
     let text = p.panel_click(150.0, row_y);
     assert_eq!(text.as_deref(), Some("newest from code"));
 }
@@ -154,7 +156,8 @@ fn delete_undo_and_two_step_clear_flow() {
     assert_eq!(p.clips.len(), 3, "Ctrl+Z restores the deleted clip");
 
     // clear-all: first click only arms (nothing deleted), second clears
-    let (bx, by) = (panel::BTN_CLEAR_X + 8.0, panel::BTN_Y + 8.0);
+    let lt = p.panel.layout();
+    let (bx, by) = (lt.btn_clear_x + 8.0, lt.btn_y + 8.0);
     assert_eq!(p.panel_click(bx, by), None);
     assert_eq!(p.clips.len(), 3, "first press arms, deletes nothing");
     assert!(p.panel.clear_armed);
@@ -204,11 +207,9 @@ fn render_filtered_panel_end_to_end() {
     assert!(p.panel.source.is_some());
 
     let (w, h) = p.canvas_size();
-    assert_eq!(
-        (w, h),
-        (panel::CANVAS_W as i32, panel::CANVAS_H as i32),
-        "panel canvas at scale 1.0"
-    );
+    assert_eq!((w, h), (360, 542), "default panel canvas at scale 1.0");
+    let lt = p.panel.layout();
+    assert_eq!((lt.canvas_w as i32, lt.canvas_h as i32), (w, h));
     let mut pm = Pixmap::new(w as u32, h as u32).unwrap();
     p.render(&mut pm); // native path (transparent)
     let drawn = pm.data().chunks_exact(4).filter(|px| px[3] > 0).count();
@@ -308,6 +309,225 @@ fn context_menu_drives_settings_end_to_end() {
     assert_eq!(p.st.total_keys, 42);
     assert_eq!(p.apply_menu_action(MenuAction::About), MenuOutcome::ShowAbout);
     assert_eq!(p.apply_menu_action(MenuAction::Quit), MenuOutcome::Quit);
+}
+
+/// Panel resize/move end-to-end: drags through the public Pet API (the path
+/// both backends' mouse handlers take), geometry persistence, and the
+/// window-shift contract that keeps the cat anchored on screen.
+#[test]
+fn panel_resize_and_move_persist_and_anchor() {
+    let mut p = pet();
+    for i in 0..15 {
+        copy(&mut p, &format!("clip {i}"), None);
+    }
+    p.toggle_panel();
+    assert!(p.take_size_changed());
+    // opening grows the canvas around the cat; the window shifts so the
+    // cat itself does not move on screen (default layout: cat at (60,286))
+    assert_eq!(p.take_window_shift(), (-60, -286));
+
+    let l0 = p.panel.layout();
+    assert_eq!(l0.rows, 8);
+
+    // resize drag from the bottom-right grip: +60 wide, +68 tall = 2 rows
+    let (gx, gy) = (l0.card_x + l0.card_w - 4.0, l0.card_y + l0.card_h - 4.0);
+    assert!(p.panel_drag_start(gx, gy));
+    assert!(p.panel_dragging());
+    p.panel_drag_update(60.0, 68.0);
+    p.panel_drag_end();
+    let l1 = p.panel.layout();
+    assert_eq!((l1.card_w, l1.card_h), (l0.card_w + 60.0, l0.card_h + 68.0));
+    assert_eq!(l1.rows, 10, "a taller card shows more clips");
+    assert!(p.take_size_changed());
+    // growing right/down leaves the cat's corner alone: no window shift
+    assert_eq!(p.take_window_shift(), (0, 0));
+    // the new size is persisted state
+    assert_eq!((p.st.panel_w, p.st.panel_h), (l1.card_w, l1.card_h));
+
+    // move drag from the header strip: 30 left, 20 up — only the card moves
+    assert!(p.panel_drag_start(l1.card_x + 60.0, l1.card_y + 10.0));
+    p.panel_drag_update(-30.0, -20.0);
+    p.panel_drag_end();
+    assert_eq!(
+        (p.st.panel_off_x, p.st.panel_off_y),
+        (panel::DEFAULT_OFF.0 - 30.0, panel::DEFAULT_OFF.1 - 20.0)
+    );
+    let l2 = p.panel.layout();
+    assert_eq!(l2.cat, (90.0, 306.0), "canvas re-origins around the card");
+    assert!(p.take_size_changed());
+    assert_eq!(p.take_window_shift(), (-30, -20), "window shift keeps the cat put");
+
+    // rows/buttons/search never start a drag (clicks still work there)
+    assert!(!p.panel_drag_start(l2.row_x + 10.0, l2.rows_y + 10.0));
+    assert!(!p.panel_drag_start(l2.btn_close_x + 8.0, l2.btn_y + 8.0));
+
+    // reopening keeps the user's geometry; render at the new size is sane
+    p.toggle_panel();
+    p.toggle_panel();
+    assert_eq!(p.panel.layout().card_w, l1.card_w);
+    let (w, h) = p.canvas_size();
+    let mut pm = Pixmap::new(w as u32, h as u32).unwrap();
+    p.render(&mut pm);
+
+    // geometry round-trips through state.json
+    let json = serde_json::to_string(&p.st).unwrap();
+    let back: Persist = serde_json::from_str(&json).unwrap();
+    assert_eq!((back.panel_w, back.panel_h), (l1.card_w, l1.card_h));
+    assert_eq!(back.panel_off_x, p.st.panel_off_x);
+}
+
+/// Quick-copy hotkeys (Ctrl+0..9): 0 copies the top clip, 9 the tenth, and
+/// the mapping follows whatever filter/search the panel currently shows —
+/// exactly the rows wearing the digit badges.
+#[test]
+fn quick_copy_hotkeys_copy_top_clips() {
+    let mut p = pet();
+    for i in 0..12 {
+        let src = if i % 2 == 0 { "Code" } else { "Chrome" };
+        copy(&mut p, &format!("clip {i}"), Some(src));
+    }
+    p.toggle_panel();
+    assert_eq!(p.panel_nav(NavKey::Quick(0)).as_deref(), Some("clip 11"));
+    assert!(!p.panel_open(), "quick copy closes the panel like Enter");
+
+    p.toggle_panel();
+    assert_eq!(p.panel_nav(NavKey::Quick(9)).as_deref(), Some("clip 2"));
+
+    // respects the source filter (most recent app first: Chrome)
+    p.toggle_panel();
+    p.panel_nav(NavKey::Tab);
+    assert_eq!(p.panel.source.as_deref(), Some("Chrome"));
+    assert_eq!(p.panel_nav(NavKey::Quick(1)).as_deref(), Some("clip 9"));
+
+    // respects the search query
+    p.toggle_panel();
+    for c in "clip 1".chars() {
+        p.panel_char(c);
+    }
+    // matches "clip 11", "clip 10", "clip 1" (newest first)
+    assert_eq!(p.panel_nav(NavKey::Quick(2)).as_deref(), Some("clip 1"));
+
+    // out of range: nothing copied, panel stays open
+    p.toggle_panel();
+    for c in "clip 3".chars() {
+        p.panel_char(c);
+    }
+    assert_eq!(p.panel_nav(NavKey::Quick(5)), None);
+    assert!(p.panel_open());
+}
+
+/// The auto-close-after-copy setting end-to-end: on by default, toggled
+/// through the shared menu model (tray/NSMenu/shortcut all call the same
+/// action), honored by every copy path, persisted in state.json.
+#[test]
+fn panel_autoclose_toggle_keeps_panel_open() {
+    let mut p = pet();
+    copy(&mut p, "first", None);
+    copy(&mut p, "second", None);
+    assert!(p.st.panel_autoclose, "closes after copy by default");
+
+    let m = p.build_menu("HK", false);
+    assert!(menu_find(&m, MenuAction::TogglePanelAutoClose).unwrap().checked);
+    assert_eq!(
+        p.apply_menu_action(MenuAction::TogglePanelAutoClose),
+        MenuOutcome::Handled
+    );
+    assert!(!p.st.panel_autoclose);
+    assert!(!menu_find(&p.build_menu("HK", false), MenuAction::TogglePanelAutoClose)
+        .unwrap()
+        .checked);
+
+    // with auto-close off, Enter / quick keys / row clicks keep the panel up
+    p.toggle_panel();
+    assert_eq!(p.panel_nav(NavKey::Enter).as_deref(), Some("second"));
+    assert!(p.panel_open(), "panel stays open for more copies");
+    assert_eq!(p.panel_nav(NavKey::Quick(1)).as_deref(), Some("first"));
+    assert!(p.panel_open());
+    let lt = p.panel.layout();
+    let row_y = lt.rows_y + panel::ROW_H / 2.0;
+    assert_eq!(p.panel_click(150.0, row_y).as_deref(), Some("second"));
+    assert!(p.panel_open());
+
+    // flipping it back restores the close-on-copy behavior
+    p.apply_menu_action(MenuAction::TogglePanelAutoClose);
+    assert!(p.panel_nav(NavKey::Enter).is_some());
+    assert!(!p.panel_open());
+
+    // the setting round-trips through state.json
+    let json = serde_json::to_string(&p.st).unwrap();
+    let back: Persist = serde_json::from_str(&json).unwrap();
+    assert!(back.panel_autoclose);
+}
+
+/// Holding a key must not inflate the stats: the input gate counts a key
+/// once per physical press, exactly what both backends' hooks feed it.
+#[test]
+fn held_key_counts_once_through_the_input_gate() {
+    use clipcat::input;
+    let _ = input::drain();
+    input::key_down(0x41);
+    input::key_down(0x41); // OS auto-repeat while held
+    input::key_down(0x41);
+    input::key_down(0x42); // another key pressed alongside
+    let (k, _, _) = input::drain();
+    assert_eq!(k, 2, "auto-repeat does not count");
+    input::key_up(0x41);
+    input::key_down(0x41); // released and pressed again: counts
+    assert_eq!(input::drain().0, 1);
+    input::key_up(0x41);
+    input::key_up(0x42);
+}
+
+/// The stats bubble renders through the system-font path (the built-in
+/// pixel font no longer exists): labels and values rasterize real pixels
+/// in the bubble area.
+#[test]
+fn stats_bubble_renders_with_system_font() {
+    let base = Scene {
+        paw_l: 0.0,
+        paw_r: 0.0,
+        blink: 0.0,
+        happy: 0.0,
+        sleep: 0.0,
+        excite: 0.0,
+        squash: 0.0,
+        breath: 0.0,
+        tail_phase: 0.0,
+        mouth_open: 0.0,
+        accessory: Accessory::None,
+        particles: &[],
+        fish: None,
+        bubble: None,
+        bubble_alpha: 0.0,
+        toast: None,
+        lang: Lang::Ko,
+        origin: (0.0, 0.0),
+    };
+    let mut plain = Pixmap::new(240, 256).unwrap();
+    render::render_card(&mut plain, &base, 1.0);
+
+    let with_bubble = Scene {
+        bubble: Some(BubbleData {
+            level: 7,
+            pct: 0.5,
+            keys: 12345,
+            clicks: 987,
+            copies: 42,
+            minutes: 95,
+        }),
+        bubble_alpha: 1.0,
+        ..base
+    };
+    let mut bubbled = Pixmap::new(240, 256).unwrap();
+    render::render_card(&mut bubbled, &with_bubble, 1.0);
+
+    let diff = plain
+        .data()
+        .iter()
+        .zip(bubbled.data().iter())
+        .filter(|(a, b)| a != b)
+        .count();
+    assert!(diff > 4000, "bubble box + text must rasterize ({diff} bytes differ)");
 }
 
 /// Accessories are greyed until their level, then become selectable — the

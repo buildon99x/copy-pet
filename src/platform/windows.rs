@@ -70,6 +70,7 @@ const CMD_PANEL: usize = 16;
 const CMD_CAPTURE: usize = 17;
 const CMD_UPDATE: usize = 18;
 const CMD_AUTOUPDATE: usize = 19;
+const CMD_AUTOCLOSE: usize = 23;
 const CMD_SIZE0: usize = 20; // ..=22
 const CMD_SOUND0: usize = 30; // ..=32
 const CMD_ACC0: usize = 40; // 40 = none, 41..=46 accessories
@@ -98,6 +99,10 @@ struct App {
     // interaction
     mouse_down: bool,
     drag_moved: bool,
+    /// A panel-card drag (header move / grip resize) is in progress; the
+    /// cursor delta is fed to `Pet::panel_drag_update` in screen pixels
+    /// because the window itself moves/resizes under the cursor.
+    panel_drag: bool,
     drag_cursor: POINT,
     drag_win: (i32, i32),
     hover_tracking: bool,
@@ -198,6 +203,15 @@ impl App {
     // ---- surface / blit ----------------------------------------------------
 
     fn blit(&mut self) {
+        self.blit_at(None);
+    }
+
+    /// Pushes the pixmap to the layered window. `move_to` additionally
+    /// repositions the (possibly resized) window in the same
+    /// UpdateLayeredWindow call — position, size and content change
+    /// atomically, so a panel drag can never show a half-updated frame
+    /// (the cat would visibly tremble otherwise).
+    fn blit_at(&mut self, move_to: Option<(i32, i32)>) {
         let data = self.pm.data();
         let len = (self.w * self.h * 4) as usize;
         unsafe {
@@ -215,6 +229,7 @@ impl App {
                 cy: self.h,
             };
             let src = POINT { x: 0, y: 0 };
+            let dst_pt = move_to.map(|(x, y)| POINT { x, y });
             let blend = BLENDFUNCTION {
                 BlendOp: AC_SRC_OVER as u8,
                 BlendFlags: 0,
@@ -224,7 +239,7 @@ impl App {
             UpdateLayeredWindow(
                 self.hwnd,
                 screen,
-                null(),
+                dst_pt.as_ref().map_or(null(), |p| p),
                 &size,
                 self.mem_dc,
                 &src,
@@ -237,10 +252,13 @@ impl App {
     }
 
     /// Resizes window + surface to the pet's wanted size (scale or panel
-    /// state changed), bottom-center anchored, and adjusts focusability:
-    /// the panel needs keyboard focus, the plain pet must never steal it.
+    /// layout changed), shifted by `Pet::take_window_shift` so the cat stays
+    /// put on screen, and adjusts focusability: the panel needs keyboard
+    /// focus, the plain pet must never steal it. Move + resize + repaint go
+    /// out as one atomic `UpdateLayeredWindow` (no flicker during drags).
     unsafe fn apply_size(&mut self) {
         let (w, h) = self.pet.canvas_size();
+        let (dx, dy) = self.pet.take_window_shift();
         let mut rc = RECT {
             left: 0,
             top: 0,
@@ -248,40 +266,45 @@ impl App {
             bottom: 0,
         };
         GetWindowRect(self.hwnd, &mut rc);
-        let nx = rc.left + ((rc.right - rc.left) - w) / 2;
-        let ny = rc.top + ((rc.bottom - rc.top) - h);
-        let (nx, ny) = clamp_to_screen(nx, ny, w, h);
-        DeleteObject(self.dib as _);
-        DeleteDC(self.mem_dc);
-        let (dc, dib, bits) = create_surface(w, h);
-        self.mem_dc = dc;
-        self.dib = dib;
-        self.bits = bits;
-        self.w = w;
-        self.h = h;
-        self.pm = tiny_skia::Pixmap::new(w as u32, h as u32).unwrap();
-        SetWindowPos(
-            self.hwnd,
-            null_mut(),
-            nx,
-            ny,
-            w,
-            h,
-            SWP_NOZORDER | SWP_NOACTIVATE,
-        );
+        let (mut nx, mut ny) = (rc.left + dx, rc.top + dy);
+        if !self.pet.panel_open() {
+            // shrunk back to the cat: keep it reachable. While the panel is
+            // open the window legitimately extends offscreen (the card can
+            // sit anywhere); clamping then would drag the cat along.
+            (nx, ny) = clamp_to_screen(nx, ny, w, h);
+        }
+        if (w, h) != (self.w, self.h) {
+            DeleteObject(self.dib as _);
+            DeleteDC(self.mem_dc);
+            let (dc, dib, bits) = create_surface(w, h);
+            self.mem_dc = dc;
+            self.dib = dib;
+            self.bits = bits;
+            self.w = w;
+            self.h = h;
+            self.pm = tiny_skia::Pixmap::new(w as u32, h as u32).unwrap();
+        }
 
+        // toggle focusability only on a real open/close transition — a panel
+        // drag re-applies the size many times per second
         let ex = GetWindowLongPtrW(self.hwnd, GWL_EXSTYLE);
-        if self.pet.panel_open() {
+        let no_activate = ex & WS_EX_NOACTIVATE as isize != 0;
+        if self.pet.panel_open() && no_activate {
             SetWindowLongPtrW(self.hwnd, GWL_EXSTYLE, ex & !(WS_EX_NOACTIVATE as isize));
             SetForegroundWindow(self.hwnd);
             SetFocus(self.hwnd);
-        } else {
+        } else if !self.pet.panel_open() && !no_activate {
             SetWindowLongPtrW(self.hwnd, GWL_EXSTYLE, ex | WS_EX_NOACTIVATE as isize);
         }
 
-        self.pet.save_pos(nx, ny);
+        // remember the position without forcing a disk write per drag step;
+        // the throttled autosave (or exit) persists it
+        self.pet.st.pos_x = nx;
+        self.pet.st.pos_y = ny;
+        self.pet.st.has_pos = true;
+        self.pet.dirty = true;
         self.pet.render(&mut self.pm);
-        self.blit();
+        self.blit_at(Some((nx, ny)));
     }
 
     fn update_tray_tip(&self) {
@@ -646,9 +669,14 @@ unsafe fn register_panel_hotkey(hwnd: HWND, spec: &str) -> String {
 
 unsafe extern "system" fn kbd_hook(code: i32, wp: WPARAM, lp: LPARAM) -> LRESULT {
     if code >= 0 {
-        let msg = wp as u32;
-        if msg == WM_KEYDOWN || msg == WM_SYSKEYDOWN {
-            input::key();
+        // The vkCode is reduced to a held/released bit so holding a key (OS
+        // auto-repeat) counts once; it is never stored or inspected further
+        // (see crate::input and golden rule 1).
+        let vk = (*(lp as *const KBDLLHOOKSTRUCT)).vkCode as u16;
+        match wp as u32 {
+            WM_KEYDOWN | WM_SYSKEYDOWN => input::key_down(vk),
+            WM_KEYUP | WM_SYSKEYUP => input::key_up(vk),
+            _ => {}
         }
     }
     CallNextHookEx(null_mut(), code, wp, lp)
@@ -772,6 +800,7 @@ struct MenuSnapshot {
     autostart: bool,
     lang: Lang,
     capture: bool,
+    autoclose: bool,
     panel_open: bool,
     hotkey_label: String,
     auto_update: bool,
@@ -807,6 +836,12 @@ unsafe fn show_menu(hwnd: HWND, ms: &MenuSnapshot) -> usize {
         MF_STRING | chk(!ms.capture),
         CMD_CAPTURE,
         wz(t(lang, Msg::MenuCapturePause)).as_ptr(),
+    );
+    AppendMenuW(
+        menu,
+        MF_STRING | chk(ms.autoclose),
+        CMD_AUTOCLOSE,
+        wz(t(lang, Msg::MenuAutoClose)).as_ptr(),
     );
     AppendMenuW(menu, MF_SEPARATOR, 0, null());
 
@@ -974,6 +1009,7 @@ fn menu_snapshot() -> Option<MenuSnapshot> {
         autostart: unsafe { autostart_enabled() },
         lang: a.pet.lang(),
         capture: a.pet.st.clip_capture,
+        autoclose: a.pet.st.panel_autoclose,
         panel_open: a.pet.panel_open(),
         hotkey_label: a.hotkey_label.clone(),
         auto_update: a.pet.st.auto_update,
@@ -1048,6 +1084,9 @@ unsafe fn open_menu(hwnd: HWND) {
                     a.pet.st.clip_capture = !a.pet.st.clip_capture;
                     a.pet.dirty = true;
                 });
+            }
+            CMD_AUTOCLOSE => {
+                with_app(|a| a.pet.toggle_panel_autoclose());
             }
             CMD_BUBBLE => {
                 with_app(|a| {
@@ -1144,6 +1183,16 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
         WM_LBUTTONDOWN => {
             with_app(|a| {
                 let (cx, cy) = a.canvas_xy(lp);
+                // header strip / resize grip start a card drag (the grip
+                // pokes slightly past the card edge, hence the extra check)
+                if a.pet.panel_drag_start(cx, cy) {
+                    a.panel_drag = true;
+                    let mut pt = POINT { x: 0, y: 0 };
+                    GetCursorPos(&mut pt);
+                    a.drag_cursor = pt;
+                    SetCapture(hwnd);
+                    return;
+                }
                 if a.pet.panel_hit(cx, cy) {
                     // panel interactions act on press; no dragging from there
                     if let Some(text) = a.pet.panel_click(cx, cy) {
@@ -1176,7 +1225,18 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
                     };
                     TrackMouseEvent(&mut tme);
                 }
-                if a.mouse_down && !a.pet.st.locked {
+                if a.panel_drag {
+                    // card drag: feed screen-pixel deltas as canvas units;
+                    // the tick applies the new layout (resize + shift)
+                    let mut pt = POINT { x: 0, y: 0 };
+                    GetCursorPos(&mut pt);
+                    let s = a.pet.scale();
+                    let (dx, dy) = (pt.x - a.drag_cursor.x, pt.y - a.drag_cursor.y);
+                    if dx != 0 || dy != 0 {
+                        a.pet.panel_drag_update(dx as f32 / s, dy as f32 / s);
+                        a.drag_cursor = pt;
+                    }
+                } else if a.mouse_down && !a.pet.st.locked {
                     let mut pt = POINT { x: 0, y: 0 };
                     GetCursorPos(&mut pt);
                     let dx = pt.x - a.drag_cursor.x;
@@ -1207,6 +1267,12 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
         }
         WM_LBUTTONUP => {
             with_app(|a| {
+                if a.panel_drag {
+                    a.panel_drag = false;
+                    a.pet.panel_drag_end();
+                    ReleaseCapture();
+                    return;
+                }
                 if a.mouse_down {
                     a.mouse_down = false;
                     ReleaseCapture();
@@ -1226,6 +1292,15 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
             with_app(|a| {
                 a.mouse_down = false;
                 let (cx, cy) = a.canvas_xy(lp);
+                // a fast second header/grip drag arrives as a double-click
+                if a.pet.panel_drag_start(cx, cy) {
+                    a.panel_drag = true;
+                    let mut pt = POINT { x: 0, y: 0 };
+                    GetCursorPos(&mut pt);
+                    a.drag_cursor = pt;
+                    SetCapture(hwnd);
+                    return;
+                }
                 if a.pet.panel_hit(cx, cy) {
                     // fast row clicks arrive as double-clicks; treat as click
                     if let Some(text) = a.pet.panel_click(cx, cy) {
@@ -1280,6 +1355,9 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
                     0x09 => Some(NavKey::Tab),      // VK_TAB: source filter
                     0x50 if ctrl => Some(NavKey::Pin),  // Ctrl+P: pin clip
                     0x5A if ctrl => Some(NavKey::Undo), // Ctrl+Z: undo delete
+                    // Ctrl+0..9: quick-copy the nth row from the top
+                    k @ 0x30..=0x39 if ctrl => Some(NavKey::Quick((k - 0x30) as u8)),
+                    k @ 0x60..=0x69 if ctrl => Some(NavKey::Quick((k - 0x60) as u8)), // numpad
                     _ => None,
                 };
                 if let Some(key) = key {
@@ -1495,6 +1573,7 @@ pub fn run() {
             suppress_clip: None,
             mouse_down: false,
             drag_moved: false,
+            panel_drag: false,
             drag_cursor: POINT { x: 0, y: 0 },
             drag_win: (0, 0),
             hover_tracking: false,
