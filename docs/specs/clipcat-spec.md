@@ -54,6 +54,8 @@ clips, search, hotkey), **Bongo Cat** (reactive paw-tapping mascot) and
 ### Store
 - `clipboard::ClipStore`, persisted as `clips.json` in the config dir
   (saved on the existing 30 s dirty throttle + shutdown + panel mutations).
+  Writes are atomic (temp file + rename), like `state.json`, so a crash
+  mid-write never corrupts the history.
 - Capacity: 100 unpinned (oldest evicted), 100 pinned (never evicted).
 - A clip: id, full text, optional source-app name, pinned flag, unix
   timestamp of last copy.
@@ -75,22 +77,33 @@ clips, search, hotkey), **Bongo Cat** (reactive paw-tapping mascot) and
     focused app.
   - Also: middle-click on the cat (both backends), tray menu (Windows),
     `C` key with the window focused (portable). The window grows upward
-    (324×426 canvas at scale 1.0); the cat stays at the bottom.
+    (360×542 canvas at scale 1.0); the cat stays at the bottom.
 - Contents: title row with source-filter / capture-pause / clear-unpinned /
   language / close buttons; search box (live filter over text + source,
-  Korean supported — IME input works on both backends); 6 visible rows
-  (pin star · preview · source + relative time · delete ✕) with hover +
-  keyboard selection; scrollbar; footer with counts and the hotkey hint.
+  Korean supported — IME input works on both backends); 8 visible rows
+  (pin star · preview · source color dot + app + relative time + size for
+  large clips · delete ✕ with a red hover halo) with hover + keyboard
+  selection; scrollbar; footer with counts, a keyboard-shortcut help line
+  and the hotkey hint.
 - **Source-app filter**: the funnel button (or Tab) cycles all → app 1 →
   app 2 → … → all over the distinct source apps in the history (most
-  recently used first). The active filter renders as a chip inside the
-  search box and combines with the text query; reopening the panel clears
-  it. Clips without a known source only show when no filter is active.
-- Keyboard while open: type = search, ↑/↓/PgUp/PgDn = select, Enter = copy
-  selected, Del = delete, Backspace = edit query, Tab = cycle source
-  filter, Esc = clear query → clear filter → close (one layer per press).
-- Clicking a row copies it back (toast "COPIED!", pop sound, happy cat).
-  Pinned clips sort first.
+  recently used first). The active filter renders as a chip (with the
+  app's badge color dot) inside the search box and combines with the text
+  query; reopening the panel clears it. Clips without a known source only
+  show when no filter is active. Each row carries the same per-app color
+  dot the fish badge uses, so apps are recognizable at a glance.
+- Keyboard while open: type = search, ↑/↓/PgUp/PgDn/Home/End = select,
+  Enter = copy selected (closes the panel), Del = delete (undoable),
+  Ctrl+Z = undo delete/clear, Ctrl+P (Cmd also works on macOS) = pin,
+  Backspace = edit query, Tab = cycle source filter, Esc = disarm clear →
+  clear query → clear filter → close (one layer per press).
+- **Delete safety**: every delete shows a "CTRL+Z TO UNDO" toast and is
+  restorable (up to the last 20 delete/clear operations, session-only);
+  the header clear-all button needs a confirming second press (it arms,
+  turns red and toasts first — any other interaction disarms it).
+- Clicking a row copies it back (toast "COPIED!", pop sound, happy cat)
+  and closes the panel so the user can paste. Pinned clips sort first;
+  pinning via Ctrl+P keeps the selection on the clip as it re-sorts.
 - On the native backend the window is `WS_EX_NOACTIVATE`; opening the panel
   temporarily removes that style and focuses the window so search works,
   closing restores it.
@@ -128,6 +141,10 @@ clamped at level 99.
 | Copy anywhere | Fish + clip saved (+5 XP) |
 | Win+Shift+V (default) / middle-click / tray / `C` | Toggle clipboard panel |
 | Funnel button / Tab (panel open) | Cycle the source-app filter |
+| Enter / row click (panel open) | Copy the clip back + close the panel |
+| Del / ✕ (panel open) | Delete the clip (Ctrl+Z undoes) |
+| Ctrl+P (panel open) | Pin/unpin the selected clip |
+| Trash button ×2 (panel open) | Clear unpinned clips (second press confirms) |
 | Drag | Move the pet (unless position-locked) |
 | Single click | Squash bounce + sparkle (+1 XP) |
 | Double click | Pet it: heart burst (+10 XP) |

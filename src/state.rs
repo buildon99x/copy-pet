@@ -98,6 +98,19 @@ pub fn config_dir() -> Option<PathBuf> {
     dir_named("ClipCat")
 }
 
+/// Writes a config file atomically (temp file in the same dir + rename) so a
+/// crash or power loss mid-write never corrupts the previous contents.
+/// Shared by `state.json` and `clips.json` (see [`crate::clipboard`]).
+pub(crate) fn write_atomic(path: &std::path::Path, contents: &str) {
+    if let Some(dir) = path.parent() {
+        let _ = std::fs::create_dir_all(dir);
+    }
+    let tmp = path.with_extension("json.tmp");
+    if std::fs::write(&tmp, contents).is_ok() {
+        let _ = std::fs::rename(&tmp, path);
+    }
+}
+
 fn state_file() -> Option<PathBuf> {
     config_dir().map(|d| d.join("state.json"))
 }
@@ -144,11 +157,8 @@ impl Persist {
     }
 
     pub fn save(&self) {
-        if let (Some(dir), Some(file)) = (config_dir(), state_file()) {
-            let _ = std::fs::create_dir_all(&dir);
-            if let Ok(json) = serde_json::to_string_pretty(self) {
-                let _ = std::fs::write(file, json);
-            }
+        if let (Some(file), Ok(json)) = (state_file(), serde_json::to_string_pretty(self)) {
+            write_atomic(&file, &json);
         }
     }
 

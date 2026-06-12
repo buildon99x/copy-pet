@@ -50,7 +50,8 @@ fn copy(p: &mut Pet, text: &str, source: Option<&str>) {
 
 /// The headline flow: copies arrive from several apps, the panel opens (as
 /// the global hotkey does), Tab narrows to one app, Enter hands the picked
-/// clip's text back for the OS clipboard, Esc unwinds filter then panel.
+/// clip's text back for the OS clipboard and closes the panel for pasting;
+/// reopened, Esc unwinds filter then panel.
 #[test]
 fn copy_filter_and_copy_back_flow() {
     let mut p = pet();
@@ -68,13 +69,22 @@ fn copy_filter_and_copy_back_flow() {
     assert_eq!(p.panel.source.as_deref(), Some("Code"));
     let text = p.panel_nav(NavKey::Enter);
     assert_eq!(text.as_deref(), Some("fn main() {}"));
+    assert!(!p.panel_open(), "picking a clip closes the panel for pasting");
+    assert!(p.take_size_changed(), "backends shrink back to the cat canvas");
 
+    // reopening starts fresh (no filter), Tab twice reaches the older app
+    p.toggle_panel();
+    assert_eq!(p.panel.source, None);
+    p.panel_nav(NavKey::Tab);
     p.panel_nav(NavKey::Tab);
     assert_eq!(p.panel.source.as_deref(), Some("Chrome"));
     let text = p.panel_nav(NavKey::Enter);
     assert_eq!(text.as_deref(), Some("breaking news headline"));
 
     // Esc: filter first, panel second
+    p.toggle_panel();
+    p.panel_nav(NavKey::Tab);
+    assert!(p.panel.source.is_some());
     assert_eq!(p.panel_nav(NavKey::Esc), None);
     assert_eq!(p.panel.source, None);
     assert!(p.panel_open());
@@ -96,11 +106,6 @@ fn filter_button_and_row_clicks() {
     assert_eq!(got, None);
     assert_eq!(p.panel.source.as_deref(), Some("Code"));
 
-    // only Code clips remain; clicking the first row copies it back
-    let row_y = panel::ROWS_Y + panel::ROW_H / 2.0;
-    let text = p.panel_click(150.0, row_y);
-    assert_eq!(text.as_deref(), Some("newest from code"));
-
     // the second row is empty under the filter -> a click there is a no-op
     let empty_y = panel::ROWS_Y + panel::ROW_H * 1.5;
     assert_eq!(p.panel_click(150.0, empty_y), None);
@@ -111,6 +116,55 @@ fn filter_button_and_row_clicks() {
     p.panel_click(panel::BTN_FILTER_X + 8.0, panel::BTN_Y + 8.0);
     assert_eq!(p.panel.source, None);
     assert_eq!(p.panel_click(150.0, empty_y).as_deref(), Some("older from chrome"));
+    assert!(!p.panel_open(), "a row click copies and closes the panel");
+
+    // reopened, filtering again and clicking the first row copies it back
+    p.toggle_panel();
+    p.panel_click(panel::BTN_FILTER_X + 8.0, panel::BTN_Y + 8.0);
+    assert_eq!(p.panel.source.as_deref(), Some("Code"));
+    let row_y = panel::ROWS_Y + panel::ROW_H / 2.0;
+    let text = p.panel_click(150.0, row_y);
+    assert_eq!(text.as_deref(), Some("newest from code"));
+}
+
+/// Deleting is forgiving end-to-end: Del removes the selected clip, Ctrl+Z
+/// brings it back, and the clear-all button needs a confirming second press.
+#[test]
+fn delete_undo_and_two_step_clear_flow() {
+    let mut p = pet();
+    copy(&mut p, "keep me pinned", Some("Code"));
+    copy(&mut p, "fat finger victim", Some("Chrome"));
+    copy(&mut p, "latest", None);
+    p.toggle_panel();
+
+    // pin the oldest via the keyboard (End + Ctrl+P), selection follows it
+    p.panel_nav(NavKey::End);
+    assert_eq!(p.panel_nav(NavKey::Pin), None);
+    let visible = p.panel.visible(&p.clips);
+    assert_eq!(visible[p.panel.sel].text, "keep me pinned");
+    assert!(visible[p.panel.sel].pinned, "pinned clips sort first");
+    assert_eq!(p.panel.sel, 0);
+
+    // Del removes the selected clip; Ctrl+Z restores it
+    p.panel_nav(NavKey::Down); // select "latest"
+    assert_eq!(p.panel_nav(NavKey::Delete), None);
+    assert_eq!(p.clips.len(), 2);
+    assert!(p.clips.visible("latest").is_empty());
+    assert_eq!(p.panel_nav(NavKey::Undo), None);
+    assert_eq!(p.clips.len(), 3, "Ctrl+Z restores the deleted clip");
+
+    // clear-all: first click only arms (nothing deleted), second clears
+    let (bx, by) = (panel::BTN_CLEAR_X + 8.0, panel::BTN_Y + 8.0);
+    assert_eq!(p.panel_click(bx, by), None);
+    assert_eq!(p.clips.len(), 3, "first press arms, deletes nothing");
+    assert!(p.panel.clear_armed);
+    assert_eq!(p.panel_click(bx, by), None);
+    assert_eq!(p.clips.len(), 1, "second press clears the unpinned clips");
+    assert_eq!(p.clips.pinned_count(), 1, "pinned clip survives the clear");
+
+    // even a full clear is undoable as one operation
+    assert_eq!(p.panel_nav(NavKey::Undo), None);
+    assert_eq!(p.clips.len(), 3);
 }
 
 /// Search text (typed or IME-committed) combines with the source filter.
