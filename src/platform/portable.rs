@@ -59,6 +59,24 @@ const DBLCLICK: Duration = Duration::from_millis(350);
 /// Clipboard poll cadence (arboard has no change notifications).
 const CLIP_POLL: Duration = Duration::from_millis(400);
 
+/// macOS right-click context menu: (label, the keyboard shortcut it runs).
+/// Picking an item runs exactly the same code path as the key, so behavior
+/// stays in one place (`PortableApp::shortcut`).
+#[cfg(target_os = "macos")]
+const CONTEXT_MENU: &[(crate::i18n::Msg, KeyCode)] = {
+    use crate::i18n::Msg::*;
+    &[
+        (PanelTitle, KeyCode::KeyC),
+        (MenuShowStats, KeyCode::KeyB),
+        (MenuSize, KeyCode::KeyS),
+        (MenuAccessory, KeyCode::KeyA),
+        (MenuSound, KeyCode::KeyM),
+        (MenuLock, KeyCode::KeyL),
+        (MenuLanguage, KeyCode::KeyG),
+        (MenuExit, KeyCode::KeyQ),
+    ]
+};
+
 #[cfg(not(target_os = "macos"))]
 type Surface = softbuffer::Surface<Rc<Window>, Rc<Window>>;
 /// Text we just wrote to the clipboard ourselves; the watcher skips it once.
@@ -226,6 +244,23 @@ impl PortableApp {
         }
         if let Ok(mut cb) = arboard::Clipboard::new() {
             let _ = cb.set_text(text);
+        }
+    }
+
+    /// macOS right-click: pop a native context menu at the cursor and run the
+    /// picked item through the same path as its keyboard shortcut.
+    #[cfg(target_os = "macos")]
+    fn show_context_menu(&mut self, event_loop: &ActiveEventLoop) {
+        let Some(window) = self.window.clone() else {
+            return;
+        };
+        let lang = self.pet.lang();
+        let labels: Vec<String> = CONTEXT_MENU
+            .iter()
+            .map(|(msg, _)| crate::i18n::t(lang, *msg).to_string())
+            .collect();
+        if let Some(i) = super::mac_menu::popup(&window, &labels) {
+            self.shortcut(CONTEXT_MENU[i].1, event_loop);
         }
     }
 
@@ -440,6 +475,12 @@ impl ApplicationHandler for PortableApp {
                 MouseButton::Middle => {
                     if state == ElementState::Pressed {
                         self.pet.toggle_panel();
+                    }
+                }
+                #[cfg(target_os = "macos")]
+                MouseButton::Right => {
+                    if state == ElementState::Pressed {
+                        self.show_context_menu(event_loop);
                     }
                 }
                 _ => {}

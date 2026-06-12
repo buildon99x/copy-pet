@@ -77,6 +77,9 @@ src/
                        the window's CALayer as a CGImage with alpha, so the pet
                        floats with a transparent background (ADR-0003 update)
                        instead of softbuffer's opaque card.
+    mac_menu.rs        macOS-only native NSMenu shown on right-click; each item
+                       runs the matching keyboard shortcut (no duplicated
+                       behavior). The portable backend's tray-menu stand-in.
   bin/gen_icon.rs      regenerates assets/clipcat.ico from render::draw_icon_scaled
 examples/preview.rs    renders representative frames to PNGs (headless review)
 tests/e2e.rs           end-to-end core flows through the public Pet API
@@ -175,11 +178,15 @@ a Linux build can't reach.
 - `unsafe` is confined to `platform/windows.rs` (Win32 FFI),
   `platform/mac_input.rs` (the macOS CoreGraphics event tap),
   `platform/mac_present.rs` (Objective-C / CoreGraphics for the transparent
-  CALayer present), and the small WAV/icon byte-buffer builders; document the
-  safety invariant inline.
+  CALayer present), `platform/mac_menu.rs` (Objective-C for the right-click
+  NSMenu), and the small WAV/icon byte-buffer builders; document the safety
+  invariant inline.
 - Keep both backends' interaction set in parity (drag, single-click bounce,
   double-click pet, hover stats, middle-click/hotkey panel, panel keyboard
-  control). If you add an interaction, add it to both.
+  control). If you add an interaction, add it to both. The settings menu is the
+  one deliberate split: Windows native uses the Shell tray menu, macOS uses a
+  right-click NSMenu (`platform/mac_menu.rs`); Linux/Windows-portable still rely
+  on the keyboard shortcuts (no native menu wired there yet).
 
 ## Changelog & releases
 
