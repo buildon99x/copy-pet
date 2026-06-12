@@ -39,8 +39,9 @@ use windows_sys::Win32::System::Threading::{
 };
 use windows_sys::Win32::UI::HiDpi::SetProcessDpiAwarenessContext;
 use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
-    RegisterHotKey, ReleaseCapture, SetCapture, SetFocus, TrackMouseEvent, UnregisterHotKey,
-    MOD_ALT, MOD_CONTROL, MOD_NOREPEAT, MOD_SHIFT, MOD_WIN, TME_LEAVE, TRACKMOUSEEVENT,
+    GetKeyState, RegisterHotKey, ReleaseCapture, SetCapture, SetFocus, TrackMouseEvent,
+    UnregisterHotKey, MOD_ALT, MOD_CONTROL, MOD_NOREPEAT, MOD_SHIFT, MOD_WIN, TME_LEAVE,
+    TRACKMOUSEEVENT,
 };
 use windows_sys::Win32::UI::Shell::{
     ExtractIconExW, Shell_NotifyIconW, NIF_ICON, NIF_MESSAGE, NIF_TIP, NIM_ADD, NIM_DELETE,
@@ -1264,16 +1265,21 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
                 if !a.pet.panel_open() {
                     return false;
                 }
+                let ctrl = GetKeyState(0x11) < 0; // VK_CONTROL
                 let key = match wp as u16 {
                     0x26 => Some(NavKey::Up),       // VK_UP
                     0x28 => Some(NavKey::Down),     // VK_DOWN
                     0x21 => Some(NavKey::PageUp),   // VK_PRIOR
                     0x22 => Some(NavKey::PageDown), // VK_NEXT
+                    0x24 => Some(NavKey::Home),     // VK_HOME
+                    0x23 => Some(NavKey::End),      // VK_END
                     0x0D => Some(NavKey::Enter),    // VK_RETURN
                     0x2E => Some(NavKey::Delete),   // VK_DELETE
                     0x08 => Some(NavKey::Backspace),// VK_BACK
                     0x1B => Some(NavKey::Esc),      // VK_ESCAPE
                     0x09 => Some(NavKey::Tab),      // VK_TAB: source filter
+                    0x50 if ctrl => Some(NavKey::Pin),  // Ctrl+P: pin clip
+                    0x5A if ctrl => Some(NavKey::Undo), // Ctrl+Z: undo delete
                     _ => None,
                 };
                 if let Some(key) = key {

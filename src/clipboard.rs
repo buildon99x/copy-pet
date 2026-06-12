@@ -15,6 +15,8 @@ pub const MAX_PINNED: usize = 100;
 /// Clips larger than this many bytes are ignored entirely (a clipboard pet
 /// is not a paste-bin; truncating would corrupt a later paste).
 pub const MAX_TEXT: usize = 256 * 1024;
+/// Most delete operations kept for undo (session-only, not persisted).
+const MAX_UNDO: usize = 20;
 
 #[derive(Serialize, Deserialize, Clone)]
 pub struct Clip {
@@ -66,11 +68,44 @@ pub struct ClipStore {
     items: Vec<Clip>,
     next_id: u64,
     pub dirty: bool,
+    /// Recently deleted clips, one entry per delete/clear operation, newest
+    /// last. Session-only: lets the panel undo an accidental delete.
+    undo: Vec<Vec<Clip>>,
 }
 
-#[derive(Serialize, Deserialize, Default)]
+#[derive(Deserialize, Default)]
 struct ClipsFile {
     clips: Vec<Clip>,
+}
+
+/// Borrowing twin of [`ClipsFile`] so saving doesn't clone every clip.
+#[derive(Serialize)]
+struct ClipsOut<'a> {
+    clips: &'a [Clip],
+}
+
+/// Allocation-free case-insensitive substring test (per-char lowercase fold);
+/// the panel search runs this against every clip each frame, so it must not
+/// lowercase whole clip texts into fresh `String`s.
+fn contains_ci(hay: &str, needle: &str) -> bool {
+    if needle.is_empty() {
+        return true;
+    }
+    let mut start = hay.char_indices();
+    loop {
+        let mut h = start.as_str().chars().flat_map(char::to_lowercase);
+        let mut n = needle.chars().flat_map(char::to_lowercase);
+        loop {
+            match (n.next(), h.next()) {
+                (None, _) => return true,
+                (Some(nc), Some(hc)) if nc == hc => continue,
+                _ => break,
+            }
+        }
+        if start.next().is_none() {
+            return false;
+        }
+    }
 }
 
 fn clips_file() -> Option<PathBuf> {
@@ -93,17 +128,21 @@ impl ClipStore {
             items,
             next_id,
             dirty: false,
+            undo: Vec::new(),
         }
     }
 
+    /// Writes the history to disk atomically (temp file + rename) so a crash
+    /// mid-write can never corrupt the existing clips.json.
     pub fn save(&mut self) {
         if let (Some(dir), Some(file)) = (crate::state::config_dir(), clips_file()) {
             let _ = std::fs::create_dir_all(&dir);
-            let f = ClipsFile {
-                clips: self.items.clone(),
-            };
-            if let Ok(json) = serde_json::to_string(&f) {
-                let _ = std::fs::write(file, json);
+            let out = ClipsOut { clips: &self.items };
+            if let Ok(json) = serde_json::to_string(&out) {
+                let tmp = file.with_extension("json.tmp");
+                if std::fs::write(&tmp, json).is_ok() {
+                    let _ = std::fs::rename(&tmp, &file);
+                }
             }
         }
         self.dirty = false;
@@ -175,24 +214,52 @@ impl ClipStore {
     }
 
     pub fn delete(&mut self, id: u64) -> bool {
-        let before = self.items.len();
-        self.items.retain(|c| c.id != id);
-        let removed = self.items.len() != before;
-        if removed {
-            self.dirty = true;
-        }
-        removed
+        let Some(i) = self.items.iter().position(|c| c.id == id) else {
+            return false;
+        };
+        let clip = self.items.remove(i);
+        self.push_undo(vec![clip]);
+        self.dirty = true;
+        true
     }
 
     /// Removes all unpinned clips; returns how many were removed.
     pub fn clear_unpinned(&mut self) -> usize {
-        let before = self.items.len();
-        self.items.retain(|c| c.pinned);
-        let n = before - self.items.len();
+        let (kept, removed): (Vec<Clip>, Vec<Clip>) =
+            self.items.drain(..).partition(|c| c.pinned);
+        self.items = kept;
+        let n = removed.len();
         if n > 0 {
+            self.push_undo(removed);
             self.dirty = true;
         }
         n
+    }
+
+    fn push_undo(&mut self, batch: Vec<Clip>) {
+        if self.undo.len() >= MAX_UNDO {
+            self.undo.remove(0);
+        }
+        self.undo.push(batch);
+    }
+
+    /// Restores the most recent delete/clear operation. Returns the id of one
+    /// restored clip (for the panel to re-select), or None if nothing to undo.
+    pub fn undo_delete(&mut self) -> Option<u64> {
+        let batch = self.undo.pop()?;
+        let first = batch.first().map(|c| c.id);
+        for clip in batch {
+            // re-insert at the ts-sorted spot (items are newest first)
+            let i = self
+                .items
+                .iter()
+                .position(|c| c.ts <= clip.ts)
+                .unwrap_or(self.items.len());
+            self.items.insert(i, clip);
+        }
+        self.evict();
+        self.dirty = true;
+        first
     }
 
     pub fn len(&self) -> usize {
@@ -217,23 +284,22 @@ impl ClipStore {
     /// Like [`ClipStore::visible`], additionally restricted to clips whose
     /// source app equals `source` (case-insensitive), when given.
     pub fn visible_filtered(&self, query: &str, source: Option<&str>) -> Vec<&Clip> {
-        let q = query.trim().to_lowercase();
-        let src = source.map(|s| s.to_lowercase());
+        let q = query.trim();
+        // case-insensitive equality on the source, fold per char (no allocs)
+        let same_source = |a: &str, b: &str| {
+            a.chars()
+                .flat_map(char::to_lowercase)
+                .eq(b.chars().flat_map(char::to_lowercase))
+        };
         let matches = |c: &Clip| {
-            if let Some(want) = &src {
-                let from = c.source.as_deref().map(|s| s.to_lowercase());
-                if from.as_deref() != Some(want.as_str()) {
+            if let Some(want) = source {
+                if !c.source.as_deref().is_some_and(|s| same_source(s, want)) {
                     return false;
                 }
             }
-            if q.is_empty() {
-                return true;
-            }
-            c.text.to_lowercase().contains(&q)
-                || c.source
-                    .as_deref()
-                    .map(|s| s.to_lowercase().contains(&q))
-                    .unwrap_or(false)
+            q.is_empty()
+                || contains_ci(&c.text, q)
+                || c.source.as_deref().is_some_and(|s| contains_ci(s, q))
         };
         let mut out: Vec<&Clip> = self.items.iter().filter(|c| c.pinned && matches(c)).collect();
         out.extend(self.items.iter().filter(|c| !c.pinned && matches(c)));
@@ -367,6 +433,44 @@ mod tests {
     }
 
     #[test]
+    fn undo_restores_deletes_in_reverse_order() {
+        let mut s = store_with(&["a", "b", "c"]);
+        let b_id = s.visible("").iter().find(|c| c.text == "b").unwrap().id;
+        let c_id = s.visible("").iter().find(|c| c.text == "c").unwrap().id;
+        s.delete(b_id);
+        s.delete(c_id);
+        assert_eq!(s.len(), 1);
+        // last deleted comes back first, at its old (newest-first) spot
+        assert_eq!(s.undo_delete(), Some(c_id));
+        assert_eq!(s.visible("")[0].text, "c");
+        assert_eq!(s.undo_delete(), Some(b_id));
+        assert_eq!(s.len(), 3);
+        assert_eq!(s.undo_delete(), None, "nothing left to undo");
+    }
+
+    #[test]
+    fn undo_restores_a_whole_clear() {
+        let mut s = store_with(&["a", "b", "c"]);
+        let a_id = s.visible("").iter().find(|c| c.text == "a").unwrap().id;
+        s.toggle_pin(a_id);
+        assert_eq!(s.clear_unpinned(), 2);
+        assert_eq!(s.len(), 1);
+        assert!(s.undo_delete().is_some());
+        assert_eq!(s.len(), 3, "clear is undone as one operation");
+    }
+
+    #[test]
+    fn search_is_case_insensitive_without_allocs() {
+        assert!(contains_ci("Hello World", "WORLD"));
+        assert!(contains_ci("HELLO", "hello"));
+        assert!(contains_ci("안녕하세요", "녕하"));
+        assert!(contains_ci("mixed 한글 Text", "한글 t"));
+        assert!(!contains_ci("Hello", "World"));
+        assert!(!contains_ci("", "x"));
+        assert!(contains_ci("anything", ""));
+    }
+
+    #[test]
     fn preview_collapses_whitespace() {
         let c = Clip {
             id: 1,
@@ -383,10 +487,7 @@ mod tests {
         let mut s = store_with(&["alpha", "베타"]);
         let id = s.visible("")[0].id;
         s.toggle_pin(id);
-        let json = serde_json::to_string(&ClipsFile {
-            clips: s.items.clone(),
-        })
-        .unwrap();
+        let json = serde_json::to_string(&ClipsOut { clips: &s.items }).unwrap();
         let back: ClipsFile = serde_json::from_str(&json).unwrap();
         let s2 = ClipStore::from_items(back.clips);
         assert_eq!(s2.len(), 2);

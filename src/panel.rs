@@ -12,41 +12,41 @@ use crate::clipboard::{Clip, ClipStore};
 /// Full canvas size while the panel is open. The cat keeps its own
 /// 240x256 canvas, drawn at [`CAT_ORIGIN`]; the panel card overlaps the
 /// cat's (empty) bubble zone so the window doesn't get absurdly tall.
-pub const CANVAS_W: f32 = 324.0;
-pub const CANVAS_H: f32 = 426.0;
+pub const CANVAS_W: f32 = 360.0;
+pub const CANVAS_H: f32 = 542.0;
 /// Top-left of the cat's 240x256 canvas inside the panel canvas.
-pub const CAT_ORIGIN: (f32, f32) = (42.0, 170.0);
+pub const CAT_ORIGIN: (f32, f32) = (60.0, 286.0);
 
 pub const CARD_X: f32 = 4.0;
 pub const CARD_Y: f32 = 4.0;
-pub const CARD_W: f32 = 316.0;
-pub const CARD_H: f32 = 246.0;
+pub const CARD_W: f32 = 352.0;
+pub const CARD_H: f32 = 362.0;
 
-/// Header buttons, 16x16, right-aligned: source filter, pause, clear,
+/// Header buttons, 18x18, right-aligned: source filter, pause, clear,
 /// language, close.
-pub const BTN_Y: f32 = 9.0;
-pub const BTN: f32 = 16.0;
-pub const BTN_CLOSE_X: f32 = 300.0;
-pub const BTN_LANG_X: f32 = 280.0;
-pub const BTN_CLEAR_X: f32 = 260.0;
-pub const BTN_PAUSE_X: f32 = 240.0;
-pub const BTN_FILTER_X: f32 = 220.0;
+pub const BTN_Y: f32 = 10.0;
+pub const BTN: f32 = 18.0;
+pub const BTN_CLOSE_X: f32 = 330.0;
+pub const BTN_LANG_X: f32 = 308.0;
+pub const BTN_CLEAR_X: f32 = 286.0;
+pub const BTN_PAUSE_X: f32 = 264.0;
+pub const BTN_FILTER_X: f32 = 242.0;
 
 pub const SEARCH_X: f32 = 12.0;
-pub const SEARCH_Y: f32 = 30.0;
-pub const SEARCH_W: f32 = 300.0;
-pub const SEARCH_H: f32 = 18.0;
+pub const SEARCH_Y: f32 = 34.0;
+pub const SEARCH_W: f32 = 336.0;
+pub const SEARCH_H: f32 = 20.0;
 
-pub const ROWS_Y: f32 = 54.0;
-pub const ROW_H: f32 = 28.0;
-pub const VISIBLE_ROWS: usize = 6;
+pub const ROWS_Y: f32 = 60.0;
+pub const ROW_H: f32 = 34.0;
+pub const VISIBLE_ROWS: usize = 8;
 /// Row x-zones: pin toggle | clip body | delete.
 pub const ROW_X: f32 = 12.0;
-pub const ROW_W: f32 = 296.0;
-pub const PIN_ZONE: f32 = 32.0; // x < ROW_X + PIN_ZONE
-pub const DEL_ZONE: f32 = 24.0; // x > ROW_X + ROW_W - DEL_ZONE
+pub const ROW_W: f32 = 332.0;
+pub const PIN_ZONE: f32 = 34.0; // x < ROW_X + PIN_ZONE
+pub const DEL_ZONE: f32 = 28.0; // x > ROW_X + ROW_W - DEL_ZONE
 
-pub const FOOTER_Y: f32 = 228.0;
+pub const FOOTER_Y: f32 = 334.0;
 
 /// What a panel interaction asks the app to do. Pure state changes
 /// (scrolling, typing in search) are handled internally and return None.
@@ -56,8 +56,12 @@ pub enum PanelAction {
     Copy(u64),
     TogglePin(u64),
     Delete(u64),
-    /// Clear all unpinned clips.
+    /// First press of the clear button: ask for the confirming second press.
+    ArmClear,
+    /// Clear all unpinned clips (the armed clear button pressed again).
     Clear,
+    /// Restore the most recently deleted clip(s).
+    Undo,
     /// Toggle clipboard capture on/off.
     ToggleCapture,
     ToggleLang,
@@ -71,12 +75,18 @@ pub enum NavKey {
     Down,
     PageUp,
     PageDown,
+    Home,
+    End,
     Enter,
     Delete,
     Backspace,
     Esc,
     /// Cycles the source-app filter (all -> app 1 -> app 2 -> ... -> all).
     Tab,
+    /// Toggle the pin on the selected clip (Ctrl+P).
+    Pin,
+    /// Restore the most recently deleted clip(s) (Ctrl+Z).
+    Undo,
 }
 
 #[derive(Default)]
@@ -91,6 +101,9 @@ pub struct Panel {
     pub sel: usize,
     /// Cursor position in canvas coords, for hover highlight.
     pub cursor: Option<(f32, f32)>,
+    /// The clear button was pressed once; the next press really clears.
+    /// Any other interaction disarms it.
+    pub clear_armed: bool,
 }
 
 impl Panel {
@@ -102,6 +115,27 @@ impl Panel {
             self.scroll = 0;
             self.sel = 0;
         }
+        self.clear_armed = false;
+    }
+
+    /// Re-clamps scroll/selection after the store changed under the panel
+    /// (delete, clear, undo).
+    pub fn refresh(&mut self, store: &ClipStore) {
+        let total = self.visible(store).len();
+        self.clamp_scroll(total);
+        self.keep_sel_visible();
+    }
+
+    /// Moves the keyboard selection to the clip with `id` (after a pin
+    /// toggle or undo re-ordered the list) and keeps it on screen.
+    pub fn focus_id(&mut self, store: &ClipStore, id: u64) {
+        let visible = self.visible(store);
+        if let Some(i) = visible.iter().position(|c| c.id == id) {
+            self.sel = i;
+        }
+        let total = visible.len();
+        self.keep_sel_visible();
+        self.clamp_scroll(total);
     }
 
     /// The clip list the panel currently shows (query + source filter).
@@ -176,14 +210,21 @@ impl Panel {
         let on_btn = |bx: f32| {
             x >= bx - 2.0 && x <= bx + BTN + 2.0 && (BTN_Y - 2.0..=BTN_Y + BTN + 2.0).contains(&y)
         };
+        if on_btn(BTN_CLEAR_X) {
+            // two presses to clear everything: arm first, clear on the second
+            self.clear_armed = !self.clear_armed;
+            return Some(if self.clear_armed {
+                PanelAction::ArmClear
+            } else {
+                PanelAction::Clear
+            });
+        }
+        self.clear_armed = false;
         if on_btn(BTN_CLOSE_X) {
             return Some(PanelAction::Close);
         }
         if on_btn(BTN_LANG_X) {
             return Some(PanelAction::ToggleLang);
-        }
-        if on_btn(BTN_CLEAR_X) {
-            return Some(PanelAction::Clear);
         }
         if on_btn(BTN_PAUSE_X) {
             return Some(PanelAction::ToggleCapture);
@@ -211,6 +252,7 @@ impl Panel {
 
     /// Printable character typed while the panel is open: search input.
     pub fn input_char(&mut self, c: char) {
+        self.clear_armed = false;
         if c.is_control() {
             return;
         }
@@ -223,6 +265,7 @@ impl Panel {
 
     /// Navigation key while the panel is open.
     pub fn nav(&mut self, key: NavKey, store: &ClipStore) -> Option<PanelAction> {
+        let armed = std::mem::take(&mut self.clear_armed);
         let total = self.visible(store).len();
         match key {
             NavKey::Up => {
@@ -243,6 +286,14 @@ impl Panel {
                 self.sel = (self.sel + VISIBLE_ROWS).min(total.saturating_sub(1));
                 self.keep_sel_visible();
             }
+            NavKey::Home => {
+                self.sel = 0;
+                self.keep_sel_visible();
+            }
+            NavKey::End => {
+                self.sel = total.saturating_sub(1);
+                self.keep_sel_visible();
+            }
             NavKey::Enter => {
                 let visible = self.visible(store);
                 if let Some(c) = visible.get(self.sel) {
@@ -255,6 +306,13 @@ impl Panel {
                     return Some(PanelAction::Delete(c.id));
                 }
             }
+            NavKey::Pin => {
+                let visible = self.visible(store);
+                if let Some(c) = visible.get(self.sel) {
+                    return Some(PanelAction::TogglePin(c.id));
+                }
+            }
+            NavKey::Undo => return Some(PanelAction::Undo),
             NavKey::Backspace => {
                 self.query.pop();
                 self.scroll = 0;
@@ -265,7 +323,10 @@ impl Panel {
                 return None;
             }
             NavKey::Esc => {
-                // peel back one layer at a time: query, then filter, then close
+                // peel back one layer at a time: armed clear, query, filter, close
+                if armed {
+                    return None;
+                }
                 if !self.query.is_empty() {
                     self.query.clear();
                 } else if self.source.is_some() {
@@ -406,6 +467,46 @@ mod tests {
         p.toggle();
         p.toggle();
         assert_eq!(p.source, None);
+    }
+
+    #[test]
+    fn clear_needs_a_second_press() {
+        let s = store(3);
+        let mut p = Panel { open: true, ..Default::default() };
+        let (bx, by) = (BTN_CLEAR_X + 8.0, BTN_Y + 8.0);
+        assert_eq!(p.click(bx, by, &s), Some(PanelAction::ArmClear));
+        assert!(p.clear_armed);
+        assert_eq!(p.click(bx, by, &s), Some(PanelAction::Clear));
+        assert!(!p.clear_armed);
+        // any other interaction disarms instead of clearing
+        assert_eq!(p.click(bx, by, &s), Some(PanelAction::ArmClear));
+        p.input_char('x');
+        assert!(!p.clear_armed);
+        assert_eq!(p.click(bx, by, &s), Some(PanelAction::ArmClear));
+        assert_eq!(p.nav(NavKey::Esc, &s), None, "esc disarms, doesn't close");
+        assert!(!p.clear_armed);
+        assert!(p.open);
+    }
+
+    #[test]
+    fn home_end_jump_selection() {
+        let s = store(20);
+        let mut p = Panel { open: true, ..Default::default() };
+        p.nav(NavKey::End, &s);
+        assert_eq!(p.sel, 19);
+        assert!(p.sel >= p.scroll && p.sel < p.scroll + VISIBLE_ROWS);
+        p.nav(NavKey::Home, &s);
+        assert_eq!((p.sel, p.scroll), (0, 0));
+    }
+
+    #[test]
+    fn pin_and_undo_keys_act_on_selection() {
+        let s = store(3);
+        let mut p = Panel { open: true, ..Default::default() };
+        p.nav(NavKey::Down, &s);
+        let id = s.visible("")[1].id;
+        assert_eq!(p.nav(NavKey::Pin, &s), Some(PanelAction::TogglePin(id)));
+        assert_eq!(p.nav(NavKey::Undo, &s), Some(PanelAction::Undo));
     }
 
     #[test]

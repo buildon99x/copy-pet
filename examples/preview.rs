@@ -130,6 +130,9 @@ fn main() {
         store.add_copy("short".into(), Some("terminal".into()));
         store.add_copy("일곱 번째 줄까지 스크롤 테스트".into(), Some("notes".into()));
         store.add_copy("and one more to overflow the list".into(), Some("mail".into()));
+        store.add_copy("a big clip ".repeat(100), Some("Code".into())); // shows the size meta
+        store.add_copy("아홉 번째 클립".into(), Some("터미널".into()));
+        store.add_copy("tenth clip scrolls the list".into(), Some("Chrome".into()));
         let pins: Vec<u64> = store.visible("").iter().rev().take(1).map(|c| c.id).collect();
         for id in pins {
             store.toggle_pin(id);
@@ -144,7 +147,9 @@ fn main() {
             panel.toggle();
             panel.source = source.map(str::to_string);
             panel.sel = 1;
-            panel.cursor = Some((150.0, panel::ROWS_Y + panel::ROW_H * 2.5));
+            // hover the delete zone of row 2 to show the red delete halo
+            panel.cursor = Some((panel::ROW_X + panel::ROW_W - 8.0, panel::ROWS_Y + panel::ROW_H * 2.5));
+            panel.clear_armed = !capture; // show the armed (red) clear button too
             let mut sc = base_scene(lang);
             sc.origin = panel::CAT_ORIGIN;
             let mut pm = Pixmap::new(panel::CANVAS_W as u32, panel::CANVAS_H as u32).unwrap();

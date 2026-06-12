@@ -314,17 +314,36 @@ impl Pet {
                     if self.st.sound_mode >= 1 {
                         sound::play_pop();
                     }
+                    // picked a clip: close the panel so the user can paste
+                    self.toggle_panel();
                 }
                 return text;
             }
-            PanelAction::TogglePin(id) => self.clips.toggle_pin(id),
+            PanelAction::TogglePin(id) => {
+                self.clips.toggle_pin(id);
+                // pinning re-orders the list; keep the selection on the clip
+                self.panel.focus_id(&self.clips, id);
+            }
             PanelAction::Delete(id) => {
-                self.clips.delete(id);
+                if self.clips.delete(id) {
+                    self.panel.refresh(&self.clips);
+                    self.set_toast(t(self.lang(), Msg::ToastDeleted).to_string(), 2.2);
+                }
+            }
+            PanelAction::ArmClear => {
+                self.set_toast(t(self.lang(), Msg::ToastClearConfirm).to_string(), 2.6);
             }
             PanelAction::Clear => {
                 let n = self.clips.clear_unpinned();
                 if n > 0 {
+                    self.panel.refresh(&self.clips);
                     self.set_toast(i18n::cleared_clips(self.lang(), n), 2.2);
+                }
+            }
+            PanelAction::Undo => {
+                if let Some(id) = self.clips.undo_delete() {
+                    self.panel.focus_id(&self.clips, id);
+                    self.set_toast(t(self.lang(), Msg::ToastRestored).to_string(), 1.8);
                 }
             }
             PanelAction::ToggleCapture => {
@@ -1119,13 +1138,41 @@ mod tests {
     }
 
     #[test]
-    fn panel_copy_returns_text_for_backend() {
+    fn panel_copy_returns_text_and_closes_panel() {
         let mut p = pet();
         p.on_copy("copy me back".into(), None, None);
         p.toggle_panel();
         assert!(p.panel_open());
         let got = p.panel_nav(NavKey::Enter);
         assert_eq!(got.as_deref(), Some("copy me back"));
+        assert!(!p.panel_open(), "picking a clip closes the panel for pasting");
+    }
+
+    #[test]
+    fn panel_delete_is_undoable_and_keeps_selection_sane() {
+        let mut p = pet();
+        p.on_copy("one".into(), None, None);
+        p.on_copy("two".into(), None, None);
+        p.toggle_panel();
+        assert_eq!(p.panel_nav(NavKey::Delete), None); // deletes "two"
+        assert_eq!(p.clips.len(), 1);
+        assert!(p.toast.is_some(), "delete shows the undo hint");
+        assert_eq!(p.panel_nav(NavKey::Undo), None);
+        assert_eq!(p.clips.len(), 2, "Ctrl+Z restores the clip");
+        assert_eq!(p.panel.sel, 0, "selection follows the restored clip");
+    }
+
+    #[test]
+    fn panel_pin_key_keeps_selection_on_the_clip() {
+        let mut p = pet();
+        p.on_copy("old".into(), None, None);
+        p.on_copy("new".into(), None, None);
+        p.toggle_panel();
+        p.panel_nav(NavKey::Down); // select "old"
+        assert_eq!(p.panel_nav(NavKey::Pin), None);
+        let visible = p.panel.visible(&p.clips);
+        assert!(visible[p.panel.sel].pinned);
+        assert_eq!(visible[p.panel.sel].text, "old", "selection follows the pin");
     }
 
     #[test]

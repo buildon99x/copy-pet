@@ -17,6 +17,18 @@ versions follow [SemVer](https://semver.org/). Maintenance rules:
 ## [Unreleased]
 
 ### Added
+- Deleting a clip is now forgiving: every delete (and even "clear all") can
+  be undone with **Ctrl+Z** while the panel is open, and the clear-all
+  button asks for a confirming second press (it turns red and shows a toast
+  first) instead of wiping the history on a single click.
+- The clipboard panel is fully keyboard-driven: besides the existing
+  arrows/PgUp/PgDn/Enter/Del/Tab/Esc, **Home/End** jump to the first/last
+  clip, **Ctrl+P** pins/unpins the selected clip (the selection follows it
+  as the list re-sorts) and **Ctrl+Z** restores deleted clips. A help line
+  in the panel footer lists the shortcuts.
+- Every panel row now shows its source app's color dot (the same color as
+  that app's fish badge), so clips are recognizable by app at a glance;
+  large clips also show their size next to the timestamp.
 - ClipCat can now keep itself up to date: once a day it checks GitHub for a
   newer release and the cat shows a toast when one exists. On Windows, pick
   "Update to vX.Y.Z and restart" in the tray menu and ClipCat downloads the
@@ -43,6 +55,14 @@ versions follow [SemVer](https://semver.org/). Maintenance rules:
   release is found, and quit.
 
 ### Changed
+- The clipboard panel is much roomier and easier to read: 8 visible rows
+  (was 6), taller rows, larger text and bigger header buttons.
+- Picking a clip (Enter or click) now closes the panel so you can paste
+  right away — reopen it with the hotkey or middle-click.
+- Hovering a row's delete ✕ highlights it in red, so destructive clicks
+  are obvious before they happen.
+- Settings and clipboard history are now written to disk atomically, so a
+  crash or power loss mid-save can no longer corrupt them.
 - The clipboard panel and toast messages now render in your system's UI font
   (Segoe UI / Malgun Gothic on Windows, with sensible equivalents on
   macOS/Linux) for much better readability. The cat's hover stats tooltip

@@ -15,8 +15,9 @@
 //! these keys apply: S size · A accessory · M sound · B stats bubble ·
 //! L lock · G language · C clipboard panel · U update download page ·
 //! Q/Esc quit. While the panel is open the keyboard drives it instead
-//! (type to search, arrows/enter, Tab cycles the source-app filter, Esc
-//! closes).
+//! (type to search, arrows/Home/End + Enter, Del deletes, Ctrl+Z undoes,
+//! Ctrl+P pins — Cmd works too on macOS — Tab cycles the source-app
+//! filter, Esc closes).
 //!
 //! Updates (ADR-0009): the shared daily release check (`crate::update`)
 //! toasts when a newer version exists; `U` then opens the releases page in
@@ -51,7 +52,7 @@ use winit::application::ApplicationHandler;
 use winit::dpi::{PhysicalPosition, PhysicalSize};
 use winit::event::{ElementState, Ime, MouseButton, MouseScrollDelta, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
-use winit::keyboard::{KeyCode, PhysicalKey};
+use winit::keyboard::{KeyCode, ModifiersState, PhysicalKey};
 use winit::window::{Window, WindowId, WindowLevel};
 
 const TICK: Duration = Duration::from_millis(33);
@@ -100,6 +101,8 @@ struct PortableApp {
     press_pos: PhysicalPosition<f64>,
     last_click: Option<Instant>,
     focused: bool,
+    /// Live keyboard modifiers (for Ctrl+P / Ctrl+Z in the panel).
+    mods: ModifiersState,
 }
 
 impl PortableApp {
@@ -140,6 +143,7 @@ impl PortableApp {
             press_pos: PhysicalPosition::new(0.0, 0.0),
             last_click: None,
             focused: false,
+            mods: ModifiersState::default(),
         }
     }
 
@@ -342,16 +346,22 @@ impl PortableApp {
 
     /// Keyboard input while the panel is open: search + navigation.
     fn panel_key(&mut self, event: &winit::event::KeyEvent) {
+        // Ctrl on Linux/Windows-portable, Cmd on macOS — accept either
+        let ctrl = self.mods.control_key() || self.mods.super_key();
         let nav = match event.physical_key {
             PhysicalKey::Code(KeyCode::ArrowUp) => Some(NavKey::Up),
             PhysicalKey::Code(KeyCode::ArrowDown) => Some(NavKey::Down),
             PhysicalKey::Code(KeyCode::PageUp) => Some(NavKey::PageUp),
             PhysicalKey::Code(KeyCode::PageDown) => Some(NavKey::PageDown),
+            PhysicalKey::Code(KeyCode::Home) => Some(NavKey::Home),
+            PhysicalKey::Code(KeyCode::End) => Some(NavKey::End),
             PhysicalKey::Code(KeyCode::Enter | KeyCode::NumpadEnter) => Some(NavKey::Enter),
             PhysicalKey::Code(KeyCode::Delete) => Some(NavKey::Delete),
             PhysicalKey::Code(KeyCode::Backspace) => Some(NavKey::Backspace),
             PhysicalKey::Code(KeyCode::Escape) => Some(NavKey::Esc),
             PhysicalKey::Code(KeyCode::Tab) => Some(NavKey::Tab), // source filter
+            PhysicalKey::Code(KeyCode::KeyP) if ctrl => Some(NavKey::Pin),
+            PhysicalKey::Code(KeyCode::KeyZ) if ctrl => Some(NavKey::Undo),
             _ => None,
         };
         if let Some(key) = nav {
@@ -359,6 +369,9 @@ impl PortableApp {
                 self.set_clipboard(text);
             }
             return;
+        }
+        if ctrl {
+            return; // unhandled shortcut chords never type into the search
         }
         if let Some(txt) = &event.text {
             for c in txt.chars() {
@@ -531,6 +544,7 @@ impl ApplicationHandler for PortableApp {
                     }
                 }
             }
+            WindowEvent::ModifiersChanged(m) => self.mods = m.state(),
             WindowEvent::KeyboardInput { event, .. } => {
                 if event.state == ElementState::Pressed {
                     if self.pet.panel_open() {

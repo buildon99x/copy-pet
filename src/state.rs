@@ -143,11 +143,16 @@ impl Persist {
         st
     }
 
+    /// Writes state.json atomically (temp file + rename) so a crash mid-write
+    /// can never corrupt the previous state.
     pub fn save(&self) {
         if let (Some(dir), Some(file)) = (config_dir(), state_file()) {
             let _ = std::fs::create_dir_all(&dir);
             if let Ok(json) = serde_json::to_string_pretty(self) {
-                let _ = std::fs::write(file, json);
+                let tmp = file.with_extension("json.tmp");
+                if std::fs::write(&tmp, json).is_ok() {
+                    let _ = std::fs::rename(&tmp, &file);
+                }
             }
         }
     }
