@@ -40,6 +40,15 @@ model inside the existing window.
   **screen** pixels (divided by scale) because the window itself moves and
   resizes under the pointer mid-drag — window-local coordinates would feed
   back into themselves.
+- **Atomic presentation on Windows**: a drag re-applies position + size +
+  content every tick; doing that as SetWindowPos followed by
+  UpdateLayeredWindow showed half-updated frames (the cat visibly
+  trembled/flickered). `apply_size` therefore hands the new position to
+  `UpdateLayeredWindow` itself (`pptDst` + `psize`), which moves, resizes
+  and repaints the layered window in one call; the GDI surface is only
+  recreated when the size actually changed, and `clamp_to_screen` is
+  skipped while the panel is open (the union window may legitimately
+  extend offscreen; clamping would drag the cat along).
 
 ## Consequences
 
@@ -49,9 +58,12 @@ model inside the existing window.
   (`canvas_size` + `take_window_shift`) — both backends shrank their
   anchor math.
 - ⚠️ Cat + panel still share one window: dragging the card grows the union
-  canvas (clamped to ±480 canvas units offset), so an extreme placement
-  means a large (mostly transparent on Windows) window. Acceptable; a
-  second OS window remains the escalation path if ever needed.
+  canvas, so a far-away placement means a large (mostly transparent,
+  click-through on Windows) window with a correspondingly large pixmap
+  re-blitted per tick. The offset clamp is deliberately generous (±4096
+  canvas units — anywhere on a desktop-sized area, per the product ask);
+  if the cost ever bites, a second OS window for the panel remains the
+  escalation path.
 - ⚠️ During a card drag the surface is recreated per tick (~30/s) like any
   OS window resize. Position writes go through the dirty flag + 30 s
   autosave, not per-tick disk writes.

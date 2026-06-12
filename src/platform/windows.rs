@@ -203,6 +203,15 @@ impl App {
     // ---- surface / blit ----------------------------------------------------
 
     fn blit(&mut self) {
+        self.blit_at(None);
+    }
+
+    /// Pushes the pixmap to the layered window. `move_to` additionally
+    /// repositions the (possibly resized) window in the same
+    /// UpdateLayeredWindow call — position, size and content change
+    /// atomically, so a panel drag can never show a half-updated frame
+    /// (the cat would visibly tremble otherwise).
+    fn blit_at(&mut self, move_to: Option<(i32, i32)>) {
         let data = self.pm.data();
         let len = (self.w * self.h * 4) as usize;
         unsafe {
@@ -220,6 +229,7 @@ impl App {
                 cy: self.h,
             };
             let src = POINT { x: 0, y: 0 };
+            let dst_pt = move_to.map(|(x, y)| POINT { x, y });
             let blend = BLENDFUNCTION {
                 BlendOp: AC_SRC_OVER as u8,
                 BlendFlags: 0,
@@ -229,7 +239,7 @@ impl App {
             UpdateLayeredWindow(
                 self.hwnd,
                 screen,
-                null(),
+                dst_pt.as_ref().map_or(null(), |p| p),
                 &size,
                 self.mem_dc,
                 &src,
@@ -242,9 +252,10 @@ impl App {
     }
 
     /// Resizes window + surface to the pet's wanted size (scale or panel
-    /// state changed), shifted by `Pet::take_window_shift` so the cat stays
+    /// layout changed), shifted by `Pet::take_window_shift` so the cat stays
     /// put on screen, and adjusts focusability: the panel needs keyboard
-    /// focus, the plain pet must never steal it.
+    /// focus, the plain pet must never steal it. Move + resize + repaint go
+    /// out as one atomic `UpdateLayeredWindow` (no flicker during drags).
     unsafe fn apply_size(&mut self) {
         let (w, h) = self.pet.canvas_size();
         let (dx, dy) = self.pet.take_window_shift();
@@ -255,25 +266,24 @@ impl App {
             bottom: 0,
         };
         GetWindowRect(self.hwnd, &mut rc);
-        let (nx, ny) = clamp_to_screen(rc.left + dx, rc.top + dy, w, h);
-        DeleteObject(self.dib as _);
-        DeleteDC(self.mem_dc);
-        let (dc, dib, bits) = create_surface(w, h);
-        self.mem_dc = dc;
-        self.dib = dib;
-        self.bits = bits;
-        self.w = w;
-        self.h = h;
-        self.pm = tiny_skia::Pixmap::new(w as u32, h as u32).unwrap();
-        SetWindowPos(
-            self.hwnd,
-            null_mut(),
-            nx,
-            ny,
-            w,
-            h,
-            SWP_NOZORDER | SWP_NOACTIVATE,
-        );
+        let (mut nx, mut ny) = (rc.left + dx, rc.top + dy);
+        if !self.pet.panel_open() {
+            // shrunk back to the cat: keep it reachable. While the panel is
+            // open the window legitimately extends offscreen (the card can
+            // sit anywhere); clamping then would drag the cat along.
+            (nx, ny) = clamp_to_screen(nx, ny, w, h);
+        }
+        if (w, h) != (self.w, self.h) {
+            DeleteObject(self.dib as _);
+            DeleteDC(self.mem_dc);
+            let (dc, dib, bits) = create_surface(w, h);
+            self.mem_dc = dc;
+            self.dib = dib;
+            self.bits = bits;
+            self.w = w;
+            self.h = h;
+            self.pm = tiny_skia::Pixmap::new(w as u32, h as u32).unwrap();
+        }
 
         // toggle focusability only on a real open/close transition — a panel
         // drag re-applies the size many times per second
@@ -294,7 +304,7 @@ impl App {
         self.pet.st.has_pos = true;
         self.pet.dirty = true;
         self.pet.render(&mut self.pm);
-        self.blit();
+        self.blit_at(Some((nx, ny)));
     }
 
     fn update_tray_tip(&self) {
@@ -1282,6 +1292,15 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
             with_app(|a| {
                 a.mouse_down = false;
                 let (cx, cy) = a.canvas_xy(lp);
+                // a fast second header/grip drag arrives as a double-click
+                if a.pet.panel_drag_start(cx, cy) {
+                    a.panel_drag = true;
+                    let mut pt = POINT { x: 0, y: 0 };
+                    GetCursorPos(&mut pt);
+                    a.drag_cursor = pt;
+                    SetCapture(hwnd);
+                    return;
+                }
                 if a.pet.panel_hit(cx, cy) {
                     // fast row clicks arrive as double-clicks; treat as click
                     if let Some(text) = a.pet.panel_click(cx, cy) {

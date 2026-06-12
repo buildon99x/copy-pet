@@ -175,11 +175,15 @@ impl PortableApp {
                 window.set_outer_position(PhysicalPosition::new(pos.x + dx, pos.y + dy));
             }
         }
-        let _ = window.request_inner_size(PhysicalSize::new(nw, nh));
-        self.w = nw;
-        self.h = nh;
-        self.pm = tiny_skia::Pixmap::new(nw, nh).unwrap();
-        self.resize_surface();
+        // recreate buffers only when the size really changed — a pure card
+        // move repaints in place
+        if (nw, nh) != (self.w, self.h) {
+            let _ = window.request_inner_size(PhysicalSize::new(nw, nh));
+            self.w = nw;
+            self.h = nh;
+            self.pm = tiny_skia::Pixmap::new(nw, nh).unwrap();
+            self.resize_surface();
+        }
         self.paint();
     }
 

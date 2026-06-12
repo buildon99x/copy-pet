@@ -26,8 +26,11 @@ pub const DEFAULT_W: f32 = 352.0;
 pub const DEFAULT_H: f32 = 362.0;
 /// Default card offset relative to the cat's top-left: centered above it.
 pub const DEFAULT_OFF: (f32, f32) = (-56.0, -282.0);
-/// How far the card may wander from the cat (keeps the union canvas sane).
-pub const MAX_OFF: f32 = 480.0;
+/// How far the card may wander from the cat. Generous on purpose — the
+/// card can sit anywhere on a desktop-sized area (the union canvas grows
+/// with it); the clamp only exists so hand-edited state or a runaway drag
+/// can't produce an absurd canvas.
+pub const MAX_OFF: f32 = 4096.0;
 
 pub const BTN: f32 = 18.0;
 pub const ROW_H: f32 = 34.0;
@@ -706,6 +709,26 @@ mod tests {
             (DEFAULT_W, DEFAULT_H, DEFAULT_OFF.0, DEFAULT_OFF.1),
             "sane values pass through"
         );
+    }
+
+    #[test]
+    fn card_can_travel_across_a_desktop() {
+        // moving the card far away must not hit a clamp wall (the user can
+        // park the panel anywhere on the desktop)
+        let mut p = open_panel();
+        p.drag_by(PanelDrag::Move, 1900.0, -1000.0);
+        assert_eq!(p.off, (DEFAULT_OFF.0 + 1900.0, DEFAULT_OFF.1 - 1000.0));
+        let l = p.layout();
+        // the canvas stretches to keep both the cat and the far-away card
+        assert!(l.canvas_w >= p.off.0 + p.w);
+        assert!(l.cat.1 >= 1000.0);
+        assert_eq!((l.card_x - l.cat.0, l.card_y - l.cat.1), p.off);
+        // and back below/right of the cat works the same way
+        p.off = DEFAULT_OFF;
+        p.drag_by(PanelDrag::Move, 800.0, 1500.0);
+        let l = p.layout();
+        assert_eq!(l.cat, (0.0, 0.0), "card fully below-right: cat keeps the origin");
+        assert!(l.canvas_h >= p.off.1 + p.h);
     }
 
     #[test]
