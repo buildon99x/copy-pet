@@ -1,7 +1,7 @@
 # ClipCat — Product & Technical Spec
 
 Status: implemented (v2.0 + unreleased 2.1 features) · Owner: ClipCat ·
-Last updated: 2026-06-11
+Last updated: 2026-06-12
 
 ## 1. Summary
 
@@ -28,7 +28,7 @@ clips, search, hotkey), **Bongo Cat** (reactive paw-tapping mascot) and
   files.
 - Single binary, persistence, tray/menu, autostart, graceful shutdown.
 - Privacy-preserving: input contents never read; clips stored locally only;
-  no network.
+  no network beyond the optional update check (§10).
 
 **Non-goals**
 - Not a full ClipClip clone: text clips only (no images/files), no folders,
@@ -132,7 +132,8 @@ clamped at level 99.
 | Single click | Squash bounce + sparkle (+1 XP) |
 | Double click | Pet it: heart burst (+10 XP) |
 | Hover | Today's stats bubble (level/XP bar, keys, clicks, copies, active time) |
-| Right click (native) | Context menu: clipboard, capture pause, stats, size, accessory, sound, lock, language, autostart, reset, about, quit |
+| `U` (portable, after the update toast) | Open the new release's download page |
+| Right click (native) | Context menu: update (when found), clipboard, capture pause, stats, size, accessory, sound, lock, language, autostart, auto-update toggle, reset, about, quit |
 
 ## 6. Internationalization
 
@@ -187,9 +188,33 @@ the one configured panel-hotkey chord, discarding it immediately (ADR-0008;
 Windows uses the OS's own `RegisterHotKey` instead). Beyond that, no
 keycodes, characters, window titles or timings are read or stored.
 Clipboard text is stored **locally only**, capture is pausable, oversized
-clips are ignored, and there is no network code in the binary.
+clips are ignored, and the only network code is the update check below —
+which transmits nothing beyond the request itself.
 
-## 10. Quality bar
+## 10. Auto-update
+
+Premise: releases are git tags (`scripts/release.sh`) and CI publishes each
+`vX.Y.Z` tag as a GitHub Release with stable asset names (ADR-0009).
+
+- A background thread (`update.rs`) checks once a day (first check ~10 s
+  after launch): `GET <repo>/releases/latest` via the **system `curl`**;
+  the newest tag is read from the redirect URL — no API, no JSON, no new
+  dependencies. A strictly newer semver toasts "NEW VERSION vX.Y.Z!" once
+  per version.
+- Gated by `auto_update` in `state.json` (default on); Windows tray menu:
+  "Check for updates automatically".
+- Applying is always user-initiated:
+  - **Windows (native)**: tray "Update to vX.Y.Z and restart" downloads
+    `clipcat-windows-x86_64.exe` on a worker thread (toast "DOWNLOADING
+    UPDATE..."), verifies the PE magic, renames the running exe to
+    `<exe>.old` (cleaned next start), copies the new one into place and
+    relaunches via a detached helper.
+  - **Portable (macOS/Linux)**: `U` with the window focused opens the
+    releases page in the browser.
+- Any failure toasts "UPDATE FAILED", rolls the exe back and keeps the
+  menu entry for a retry.
+
+## 11. Quality bar
 
 - Single binary, no installer, no bundled assets (icon, built-in fonts and
   sounds generated from code; the UI font is read from the OS at runtime,
@@ -198,6 +223,6 @@ clips are ignored, and there is no network code in the binary.
   `CHANGELOG.md` for the user-facing-only policy).
 - Idle/active CPU ≈ a few percent of one core (release); memory ~12–16 MB.
 - `cargo clippy` clean (incl. `--features portable` and the
-  `x86_64-pc-windows-msvc` target); `cargo test` green; CI builds on all
-  three OSes; `cargo run --release --example preview` renders the review
-  frames headlessly.
+  `x86_64-pc-windows-msvc` target); `cargo test` green; CI builds Windows
+  and macOS (Linux is deliberately not built in CI); `cargo run --release
+  --example preview` renders the review frames headlessly.

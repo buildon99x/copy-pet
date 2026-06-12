@@ -15,3 +15,4 @@ rather than rewrite.
 | [0006](0006-i18n-vector-hangul.md) | English/Korean i18n with an in-code vector Hangul font | Accepted |
 | [0007](0007-system-font-ui-text.md) | System font for UI text via ab_glyph (tooltip keeps pixel font) | Accepted |
 | [0008](0008-portable-global-hotkey.md) | Global panel hotkey on portable via rdev chord matching (Cmd+Shift+V on macOS) | Accepted |
+| [0009](0009-auto-update.md) | Auto-update via GitHub releases: system curl probe, exe swap on Windows | Accepted |

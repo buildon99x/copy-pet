@@ -17,6 +17,7 @@ use crate::panel::NavKey;
 use crate::pet::{window_size, Pet, SCALES};
 use crate::render::{self, Badge};
 use crate::state::{Persist, ACCESSORIES};
+use crate::update;
 use std::cell::RefCell;
 use std::ffi::c_void;
 use std::ptr::{null, null_mut};
@@ -66,6 +67,8 @@ const CMD_ABOUT: usize = 14;
 const CMD_EXIT: usize = 15;
 const CMD_PANEL: usize = 16;
 const CMD_CAPTURE: usize = 17;
+const CMD_UPDATE: usize = 18;
+const CMD_AUTOUPDATE: usize = 19;
 const CMD_SIZE0: usize = 20; // ..=22
 const CMD_SOUND0: usize = 30; // ..=32
 const CMD_ACC0: usize = 40; // 40 = none, 41..=46 accessories
@@ -154,9 +157,25 @@ impl App {
 
     // ---- per-frame update --------------------------------------------------
 
-    fn tick(&mut self) {
+    /// One ~33 ms frame. Returns `true` when an installed update is in
+    /// place and the app should relaunch (handled by the WM_TIMER caller).
+    fn tick(&mut self) -> bool {
         let (k, c, wh) = input::drain();
         let redraw = self.pet.advance(k, c, wh);
+
+        // auto-update: surface a found release / a finished install
+        if let Some(v) = update::take_found() {
+            self.pet.notify_update(&v);
+        }
+        match update::poll_install() {
+            update::Install::Ready => {
+                let (x, y) = self.window_pos();
+                self.pet.save_pos(x, y);
+                return true;
+            }
+            update::Install::Failed => self.pet.notify_update_failed(),
+            _ => {}
+        }
 
         if self.pet.take_level_changed() {
             self.update_tray_tip();
@@ -172,6 +191,7 @@ impl App {
             self.pet.render(&mut self.pm);
             self.blit();
         }
+        false
     }
 
     // ---- surface / blit ----------------------------------------------------
@@ -753,6 +773,9 @@ struct MenuSnapshot {
     capture: bool,
     panel_open: bool,
     hotkey_label: String,
+    auto_update: bool,
+    /// Newer release the user can install, when the checker found one.
+    update: Option<String>,
 }
 
 unsafe fn show_menu(hwnd: HWND, ms: &MenuSnapshot) -> usize {
@@ -760,6 +783,17 @@ unsafe fn show_menu(hwnd: HWND, ms: &MenuSnapshot) -> usize {
     let lang = ms.lang;
 
     let chk = |on: bool| if on { MF_CHECKED } else { MF_UNCHECKED };
+
+    // a found update goes on top, where it can't be missed
+    if let Some(ver) = &ms.update {
+        AppendMenuW(
+            menu,
+            MF_STRING,
+            CMD_UPDATE,
+            wz(&i18n::menu_update(lang, ver)).as_ptr(),
+        );
+        AppendMenuW(menu, MF_SEPARATOR, 0, null());
+    }
 
     AppendMenuW(
         menu,
@@ -887,6 +921,12 @@ unsafe fn show_menu(hwnd: HWND, ms: &MenuSnapshot) -> usize {
     );
     AppendMenuW(
         menu,
+        MF_STRING | chk(ms.auto_update),
+        CMD_AUTOUPDATE,
+        wz(t(lang, Msg::MenuAutoUpdate)).as_ptr(),
+    );
+    AppendMenuW(
+        menu,
         MF_STRING,
         CMD_RESET,
         wz(t(lang, Msg::MenuReset)).as_ptr(),
@@ -935,6 +975,8 @@ fn menu_snapshot() -> Option<MenuSnapshot> {
         capture: a.pet.st.clip_capture,
         panel_open: a.pet.panel_open(),
         hotkey_label: a.hotkey_label.clone(),
+        auto_update: a.pet.st.auto_update,
+        update: a.pet.update_available().map(str::to_string),
     })
 }
 
@@ -981,6 +1023,21 @@ unsafe fn open_menu(hwnd: HWND) {
             }
             CMD_AUTOSTART => {
                 set_autostart(!ms.autostart);
+            }
+            CMD_UPDATE => {
+                with_app(|a| {
+                    if let Some(v) = a.pet.update_available().map(str::to_string) {
+                        update::begin_install(&v);
+                        a.pet.notify_update_downloading();
+                    }
+                });
+            }
+            CMD_AUTOUPDATE => {
+                with_app(|a| {
+                    a.pet.st.auto_update = !a.pet.st.auto_update;
+                    update::set_enabled(a.pet.st.auto_update);
+                    a.pet.dirty = true;
+                });
             }
             CMD_PANEL => {
                 with_app(|a| a.pet.toggle_panel());
@@ -1043,7 +1100,12 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
     match msg {
         WM_TIMER => {
             if wp == TIMER_ID {
-                with_app(|a| a.tick());
+                // restart request must run outside the APP borrow: DestroyWindow
+                // re-enters the wndproc and WM_DESTROY needs `with_app`
+                if with_app(|a| a.tick()).unwrap_or(false) {
+                    update::restart();
+                    DestroyWindow(hwnd);
+                }
             }
             0
         }
@@ -1361,6 +1423,13 @@ pub fn run() {
         RegisterClassExW(&wc);
 
         let st = Persist::load();
+
+        // self-update plumbing: drop the `.old` exe a previous update left
+        // behind, then start the daily release check (ADR-0009)
+        update::cleanup_old_exe();
+        update::set_enabled(st.auto_update);
+        update::spawn_checker();
+
         let scale = SCALES[st.scale_idx.min(2)];
         let (w, h) = window_size(scale);
 

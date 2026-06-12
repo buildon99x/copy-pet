@@ -65,6 +65,10 @@ pub enum Msg {
     ToastCopied,
     ToastCapturePaused,
     ToastCaptureOn,
+    // auto-update (ADR-0009)
+    MenuAutoUpdate,
+    ToastUpdateDownloading,
+    ToastUpdateFailed,
     // stats bubble
     BubbleKeys,
     BubbleClicks,
@@ -133,6 +137,12 @@ pub fn t(lang: Lang, msg: Msg) -> &'static str {
         (ToastCapturePaused, Lang::Ko) => "클립 수집 일시정지",
         (ToastCaptureOn, Lang::En) => "CAPTURE ON",
         (ToastCaptureOn, Lang::Ko) => "클립 수집 재개",
+        (MenuAutoUpdate, Lang::En) => "Check for updates automatically",
+        (MenuAutoUpdate, Lang::Ko) => "자동 업데이트 확인",
+        (ToastUpdateDownloading, Lang::En) => "DOWNLOADING UPDATE...",
+        (ToastUpdateDownloading, Lang::Ko) => "업데이트 다운로드 중...",
+        (ToastUpdateFailed, Lang::En) => "UPDATE FAILED",
+        (ToastUpdateFailed, Lang::Ko) => "업데이트 실패",
         (BubbleKeys, Lang::En) => "KEYS",
         (BubbleKeys, Lang::Ko) => "키 입력",
         (BubbleClicks, Lang::En) => "CLICKS",
@@ -173,6 +183,22 @@ pub fn accessory_locked(lang: Lang, name: &str, level: u32) -> String {
     match lang {
         Lang::En => format!("{name} (unlocks at LV {level})"),
         Lang::Ko => format!("{name} (LV {level} 달성 시)"),
+    }
+}
+
+/// Toast when the background check finds a newer release.
+pub fn update_available(lang: Lang, ver: &str) -> String {
+    match lang {
+        Lang::En => format!("NEW VERSION v{ver}!"),
+        Lang::Ko => format!("새 버전 v{ver}!"),
+    }
+}
+
+/// Tray-menu entry that downloads the found update and restarts (Windows).
+pub fn menu_update(lang: Lang, ver: &str) -> String {
+    match lang {
+        Lang::En => format!("Update to v{ver} and restart"),
+        Lang::Ko => format!("v{ver} 업데이트 후 재시작"),
     }
 }
 
@@ -227,7 +253,8 @@ pub fn about_text(
              clips: {clips}\n\n- Copy anywhere: the cat eats a fish and saves the clip\n\
              - {hotkey} or middle-click: clipboard history\n- Click a clip: copy it \
              back\n- Type/click: the cat taps along and earns XP\n- Double-click: pet the \
-             cat\n\nEverything stays on this PC. No network, ever."
+             cat\n\nEverything stays on this PC; the only network use is an \
+             optional daily GitHub check for new versions (toggle in this menu)."
         ),
         Lang::Ko => format!(
             "ClipCat v{version}\n\n클립보드를 관리하고 타이핑과 함께 자라는 데스크탑 \
@@ -235,7 +262,8 @@ pub fn about_text(
              - 어디서든 복사 → 고양이가 생선을 먹고 클립을 저장\n- {hotkey} 또는 \
              휠클릭 → 클립보드 히스토리\n- 클립 클릭 → 다시 복사\n- 타이핑/클릭 → \
              고양이가 따라 치고 XP 획득\n- 더블클릭 → 쓰다듬기\n\n모든 데이터는 이 PC에만 \
-             저장됩니다. 네트워크 통신은 없습니다."
+             저장됩니다. 네트워크는 GitHub 새 버전 확인에만 쓰입니다(이 메뉴에서 끌 수 \
+             있음)."
         ),
     }
 }
@@ -260,8 +288,8 @@ mod tests {
             SizeLarge, MenuAccessory, AccNone, MenuSound, SoundOff, SoundEvents, SoundAll,
             MenuLock, MenuLanguage, MenuAutostart, MenuReset, MenuAbout, MenuExit, ResetTitle,
             ResetConfirm, PanelTitle, SearchHint, PanelEmpty, PanelNoMatch, ToastCopied,
-            ToastCapturePaused, ToastCaptureOn, BubbleKeys, BubbleClicks, BubbleClips,
-            BubbleActive,
+            ToastCapturePaused, ToastCaptureOn, MenuAutoUpdate, ToastUpdateDownloading,
+            ToastUpdateFailed, BubbleKeys, BubbleClicks, BubbleClips, BubbleActive,
         ];
         for msg in all {
             assert!(!t(Lang::En, msg).is_empty());
@@ -270,6 +298,8 @@ mod tests {
         for lang in [Lang::En, Lang::Ko] {
             assert!(menu_clipboard(lang, "WIN+SHIFT+V").contains("WIN+SHIFT+V"));
             assert!(about_text(lang, "2.1.0", "WIN+SHIFT+V", 3, 10, 4).contains("WIN+SHIFT+V"));
+            assert!(update_available(lang, "2.1.0").contains("v2.1.0"));
+            assert!(menu_update(lang, "2.1.0").contains("v2.1.0"));
         }
     }
 

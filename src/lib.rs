@@ -18,3 +18,4 @@ pub mod render;
 pub mod sound;
 pub mod state;
 pub mod sysfont;
+pub mod update;
