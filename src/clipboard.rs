@@ -71,6 +71,9 @@ pub struct ClipStore {
     /// Recently deleted clips, one entry per delete/clear operation, newest
     /// last. Session-only: lets the panel undo an accidental delete.
     undo: Vec<Vec<Clip>>,
+    /// Monotonic mutation counter; bumps whenever the list could look
+    /// different, so the panel's cached filtered view knows to recompute.
+    version: u64,
 }
 
 #[derive(Deserialize, Default)]
@@ -84,17 +87,27 @@ struct ClipsOut<'a> {
     clips: &'a [Clip],
 }
 
-/// Allocation-free case-insensitive substring test (per-char lowercase fold);
-/// the panel search runs this against every clip each frame, so it must not
-/// lowercase whole clip texts into fresh `String`s.
+/// Case-folded chars of `s` (per-char lowercase, no allocation).
+fn fold(s: &str) -> impl Iterator<Item = char> + '_ {
+    s.chars().flat_map(char::to_lowercase)
+}
+
+/// Allocation-free case-insensitive string equality.
+fn eq_ci(a: &str, b: &str) -> bool {
+    fold(a).eq(fold(b))
+}
+
+/// Allocation-free case-insensitive substring test; the panel search runs
+/// this against every clip, so it must not lowercase whole clip texts into
+/// fresh `String`s.
 fn contains_ci(hay: &str, needle: &str) -> bool {
     if needle.is_empty() {
         return true;
     }
     let mut start = hay.char_indices();
     loop {
-        let mut h = start.as_str().chars().flat_map(char::to_lowercase);
-        let mut n = needle.chars().flat_map(char::to_lowercase);
+        let mut h = fold(start.as_str());
+        let mut n = fold(needle);
         loop {
             match (n.next(), h.next()) {
                 (None, _) => return true,
@@ -129,21 +142,20 @@ impl ClipStore {
             next_id,
             dirty: false,
             undo: Vec::new(),
+            version: 0,
         }
     }
 
-    /// Writes the history to disk atomically (temp file + rename) so a crash
-    /// mid-write can never corrupt the existing clips.json.
+    /// Monotonic mutation counter (see the field doc).
+    pub fn version(&self) -> u64 {
+        self.version
+    }
+
+    /// Writes the history to disk atomically (see [`crate::state::write_atomic`]).
     pub fn save(&mut self) {
-        if let (Some(dir), Some(file)) = (crate::state::config_dir(), clips_file()) {
-            let _ = std::fs::create_dir_all(&dir);
-            let out = ClipsOut { clips: &self.items };
-            if let Ok(json) = serde_json::to_string(&out) {
-                let tmp = file.with_extension("json.tmp");
-                if std::fs::write(&tmp, json).is_ok() {
-                    let _ = std::fs::rename(&tmp, &file);
-                }
-            }
+        let out = ClipsOut { clips: &self.items };
+        if let (Some(file), Ok(json)) = (clips_file(), serde_json::to_string(&out)) {
+            crate::state::write_atomic(&file, &json);
         }
         self.dirty = false;
     }
@@ -181,7 +193,7 @@ impl ClipStore {
             self.items.insert(0, clip);
             self.evict();
         }
-        self.dirty = true;
+        self.touch();
         true
     }
 
@@ -209,7 +221,7 @@ impl ClipStore {
                 return;
             }
             c.pinned = !c.pinned;
-            self.dirty = true;
+            self.touch();
         }
     }
 
@@ -219,7 +231,7 @@ impl ClipStore {
         };
         let clip = self.items.remove(i);
         self.push_undo(vec![clip]);
-        self.dirty = true;
+        self.touch();
         true
     }
 
@@ -231,9 +243,15 @@ impl ClipStore {
         let n = removed.len();
         if n > 0 {
             self.push_undo(removed);
-            self.dirty = true;
+            self.touch();
         }
         n
+    }
+
+    /// Marks the store changed: needs saving, and cached views are stale.
+    fn touch(&mut self) {
+        self.dirty = true;
+        self.version += 1;
     }
 
     fn push_undo(&mut self, batch: Vec<Clip>) {
@@ -258,7 +276,7 @@ impl ClipStore {
             self.items.insert(i, clip);
         }
         self.evict();
-        self.dirty = true;
+        self.touch();
         first
     }
 
@@ -284,16 +302,20 @@ impl ClipStore {
     /// Like [`ClipStore::visible`], additionally restricted to clips whose
     /// source app equals `source` (case-insensitive), when given.
     pub fn visible_filtered(&self, query: &str, source: Option<&str>) -> Vec<&Clip> {
+        self.filtered_indices(query, source)
+            .into_iter()
+            .map(|i| &self.items[i])
+            .collect()
+    }
+
+    /// The row order behind [`ClipStore::visible_filtered`], as indices into
+    /// the store. The panel caches this (keyed on [`ClipStore::version`])
+    /// so the filter doesn't re-run over every clip text each frame.
+    pub fn filtered_indices(&self, query: &str, source: Option<&str>) -> Vec<usize> {
         let q = query.trim();
-        // case-insensitive equality on the source, fold per char (no allocs)
-        let same_source = |a: &str, b: &str| {
-            a.chars()
-                .flat_map(char::to_lowercase)
-                .eq(b.chars().flat_map(char::to_lowercase))
-        };
         let matches = |c: &Clip| {
             if let Some(want) = source {
-                if !c.source.as_deref().is_some_and(|s| same_source(s, want)) {
+                if !c.source.as_deref().is_some_and(|s| eq_ci(s, want)) {
                     return false;
                 }
             }
@@ -301,22 +323,31 @@ impl ClipStore {
                 || contains_ci(&c.text, q)
                 || c.source.as_deref().is_some_and(|s| contains_ci(s, q))
         };
-        let mut out: Vec<&Clip> = self.items.iter().filter(|c| c.pinned && matches(c)).collect();
-        out.extend(self.items.iter().filter(|c| !c.pinned && matches(c)));
+        let row = |want_pinned: bool| {
+            self.items
+                .iter()
+                .enumerate()
+                .filter(move |(_, c)| c.pinned == want_pinned && matches(c))
+                .map(|(i, _)| i)
+        };
+        let mut out: Vec<usize> = row(true).collect();
+        out.extend(row(false));
         out
+    }
+
+    /// The clip at a [`ClipStore::filtered_indices`] position, if still valid.
+    pub fn by_index(&self, i: usize) -> Option<&Clip> {
+        self.items.get(i)
     }
 
     /// Distinct source apps across the history, most recently used first
     /// (case-insensitive dedupe, first spelling wins). Drives the panel's
     /// source-filter cycle button.
     pub fn sources(&self) -> Vec<&str> {
-        let mut seen: Vec<String> = Vec::new();
-        let mut out = Vec::new();
+        let mut out: Vec<&str> = Vec::new();
         for c in &self.items {
             if let Some(s) = c.source.as_deref() {
-                let key = s.to_lowercase();
-                if !seen.contains(&key) {
-                    seen.push(key);
+                if !out.iter().any(|seen| eq_ci(seen, s)) {
                     out.push(s);
                 }
             }

@@ -973,10 +973,15 @@ pub fn draw_panel(pm: &mut Pixmap, v: &PanelView, scale: f32) {
         let Some(clip) = visible.get(idx) else { break };
         let ry = pl::ROWS_Y + i as f32 * pl::ROW_H;
 
-        if idx == v.panel.sel {
-            cv.fill(&round_rect(pl::ROW_X, ry + 1.0, pl::ROW_W, pl::ROW_H - 2.0, 7.0), ROW_SEL);
+        let row_bg = if idx == v.panel.sel {
+            Some(ROW_SEL)
         } else if hover_row == Some(idx) {
-            cv.fill(&round_rect(pl::ROW_X, ry + 1.0, pl::ROW_W, pl::ROW_H - 2.0, 7.0), ROW_HOVER);
+            Some(ROW_HOVER)
+        } else {
+            None
+        };
+        if let Some(bg) = row_bg {
+            cv.fill(&round_rect(pl::ROW_X, ry + 1.0, pl::ROW_W, pl::ROW_H - 2.0, 7.0), bg);
         }
 
         // pin star

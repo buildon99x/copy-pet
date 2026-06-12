@@ -6,6 +6,7 @@
 //! All coordinates are in canvas units (window pixels / global scale).
 
 use crate::clipboard::{Clip, ClipStore};
+use std::cell::RefCell;
 
 // ---- layout (canvas units) --------------------------------------------------
 
@@ -104,6 +105,18 @@ pub struct Panel {
     /// The clear button was pressed once; the next press really clears.
     /// Any other interaction disarms it.
     pub clear_armed: bool,
+    /// Cached filtered row order (the panel is redrawn every tick while
+    /// open; without this the query would re-scan every clip text per frame).
+    cache: RefCell<ViewCache>,
+}
+
+#[derive(Default)]
+struct ViewCache {
+    valid: bool,
+    version: u64,
+    query: String,
+    source: Option<String>,
+    rows: Vec<usize>,
 }
 
 impl Panel {
@@ -139,8 +152,21 @@ impl Panel {
     }
 
     /// The clip list the panel currently shows (query + source filter).
+    /// Recomputed only when the query, the filter or the store changed.
     pub fn visible<'a>(&self, store: &'a ClipStore) -> Vec<&'a Clip> {
-        store.visible_filtered(&self.query, self.source.as_deref())
+        let mut c = self.cache.borrow_mut();
+        if !c.valid
+            || c.version != store.version()
+            || c.query != self.query
+            || c.source != self.source
+        {
+            c.rows = store.filtered_indices(&self.query, self.source.as_deref());
+            c.version = store.version();
+            c.query.clone_from(&self.query);
+            c.source.clone_from(&self.source);
+            c.valid = true;
+        }
+        c.rows.iter().filter_map(|&i| store.by_index(i)).collect()
     }
 
     /// Advances the source filter to the next app seen in the history,
@@ -507,6 +533,27 @@ mod tests {
         let id = s.visible("")[1].id;
         assert_eq!(p.nav(NavKey::Pin, &s), Some(PanelAction::TogglePin(id)));
         assert_eq!(p.nav(NavKey::Undo, &s), Some(PanelAction::Undo));
+    }
+
+    #[test]
+    fn visible_cache_tracks_store_query_and_filter() {
+        let mut s = store(3);
+        let p = Panel { open: true, ..Default::default() };
+        assert_eq!(p.visible(&s).len(), 3);
+        // store mutations invalidate the cached view immediately
+        s.add_copy("clip number 99".into(), None);
+        assert_eq!(p.visible(&s).len(), 4);
+        let id = p.visible(&s)[0].id;
+        s.delete(id);
+        assert_eq!(p.visible(&s).len(), 3);
+        s.undo_delete();
+        assert_eq!(p.visible(&s).len(), 4);
+        // query changes invalidate it too
+        let mut p = p;
+        p.input_char('9');
+        assert_eq!(p.visible(&s).len(), 1);
+        p.nav(NavKey::Backspace, &s);
+        assert_eq!(p.visible(&s).len(), 4);
     }
 
     #[test]
