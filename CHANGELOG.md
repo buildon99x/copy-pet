@@ -47,6 +47,13 @@ versions follow [SemVer](https://semver.org/). Maintenance rules:
   automatically falls back to Ctrl+Shift+V; the panel footer and tray menu
   always show the hotkey that is actually active.
 
+### Fixed
+- macOS: ClipCat no longer crashes the moment you press a key (e.g. Ctrl+C) on
+  macOS 15. If the Accessibility permission needed for the global hotkey and
+  the keyboard/mouse "tap along" hasn't been granted, the cat now shows a hint
+  pointing you to System Settings and keeps running normally instead of failing
+  silently.
+
 ## [2.0.0] - 2026-06-12
 
 ### Added

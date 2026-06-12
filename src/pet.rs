@@ -89,6 +89,7 @@ pub struct Pet {
     hover: bool,
     panel_hint: String,
     update_available: Option<String>, // newer release found (crate::update)
+    accessibility_hinted: bool,       // macOS Accessibility hint shown once
     // bookkeeping
     frame: u64,
     rng: u32,
@@ -130,6 +131,7 @@ impl Pet {
             hover: false,
             panel_hint: String::new(),
             update_available: None,
+            accessibility_hinted: false,
             frame: 0,
             rng: seed(),
             level,
@@ -190,6 +192,18 @@ impl Pet {
     /// The update download/install failed; the menu entry stays for a retry.
     pub fn notify_update_failed(&mut self) {
         self.set_toast(t(self.lang(), Msg::ToastUpdateFailed).to_string(), 3.0);
+    }
+
+    /// The macOS global-input event tap could not be installed — Accessibility
+    /// permission has not been granted. Point the user at the setting, once;
+    /// the pet, clipboard history and panel (C / middle-click) keep working,
+    /// only the global hotkey and the keyboard/mouse "tap along" do not.
+    pub fn notify_accessibility_needed(&mut self) {
+        if self.accessibility_hinted {
+            return;
+        }
+        self.accessibility_hinted = true;
+        self.set_toast(t(self.lang(), Msg::ToastAccessibility).to_string(), 8.0);
     }
 
     /// Returns `true` once after a level-up so the platform can refresh tray UI.

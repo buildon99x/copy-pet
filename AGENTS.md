@@ -69,6 +69,10 @@ src/
                        fallback Ctrl+Shift+V) + Shell tray
     portable.rs        winit + softbuffer + rdev + arboard (macOS/Linux,
                        and Windows --feature portable)
+    mac_input.rs       macOS-only global-input event tap (CoreGraphics).
+                       Replaces rdev's keyboard listener, which crashes on
+                       macOS 15 by calling Text Input Source APIs off the main
+                       thread (LNR-0005); reads event kind + keycode only.
   bin/gen_icon.rs      regenerates assets/clipcat.ico from render::draw_icon_scaled
 examples/preview.rs    renders representative frames to PNGs (headless review)
 tests/e2e.rs           end-to-end core flows through the public Pet API
@@ -100,9 +104,11 @@ Two backends share one core; exactly one backend compiles per build, chosen in
   Win+Shift+V, configurable via `state.json`, Ctrl+Shift+V fallback on
   clash), Shell tray with full context menu, HKCU autostart.
 - `any(not(windows), feature = "portable"))` → **portable**: `winit` window +
-  `softbuffer` present + `rdev` global input (counters + the panel-hotkey
-  chord matcher; Cmd+Shift+V on macOS) + `arboard` clipboard polling.
-  Pet drawn on an opaque card; settings via keyboard shortcuts.
+  `softbuffer` present + global input (counters + the panel-hotkey chord
+  matcher; Cmd+Shift+V on macOS) + `arboard` clipboard polling. Global input
+  is `rdev::listen` on Linux/Windows, but a bespoke CoreGraphics event tap
+  (`platform/mac_input.rs`) on macOS — rdev's keyboard path crashes on macOS
+  15 (LNR-0005). Pet drawn on an opaque card; settings via keyboard shortcuts.
 
 The core flow: a ~33 ms tick drains `input` counters and pending copy events →
 `Pet::advance(k,c,wh)` / `Pet::on_copy(text,source,badge)` update animation/
@@ -146,7 +152,10 @@ scripts/release.sh verify                   # CHANGELOG lint (also runs in CI)
 macOS/Linux need system libs for the portable stack — see the CI workflow's
 `Install Linux system dependencies` step for the exact apt list. On a Linux
 box without a display, `cargo check --target x86_64-pc-windows-msvc` (and
-`--features portable`) cross-checks the Windows code without linking.
+`--features portable`) cross-checks the Windows code without linking;
+`cargo check/clippy --target aarch64-apple-darwin` does the same for the macOS
+code (e.g. `platform/mac_input.rs`) — both type-check the `#[cfg]`-gated paths
+a Linux build can't reach.
 
 ## Coding conventions
 
@@ -156,8 +165,9 @@ box without a display, `cargo check --target x86_64-pc-windows-msvc` (and
 - Prefer generating assets in code over bundling files.
 - Every user-visible string goes through `i18n::t` / an `i18n` helper —
   never hardcode English or Korean in render/backends.
-- `unsafe` is confined to `platform/windows.rs` (Win32 FFI) and the small WAV/
-  icon byte-buffer builders; document the safety invariant inline.
+- `unsafe` is confined to `platform/windows.rs` (Win32 FFI),
+  `platform/mac_input.rs` (the macOS CoreGraphics event tap), and the small
+  WAV/icon byte-buffer builders; document the safety invariant inline.
 - Keep both backends' interaction set in parity (drag, single-click bounce,
   double-click pet, hover stats, middle-click/hotkey panel, panel keyboard
   control). If you add an interaction, add it to both.
@@ -207,6 +217,11 @@ relative markdown links.
 - `rdev::listen` blocks → it runs on its own thread; macOS needs Accessibility
   permission, Wayland blocks global capture (and `arboard` without its wayland
   feature needs XWayland for the clipboard).
+- macOS does **not** use `rdev::listen` — it translates every keypress via Text
+  Input Source APIs that hard-crash (SIGTRAP) off the main thread on macOS 15.
+  Global input there is our own event tap (`platform/mac_input.rs`); never
+  reintroduce a TIS/HIToolbox call on a tap/background thread
+  ([LNR-0005](.context/kb/lnr/0005-macos-tis-eventtap-crash.md)).
 - The dual optional/`[target.'cfg(...)']` dependency layout is deliberate;
   don't "simplify" it without re-reading
   [LNR-0004](.context/kb/lnr/0004-cargo-cross-platform-deps.md).

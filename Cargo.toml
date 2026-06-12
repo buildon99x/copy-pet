@@ -56,6 +56,14 @@ features = [
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
 
+# --- macOS: native CoreGraphics event tap for global input -------------------
+# src/platform/mac_input.rs replaces rdev's keyboard listener, which crashes on
+# macOS 15 by calling Text Input Source APIs off the main thread (LNR-0005).
+# Same crate/version/feature rdev already pulls in transitively — adds no new
+# dependency to the graph.
+[target.'cfg(target_os = "macos")'.dependencies]
+core-graphics = { version = "0.19", features = ["highsierra"] }
+
 # --- Non-Windows: portable backend is the only backend, always compiled ------
 [target.'cfg(not(windows))'.dependencies]
 winit = "0.30"

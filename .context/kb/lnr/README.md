@@ -10,3 +10,4 @@ before touching the related area.
 | [0002](0002-debug-vs-release-cpu.md) | Debug tiny-skia is ~10× slower; benchmark CPU on release | performance |
 | [0003](0003-rdev-winit-threading.md) | rdev runs on its own thread; macOS/Wayland caveats | portable input |
 | [0004](0004-cargo-cross-platform-deps.md) | "optional on Windows, required elsewhere" dependency layout | build/cargo |
+| [0005](0005-macos-tis-eventtap-crash.md) | macOS 15 SIGTRAP: rdev translates keys (TIS) off the main thread | portable input (macOS) |

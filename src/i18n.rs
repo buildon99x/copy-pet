@@ -69,6 +69,8 @@ pub enum Msg {
     MenuAutoUpdate,
     ToastUpdateDownloading,
     ToastUpdateFailed,
+    // macOS Accessibility permission (global input tap)
+    ToastAccessibility,
     // stats bubble
     BubbleKeys,
     BubbleClicks,
@@ -143,6 +145,8 @@ pub fn t(lang: Lang, msg: Msg) -> &'static str {
         (ToastUpdateDownloading, Lang::Ko) => "업데이트 다운로드 중...",
         (ToastUpdateFailed, Lang::En) => "UPDATE FAILED",
         (ToastUpdateFailed, Lang::Ko) => "업데이트 실패",
+        (ToastAccessibility, Lang::En) => "ENABLE ACCESSIBILITY IN SYSTEM SETTINGS FOR THE HOTKEY",
+        (ToastAccessibility, Lang::Ko) => "단축키 사용: 시스템 설정 > 손쉬운 사용에서 권한을 허용하세요",
         (BubbleKeys, Lang::En) => "KEYS",
         (BubbleKeys, Lang::Ko) => "키 입력",
         (BubbleClicks, Lang::En) => "CLICKS",
@@ -289,7 +293,8 @@ mod tests {
             MenuLock, MenuLanguage, MenuAutostart, MenuReset, MenuAbout, MenuExit, ResetTitle,
             ResetConfirm, PanelTitle, SearchHint, PanelEmpty, PanelNoMatch, ToastCopied,
             ToastCapturePaused, ToastCaptureOn, MenuAutoUpdate, ToastUpdateDownloading,
-            ToastUpdateFailed, BubbleKeys, BubbleClicks, BubbleClips, BubbleActive,
+            ToastUpdateFailed, ToastAccessibility, BubbleKeys, BubbleClicks, BubbleClips,
+            BubbleActive,
         ];
         for msg in all {
             assert!(!t(Lang::En, msg).is_empty());

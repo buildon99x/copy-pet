@@ -23,10 +23,16 @@
 //! the browser — no self-replacement on the portable backend. The check is
 //! disabled via `auto_update` in `state.json`.
 //!
-//! Privacy note (ADR-0008): the rdev listener increments the activity
+//! Privacy note (ADR-0008): the global-input listener increments the activity
 //! counters and additionally compares each key event against the one
 //! configured hotkey chord, in memory, discarding it immediately — key
 //! identities are never stored, logged, buffered or transmitted.
+//!
+//! macOS uses a bespoke CoreGraphics event tap ([`super::mac_input`]) rather
+//! than `rdev::listen`: rdev translates every keypress to text via Text Input
+//! Source APIs that hard-crash off the main thread on macOS 15 (LNR-0005).
+//! Linux keeps `rdev::listen` (X11). If the macOS tap can't be created
+//! (Accessibility permission missing) the app stays up and shows a hint.
 
 use crate::hotkey::Hotkey;
 use crate::input;
@@ -73,6 +79,9 @@ struct PortableApp {
     capture_flag: Arc<AtomicBool>,
     /// Raised by the global-input thread when the panel hotkey chord fires.
     panel_toggle: Arc<AtomicBool>,
+    /// Raised by the global-input thread when the (macOS) event tap could not
+    /// be installed — Accessibility permission is not granted yet.
+    perm_needed: Arc<AtomicBool>,
     // interaction
     cursor: PhysicalPosition<f64>,
     mouse_down: bool,
@@ -89,6 +98,7 @@ impl PortableApp {
         suppress: Suppress,
         capture_flag: Arc<AtomicBool>,
         panel_toggle: Arc<AtomicBool>,
+        perm_needed: Arc<AtomicBool>,
     ) -> Self {
         let (w, h) = pet.canvas_size();
         PortableApp {
@@ -104,6 +114,7 @@ impl PortableApp {
             suppress,
             capture_flag,
             panel_toggle,
+            perm_needed,
             cursor: PhysicalPosition::new(0.0, 0.0),
             mouse_down: false,
             dragging: false,
@@ -434,6 +445,10 @@ impl ApplicationHandler for PortableApp {
             if self.panel_toggle.swap(false, Ordering::Relaxed) {
                 self.pet.toggle_panel();
             }
+            // the macOS event tap couldn't start (Accessibility not granted)
+            if self.perm_needed.swap(false, Ordering::Relaxed) {
+                self.pet.notify_accessibility_needed();
+            }
             // the daily release check found a newer version
             if let Some(v) = crate::update::take_found() {
                 self.pet.notify_update(&v);
@@ -535,24 +550,44 @@ impl ChordTracker {
     }
 }
 
-/// Spawns the `rdev` global input listener: increments the shared counters
-/// on every key/button/wheel event system-wide and raises `panel_toggle`
-/// when the configured panel chord is pressed (see [`ChordTracker`] for the
-/// privacy boundary).
-fn spawn_global_input(hk: Hotkey, panel_toggle: Arc<AtomicBool>) {
+/// One global input event: bump the shared activity counters and feed the
+/// chord matcher (the only key inspection we permit; see [`ChordTracker`]).
+fn pump(et: rdev::EventType, chord: &mut ChordTracker, panel_toggle: &AtomicBool) {
+    match et {
+        rdev::EventType::KeyPress(_) => input::key(),
+        rdev::EventType::ButtonPress(_) => input::click(),
+        rdev::EventType::Wheel { .. } => input::wheel(),
+        _ => {}
+    }
+    if chord.on_event(&et) {
+        panel_toggle.store(true, Ordering::Relaxed);
+    }
+}
+
+/// Spawns the global input listener: increments the shared counters on every
+/// key/button/wheel event system-wide and raises `panel_toggle` when the
+/// configured panel chord is pressed.
+///
+/// macOS uses [`super::mac_input`] (a TIS-free event tap; LNR-0005); if its
+/// tap can't be installed — Accessibility permission not granted —
+/// `perm_needed` is raised and the listener exits without crashing the app.
+/// Other platforms use `rdev::listen`.
+#[cfg(target_os = "macos")]
+fn spawn_global_input(hk: Hotkey, panel_toggle: Arc<AtomicBool>, perm_needed: Arc<AtomicBool>) {
     std::thread::spawn(move || {
         let mut chord = ChordTracker::new(hk);
-        let _ = rdev::listen(move |event| {
-            match event.event_type {
-                rdev::EventType::KeyPress(_) => input::key(),
-                rdev::EventType::ButtonPress(_) => input::click(),
-                rdev::EventType::Wheel { .. } => input::wheel(),
-                _ => {}
-            }
-            if chord.on_event(&event.event_type) {
-                panel_toggle.store(true, Ordering::Relaxed);
-            }
-        });
+        let res = super::mac_input::listen(move |et| pump(et, &mut chord, &panel_toggle));
+        if res.is_err() {
+            perm_needed.store(true, Ordering::Relaxed);
+        }
+    });
+}
+
+#[cfg(not(target_os = "macos"))]
+fn spawn_global_input(hk: Hotkey, panel_toggle: Arc<AtomicBool>, _perm_needed: Arc<AtomicBool>) {
+    std::thread::spawn(move || {
+        let mut chord = ChordTracker::new(hk);
+        let _ = rdev::listen(move |event| pump(event.event_type, &mut chord, &panel_toggle));
     });
 }
 
@@ -613,11 +648,12 @@ pub fn run() {
 
     let hk = Hotkey::from_spec(&st.hotkey);
     let panel_toggle = Arc::new(AtomicBool::new(false));
-    spawn_global_input(hk, panel_toggle.clone());
+    let perm_needed = Arc::new(AtomicBool::new(false));
+    spawn_global_input(hk, panel_toggle.clone(), perm_needed.clone());
 
     let mut pet = Pet::new(st);
     pet.set_panel_hint(format!("{} / C", hk.display()));
-    let mut app = PortableApp::new(pet, rx, suppress, capture_flag, panel_toggle);
+    let mut app = PortableApp::new(pet, rx, suppress, capture_flag, panel_toggle, perm_needed);
 
     let event_loop = match EventLoop::new() {
         Ok(el) => el,
