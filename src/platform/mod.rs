@@ -20,8 +20,10 @@ mod portable;
 #[cfg(any(not(windows), feature = "portable"))]
 pub use portable::run;
 
-// macOS global input runs through a bespoke CoreGraphics event tap instead of
-// rdev's keyboard listener, which crashes on macOS 15 (LNR-0005). Compiled
-// only for the portable backend on macOS.
+// macOS-only helpers for the portable backend: a bespoke CoreGraphics event
+// tap (replaces rdev's crashing keyboard listener, LNR-0005) and a transparent
+// CALayer presenter (replaces softbuffer's opaque card, ADR-0003).
 #[cfg(all(any(not(windows), feature = "portable"), target_os = "macos"))]
 mod mac_input;
+#[cfg(all(any(not(windows), feature = "portable"), target_os = "macos"))]
+mod mac_present;

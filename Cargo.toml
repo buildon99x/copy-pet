@@ -56,13 +56,16 @@ features = [
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
 
-# --- macOS: native CoreGraphics event tap for global input -------------------
-# src/platform/mac_input.rs replaces rdev's keyboard listener, which crashes on
-# macOS 15 by calling Text Input Source APIs off the main thread (LNR-0005).
-# Same crate/version/feature rdev already pulls in transitively — adds no new
-# dependency to the graph.
+# --- macOS native bits -------------------------------------------------------
+# core-graphics: the global-input event tap (src/platform/mac_input.rs) and the
+#   transparent presenter (src/platform/mac_present.rs). Same crate/version/
+#   feature rdev already pulls in transitively — no new graph node.
+# objc + foreign-types: drive the window's CALayer for the transparent present
+#   path (ADR-0003). Both already in the tree via winit/rdev.
 [target.'cfg(target_os = "macos")'.dependencies]
 core-graphics = { version = "0.19", features = ["highsierra"] }
+objc = "0.2"
+foreign-types = "0.3"
 
 # --- Non-Windows: portable backend is the only backend, always compiled ------
 [target.'cfg(not(windows))'.dependencies]
@@ -74,6 +77,12 @@ arboard = { version = "3", default-features = false }
 # Windows resource (icon + version info) embedding only runs on Windows hosts.
 [target.'cfg(windows)'.build-dependencies]
 winresource = "0.1"
+
+[lints.rust]
+# objc 0.2's msg_send!/class! macros expand to `#[cfg(feature = "cargo-clippy")]`,
+# which check-cfg flags as unknown in this crate. Mark it expected so the lint
+# still catches real cfg typos. Only reached on macOS (src/platform/mac_present.rs).
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(feature, values("cargo-clippy"))'] }
 
 [profile.release]
 opt-level = 3

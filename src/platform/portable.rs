@@ -39,6 +39,7 @@ use crate::input;
 use crate::panel::NavKey;
 use crate::pet::Pet;
 use crate::state::{Persist, ACCESSORIES};
+#[cfg(not(target_os = "macos"))]
 use std::num::NonZeroU32;
 use std::rc::Rc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -58,6 +59,7 @@ const DBLCLICK: Duration = Duration::from_millis(350);
 /// Clipboard poll cadence (arboard has no change notifications).
 const CLIP_POLL: Duration = Duration::from_millis(400);
 
+#[cfg(not(target_os = "macos"))]
 type Surface = softbuffer::Surface<Rc<Window>, Rc<Window>>;
 /// Text we just wrote to the clipboard ourselves; the watcher skips it once.
 type Suppress = Arc<Mutex<Option<String>>>;
@@ -65,8 +67,14 @@ type Suppress = Arc<Mutex<Option<String>>>;
 struct PortableApp {
     pet: Pet,
     window: Option<Rc<Window>>,
+    // Presentation: softbuffer (opaque card) everywhere except macOS, which
+    // uses a transparent CALayer presenter instead (ADR-0003 / LNR-0001).
+    #[cfg(not(target_os = "macos"))]
     _context: Option<softbuffer::Context<Rc<Window>>>,
+    #[cfg(not(target_os = "macos"))]
     surface: Option<Surface>,
+    #[cfg(target_os = "macos")]
+    presenter: Option<super::mac_present::Presenter>,
     pm: tiny_skia::Pixmap,
     w: u32,
     h: u32,
@@ -104,8 +112,12 @@ impl PortableApp {
         PortableApp {
             pet,
             window: None,
+            #[cfg(not(target_os = "macos"))]
             _context: None,
+            #[cfg(not(target_os = "macos"))]
             surface: None,
+            #[cfg(target_os = "macos")]
+            presenter: None,
             pm: tiny_skia::Pixmap::new(w as u32, h as u32).unwrap(),
             w: w as u32,
             h: h as u32,
@@ -147,6 +159,10 @@ impl PortableApp {
         self.paint();
     }
 
+    /// Resizes the presentation buffers to the current `w`×`h`. On macOS the
+    /// view's backing layer follows the window automatically, so this is a
+    /// no-op there (the next `paint` pushes a correctly sized image).
+    #[cfg(not(target_os = "macos"))]
     fn resize_surface(&mut self) {
         if let (Some(surface), Some(w), Some(h)) =
             (self.surface.as_mut(), NonZeroU32::new(self.w), NonZeroU32::new(self.h))
@@ -155,7 +171,23 @@ impl PortableApp {
         }
     }
 
-    /// Renders the pet into the pixmap and presents it via softbuffer.
+    #[cfg(target_os = "macos")]
+    fn resize_surface(&mut self) {}
+
+    /// Renders the pet into the pixmap and presents it. macOS draws onto a
+    /// transparent canvas and pushes it to the window's CALayer (a free-
+    /// floating, background-transparent pet); every other platform draws the
+    /// opaque "card" and blits it with softbuffer (ADR-0003 / LNR-0001).
+    #[cfg(target_os = "macos")]
+    fn paint(&mut self) {
+        self.pet.render(&mut self.pm);
+        let scale = self.window.as_ref().map(|w| w.scale_factor()).unwrap_or(1.0);
+        if let Some(presenter) = self.presenter.as_mut() {
+            presenter.present(&self.pm, scale);
+        }
+    }
+
+    #[cfg(not(target_os = "macos"))]
     fn paint(&mut self) {
         self.pet.render_card(&mut self.pm);
         let Some(surface) = self.surface.as_mut() else {
@@ -295,12 +327,15 @@ impl ApplicationHandler for PortableApp {
             PhysicalPosition::new(mw - w - 40, mh - h - 64)
         };
 
+        // macOS presents through a non-opaque CALayer (transparent, floating
+        // pet); softbuffer platforms keep the opaque card (ADR-0003).
+        let transparent = cfg!(target_os = "macos");
         let attrs = Window::default_attributes()
             .with_title("ClipCat")
             .with_inner_size(PhysicalSize::new(w as u32, h as u32))
             .with_position(pos)
             .with_decorations(false)
-            .with_transparent(false)
+            .with_transparent(transparent)
             .with_resizable(false)
             .with_window_level(WindowLevel::AlwaysOnTop);
 
@@ -314,14 +349,21 @@ impl ApplicationHandler for PortableApp {
         // Korean search input needs the IME (composition arrives as Ime::Commit)
         window.set_ime_allowed(true);
 
-        let context = softbuffer::Context::new(window.clone()).ok();
-        let surface = context
-            .as_ref()
-            .and_then(|ctx| softbuffer::Surface::new(ctx, window.clone()).ok());
+        #[cfg(not(target_os = "macos"))]
+        {
+            let context = softbuffer::Context::new(window.clone()).ok();
+            let surface = context
+                .as_ref()
+                .and_then(|ctx| softbuffer::Surface::new(ctx, window.clone()).ok());
+            self._context = context;
+            self.surface = surface;
+        }
+        #[cfg(target_os = "macos")]
+        {
+            self.presenter = super::mac_present::Presenter::new(&window);
+        }
 
         self.window = Some(window);
-        self._context = context;
-        self.surface = surface;
         self.resize_surface();
         self.last_frame = Instant::now();
         self.paint();

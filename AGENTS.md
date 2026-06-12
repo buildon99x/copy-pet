@@ -73,6 +73,10 @@ src/
                        Replaces rdev's keyboard listener, which crashes on
                        macOS 15 by calling Text Input Source APIs off the main
                        thread (LNR-0005); reads event kind + keycode only.
+    mac_present.rs     macOS-only transparent presenter: pushes the pixmap to
+                       the window's CALayer as a CGImage with alpha, so the pet
+                       floats with a transparent background (ADR-0003 update)
+                       instead of softbuffer's opaque card.
   bin/gen_icon.rs      regenerates assets/clipcat.ico from render::draw_icon_scaled
 examples/preview.rs    renders representative frames to PNGs (headless review)
 tests/e2e.rs           end-to-end core flows through the public Pet API
@@ -108,7 +112,10 @@ Two backends share one core; exactly one backend compiles per build, chosen in
   matcher; Cmd+Shift+V on macOS) + `arboard` clipboard polling. Global input
   is `rdev::listen` on Linux/Windows, but a bespoke CoreGraphics event tap
   (`platform/mac_input.rs`) on macOS — rdev's keyboard path crashes on macOS
-  15 (LNR-0005). Pet drawn on an opaque card; settings via keyboard shortcuts.
+  15 (LNR-0005). Settings via keyboard shortcuts. Presentation: an opaque
+  "card" via softbuffer on Linux/Windows-portable, but a **transparent**
+  CALayer present on macOS (`platform/mac_present.rs`) so the pet floats like
+  the Windows layered window (ADR-0003 update).
 
 The core flow: a ~33 ms tick drains `input` counters and pending copy events →
 `Pet::advance(k,c,wh)` / `Pet::on_copy(text,source,badge)` update animation/
@@ -166,8 +173,10 @@ a Linux build can't reach.
 - Every user-visible string goes through `i18n::t` / an `i18n` helper —
   never hardcode English or Korean in render/backends.
 - `unsafe` is confined to `platform/windows.rs` (Win32 FFI),
-  `platform/mac_input.rs` (the macOS CoreGraphics event tap), and the small
-  WAV/icon byte-buffer builders; document the safety invariant inline.
+  `platform/mac_input.rs` (the macOS CoreGraphics event tap),
+  `platform/mac_present.rs` (Objective-C / CoreGraphics for the transparent
+  CALayer present), and the small WAV/icon byte-buffer builders; document the
+  safety invariant inline.
 - Keep both backends' interaction set in parity (drag, single-click bounce,
   double-click pet, hover stats, middle-click/hotkey panel, panel keyboard
   control). If you add an interaction, add it to both.

@@ -46,6 +46,8 @@ versions follow [SemVer](https://semver.org/). Maintenance rules:
   Ctrl+Shift+V). If another app already owns the combination, ClipCat
   automatically falls back to Ctrl+Shift+V; the panel footer and tray menu
   always show the hotkey that is actually active.
+- macOS: the cat now floats on your desktop with a transparent background,
+  like the Windows build, instead of sitting on a solid rounded card.
 
 ### Fixed
 - macOS: ClipCat no longer crashes the moment you press a key (e.g. Ctrl+C) on

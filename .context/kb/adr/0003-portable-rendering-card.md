@@ -32,3 +32,22 @@ Windows backend keeps the fully transparent, click-through presentation.
   silhouette; the portable window is click-opaque over its whole rectangle.
 - 🔜 A `wgpu` transparent-surface backend could restore the floating look later;
   deferred until it can be validated on macOS/Linux.
+
+## Update — 2026-06-12: macOS gets a native transparent presenter
+
+macOS no longer uses the opaque card. Instead of softbuffer it drives the
+window's `CALayer` directly: each frame the tiny-skia pixmap (which already
+carries premultiplied alpha) is wrapped in a `CGImage` and set as
+`layer.contents` over a non-opaque, shadowless `NSWindow`
+([`src/platform/mac_present.rs`](../../../src/platform/mac_present.rs)). This
+restores the free-floating, background-transparent look of the native Windows
+layered window without a GPU stack — softbuffer's `0RGB` limitation is sidestepped
+by not going through softbuffer at all. The window stays interactive over its
+whole rectangle (visually transparent, not click-through). It reuses crates
+already in the tree (`core-graphics`, `objc`, `foreign-types` — no new graph
+nodes).
+
+**Linux and Windows `--features portable` keep the opaque card** — they have no
+equivalent cheap alpha-capable presentation, and the card remains the reliable
+softbuffer path there. So the portable backend is now split: transparent layer
+on macOS, opaque card elsewhere.
