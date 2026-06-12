@@ -62,6 +62,10 @@ src/
   update.rs            optional self-update (ADR-0009): daily GitHub release
                        check via system curl; exe swap + relaunch on Windows
   input.rs             shared atomic activity counters (KEYS/CLICKS/WHEEL)
+  menu.rs              platform-agnostic context-menu model (entries, actions,
+                       check state); Pet::build_menu / apply_menu_action drive
+                       it. Native menus (macOS NSMenu) just render it — so the
+                       whole menu is unit/e2e testable without a GUI.
   platform/
     mod.rs             selects exactly one backend by cfg
     windows.rs         native Win32 layered window + LL hooks + clipboard
@@ -77,9 +81,14 @@ src/
                        the window's CALayer as a CGImage with alpha, so the pet
                        floats with a transparent background (ADR-0003 update)
                        instead of softbuffer's opaque card.
-    mac_menu.rs        macOS-only native NSMenu shown on right-click; each item
-                       runs the matching keyboard shortcut (no duplicated
-                       behavior). The portable backend's tray-menu stand-in.
+    mac_menu.rs        macOS-only native NSMenu shown on right-click; renders
+                       the platform-agnostic menu::MenuEntry tree (submenus,
+                       check marks, disabled items) and returns the chosen
+                       menu::MenuAction. The portable tray-menu stand-in.
+    mac_dialogs.rs     macOS-only NSAlert dialogs (About box, Reset-stats
+                       confirmation) — the parity of the Windows MessageBoxW.
+    mac_autostart.rs   macOS-only "run at login" via a ~/Library/LaunchAgents
+                       plist (parity of the Windows HKCU\Run value).
   bin/gen_icon.rs      regenerates assets/clipcat.ico from render::draw_icon_scaled
 examples/preview.rs    renders representative frames to PNGs (headless review)
 tests/e2e.rs           end-to-end core flows through the public Pet API
@@ -178,15 +187,19 @@ a Linux build can't reach.
 - `unsafe` is confined to `platform/windows.rs` (Win32 FFI),
   `platform/mac_input.rs` (the macOS CoreGraphics event tap),
   `platform/mac_present.rs` (Objective-C / CoreGraphics for the transparent
-  CALayer present), `platform/mac_menu.rs` (Objective-C for the right-click
-  NSMenu), and the small WAV/icon byte-buffer builders; document the safety
-  invariant inline.
+  CALayer present), `platform/mac_menu.rs` + `platform/mac_dialogs.rs`
+  (Objective-C for the right-click NSMenu and its NSAlert dialogs), and the
+  small WAV/icon byte-buffer builders; document the safety invariant inline.
+  (`platform/mac_autostart.rs` is plain `std::fs`, no `unsafe`.)
 - Keep both backends' interaction set in parity (drag, single-click bounce,
   double-click pet, hover stats, middle-click/hotkey panel, panel keyboard
   control). If you add an interaction, add it to both. The settings menu is the
-  one deliberate split: Windows native uses the Shell tray menu, macOS uses a
-  right-click NSMenu (`platform/mac_menu.rs`); Linux/Windows-portable still rely
-  on the keyboard shortcuts (no native menu wired there yet).
+  one deliberate split: Windows native uses the Shell tray menu, macOS renders
+  the shared `menu::MenuEntry` model (`Pet::build_menu`) as a right-click NSMenu
+  (`platform/mac_menu.rs`) at full tray parity; Linux/Windows-portable still
+  rely on the keyboard shortcuts (no native menu wired there yet). Menu *items
+  and their effects* live in `menu.rs` + `Pet::{build_menu,apply_menu_action}`
+  (testable); add new menu actions there, not in a backend.
 
 ## Changelog & releases
 

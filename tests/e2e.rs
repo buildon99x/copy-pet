@@ -9,6 +9,8 @@
 
 use clipcat::clipboard::ClipStore;
 use clipcat::hotkey::{self, Hotkey};
+use clipcat::i18n::Lang;
+use clipcat::menu::{MenuAction, MenuEntry, MenuItem, MenuOutcome};
 use clipcat::panel::{self, NavKey};
 use clipcat::pet::Pet;
 use clipcat::state::Persist;
@@ -18,6 +20,28 @@ fn pet() -> Pet {
     let mut p = Pet::new(Persist::default());
     p.clips = ClipStore::default(); // keep tests off the real config dir
     p
+}
+
+fn pet_at_xp(xp: u64) -> Pet {
+    let st = Persist { total_xp: xp, ..Persist::default() };
+    let mut p = Pet::new(st);
+    p.clips = ClipStore::default();
+    p
+}
+
+/// First menu item (recursing into submenus) carrying `action`.
+fn menu_find(entries: &[MenuEntry], action: MenuAction) -> Option<&MenuItem> {
+    for e in entries {
+        if let MenuEntry::Item(it) = e {
+            if it.action == Some(action) {
+                return Some(it);
+            }
+            if let Some(found) = menu_find(&it.submenu, action) {
+                return Some(found);
+            }
+        }
+    }
+    None
 }
 
 fn copy(p: &mut Pet, text: &str, source: Option<&str>) {
@@ -182,4 +206,69 @@ fn panel_hint_follows_registered_hotkey() {
         let mut pm = Pixmap::new(w as u32, h as u32).unwrap();
         p.render(&mut pm); // must not panic for any hint incl. empty
     }
+}
+
+/// The context menu is a real tree (submenus + separators) and every settings
+/// item drives the same state the user sees — checks follow state, and the
+/// destructive/OS items defer to the backend.
+#[test]
+fn context_menu_drives_settings_end_to_end() {
+    let mut p = pet();
+
+    let m = p.build_menu("CMD+SHIFT+V", false);
+    assert!(m.iter().any(|e| matches!(e, MenuEntry::Separator)), "has separators");
+    // the clipboard entry shows the live hotkey label, like the Windows tray
+    assert!(menu_find(&m, MenuAction::TogglePanel).unwrap().label.contains("CMD+SHIFT+V"));
+    // size is a 3-way radio submenu
+    for i in 0..3 {
+        assert!(menu_find(&m, MenuAction::SetSize(i)).is_some());
+    }
+
+    // sound: toggle and watch the radio check move
+    assert_eq!(p.apply_menu_action(MenuAction::SetSound(2)), MenuOutcome::Handled);
+    assert_eq!(p.st.sound_mode, 2);
+    assert!(menu_find(&p.build_menu("HK", false), MenuAction::SetSound(2)).unwrap().checked);
+    assert!(!menu_find(&p.build_menu("HK", false), MenuAction::SetSound(0)).unwrap().checked);
+
+    // lock / stats / auto-update toggles flip the persisted flags
+    let (lock0, bub0, au0) = (p.st.locked, p.st.bubble_pinned, p.st.auto_update);
+    p.apply_menu_action(MenuAction::ToggleLock);
+    p.apply_menu_action(MenuAction::ToggleStats);
+    p.apply_menu_action(MenuAction::ToggleAutoUpdate);
+    assert_eq!((p.st.locked, p.st.bubble_pinned, p.st.auto_update), (!lock0, !bub0, !au0));
+
+    // language submenu switches the language
+    let lang0 = p.lang();
+    let other = if lang0 == Lang::En { Lang::Ko } else { Lang::En };
+    p.apply_menu_action(MenuAction::SetLang(other));
+    assert_eq!(p.lang(), other);
+
+    // panel opens through the menu exactly like the hotkey/middle-click
+    assert!(!p.panel_open());
+    p.apply_menu_action(MenuAction::TogglePanel);
+    assert!(p.panel_open());
+
+    // reset defers to a confirmation; about/quit are backend outcomes
+    p.st.total_keys = 42;
+    assert_eq!(p.apply_menu_action(MenuAction::ResetStats), MenuOutcome::ConfirmReset);
+    assert_eq!(p.st.total_keys, 42);
+    assert_eq!(p.apply_menu_action(MenuAction::About), MenuOutcome::ShowAbout);
+    assert_eq!(p.apply_menu_action(MenuAction::Quit), MenuOutcome::Quit);
+}
+
+/// Accessories are greyed until their level, then become selectable — the
+/// menu's `enabled`/`checked` flags and the apply guard agree.
+#[test]
+fn context_menu_unlocks_accessories_by_level() {
+    let mut low = pet(); // level 1
+    assert!(!menu_find(&low.build_menu("HK", false), MenuAction::SetAccessory(1)).unwrap().enabled);
+    low.apply_menu_action(MenuAction::SetAccessory(1)); // guarded no-op
+    assert_eq!(low.st.accessory, 0);
+
+    let mut high = pet_at_xp(10_000_000); // well past every unlock
+    let m = high.build_menu("HK", false);
+    assert!(menu_find(&m, MenuAction::SetAccessory(1)).unwrap().enabled);
+    high.apply_menu_action(MenuAction::SetAccessory(1));
+    assert_eq!(high.st.accessory, 1);
+    assert!(menu_find(&high.build_menu("HK", false), MenuAction::SetAccessory(1)).unwrap().checked);
 }

@@ -59,24 +59,6 @@ const DBLCLICK: Duration = Duration::from_millis(350);
 /// Clipboard poll cadence (arboard has no change notifications).
 const CLIP_POLL: Duration = Duration::from_millis(400);
 
-/// macOS right-click context menu: (label, the keyboard shortcut it runs).
-/// Picking an item runs exactly the same code path as the key, so behavior
-/// stays in one place (`PortableApp::shortcut`).
-#[cfg(target_os = "macos")]
-const CONTEXT_MENU: &[(crate::i18n::Msg, KeyCode)] = {
-    use crate::i18n::Msg::*;
-    &[
-        (PanelTitle, KeyCode::KeyC),
-        (MenuShowStats, KeyCode::KeyB),
-        (MenuSize, KeyCode::KeyS),
-        (MenuAccessory, KeyCode::KeyA),
-        (MenuSound, KeyCode::KeyM),
-        (MenuLock, KeyCode::KeyL),
-        (MenuLanguage, KeyCode::KeyG),
-        (MenuExit, KeyCode::KeyQ),
-    ]
-};
-
 #[cfg(not(target_os = "macos"))]
 type Surface = softbuffer::Surface<Rc<Window>, Rc<Window>>;
 /// Text we just wrote to the clipboard ourselves; the watcher skips it once.
@@ -108,6 +90,9 @@ struct PortableApp {
     /// Raised by the global-input thread when the (macOS) event tap could not
     /// be installed — Accessibility permission is not granted yet.
     perm_needed: Arc<AtomicBool>,
+    /// Panel-hotkey display label (e.g. "CMD+SHIFT+V") for the context menu.
+    #[cfg(target_os = "macos")]
+    hotkey_label: String,
     // interaction
     cursor: PhysicalPosition<f64>,
     mouse_down: bool,
@@ -125,8 +110,10 @@ impl PortableApp {
         capture_flag: Arc<AtomicBool>,
         panel_toggle: Arc<AtomicBool>,
         perm_needed: Arc<AtomicBool>,
+        hotkey_label: String,
     ) -> Self {
         let (w, h) = pet.canvas_size();
+        let _ = &hotkey_label; // used only by the macOS context menu
         PortableApp {
             pet,
             window: None,
@@ -145,6 +132,8 @@ impl PortableApp {
             capture_flag,
             panel_toggle,
             perm_needed,
+            #[cfg(target_os = "macos")]
+            hotkey_label,
             cursor: PhysicalPosition::new(0.0, 0.0),
             mouse_down: false,
             dragging: false,
@@ -247,20 +236,55 @@ impl PortableApp {
         }
     }
 
-    /// macOS right-click: pop a native context menu at the cursor and run the
-    /// picked item through the same path as its keyboard shortcut.
+    /// macOS right-click: build the platform-agnostic menu model, render it as
+    /// a native NSMenu, and apply the chosen action. State changes happen in
+    /// `Pet::apply_menu_action`; the outcomes that need OS work (confirm/reset,
+    /// About dialog, autostart, update page, quit) are finished here.
     #[cfg(target_os = "macos")]
     fn show_context_menu(&mut self, event_loop: &ActiveEventLoop) {
+        use crate::i18n::{about_text, t, Msg};
+        use crate::menu::MenuOutcome;
+
         let Some(window) = self.window.clone() else {
             return;
         };
+        let autostart = super::mac_autostart::is_enabled();
+        let entries = self.pet.build_menu(&self.hotkey_label, autostart);
+        let Some(action) = super::mac_menu::popup(&window, &entries) else {
+            return;
+        };
         let lang = self.pet.lang();
-        let labels: Vec<String> = CONTEXT_MENU
-            .iter()
-            .map(|(msg, _)| crate::i18n::t(lang, *msg).to_string())
-            .collect();
-        if let Some(i) = super::mac_menu::popup(&window, &labels) {
-            self.shortcut(CONTEXT_MENU[i].1, event_loop);
+        match self.pet.apply_menu_action(action) {
+            MenuOutcome::Handled => {}
+            MenuOutcome::Quit => {
+                self.save_position();
+                event_loop.exit();
+            }
+            MenuOutcome::ConfirmReset => {
+                if super::mac_dialogs::confirm(
+                    t(lang, Msg::ResetTitle),
+                    t(lang, Msg::ResetConfirm),
+                    t(lang, Msg::ResetTitle),
+                    t(lang, Msg::Cancel),
+                ) {
+                    self.pet.reset_stats();
+                }
+            }
+            MenuOutcome::ShowAbout => {
+                let body = about_text(
+                    lang,
+                    env!("CARGO_PKG_VERSION"),
+                    &self.hotkey_label,
+                    self.pet.level(),
+                    self.pet.st.total_keys,
+                    self.pet.clips.len(),
+                );
+                super::mac_dialogs::info(t(lang, Msg::MenuAbout), &body);
+            }
+            MenuOutcome::ToggleAutostart => {
+                super::mac_autostart::set(!autostart);
+            }
+            MenuOutcome::InstallUpdate => crate::update::open_releases_page(),
         }
     }
 
@@ -736,7 +760,8 @@ pub fn run() {
 
     let mut pet = Pet::new(st);
     pet.set_panel_hint(format!("{} / C", hk.display()));
-    let mut app = PortableApp::new(pet, rx, suppress, capture_flag, panel_toggle, perm_needed);
+    let mut app =
+        PortableApp::new(pet, rx, suppress, capture_flag, panel_toggle, perm_needed, hk.display());
 
     let event_loop = match EventLoop::new() {
         Ok(el) => el,

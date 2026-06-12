@@ -35,9 +35,12 @@ versions follow [SemVer](https://semver.org/). Maintenance rules:
   clears it. Search and the app filter combine.
 - The panel hotkey is configurable via `hotkey` in `state.json`
   (e.g. `"ctrl+alt+c"`); invalid values fall back to the default.
-- macOS: right-click the cat to open a context menu (clipboard panel, size,
-  accessory, sound, lock, language, quit) — the same actions as the keyboard
-  shortcuts, now discoverable without the Windows-style tray icon.
+- macOS: right-click the cat for a full context menu at parity with the
+  Windows tray — clipboard panel, pause capture, always-show-stats, Size /
+  Accessory / Sound / Language submenus (with check marks; locked accessories
+  greyed until their level), lock position, run at login, automatic updates,
+  reset stats (with a confirmation), About, an "update to vX.Y.Z" item when a
+  release is found, and quit.
 
 ### Changed
 - The clipboard panel and toast messages now render in your system's UI font
