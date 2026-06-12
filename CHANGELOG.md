@@ -16,6 +16,8 @@ versions follow [SemVer](https://semver.org/). Maintenance rules:
 
 ## [Unreleased]
 
+## [2.1.0] - 2026-06-12
+
 ### Added
 - Deleting a clip is now forgiving: every delete (and even "clear all") can
   be undone with **Ctrl+Z** while the panel is open, and the clear-all
