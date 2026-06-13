@@ -30,11 +30,13 @@ OS window or a new architecture:
   `Panel::layout()` returns a fixed 760×560 card at a fixed offset
   (`EXP_W/EXP_H/EXP_OFF`) instead of the user's resizable compact geometry,
   which is kept separately and restored on collapse.
-- Because everything (window size, cat anchor, `take_window_shift`, drag
-  bookkeeping) already flows through `Panel::layout()` (ADR-0010), the larger
-  card reuses all of it unchanged: the cat stays anchored, centered below the
-  card. The desktop pet is **still rendered** below the screen — this is an
-  expansion of the pet app, not a separate productivity window.
+- The window still flows through `Panel::layout()` (ADR-0010), but in expanded
+  mode `layout()` short-circuits to a **pet-less landscape window**
+  (`EXP_W`x`EXP_H`, the card inset by `EXP_PAD`, `cat = (0,0)`): the desktop pet
+  is **not drawn** and the three-pane card fills the whole window, matching the
+  reference's standalone app screen. `Pet::draw` skips the cat scene entirely
+  when expanded. (The first cut rendered the cat anchored below the card, which
+  read as a different window from the reference — corrected here.)
 - `Panel::expanded_layout()` derives the sidebar/list/detail sub-rects;
   `render::draw_expanded_panel` draws them; `Panel::expanded_hit` +
   `Pet::expanded_click` route interactions (collapse, nav switch, row select,
@@ -50,12 +52,14 @@ OS window or a new architecture:
 - No new dependency, window, or data format; the compact panel and its tests
   are untouched. The mode is one bool plus a parallel render/hit path.
 - The compact panel remains the default, preserving the "small, quiet,
-  pet-first" product contract; the expanded screen is opt-in.
-- The pet renders below the wide card, so the expanded window is tall
-  (~768×824 at 1×). This is consistent with how the compact panel already
-  places the cat, but differs from the standalone concept mock (which shows no
-  desktop pet). Acceptable for an in-app expansion; revisit if a pet-less
-  expanded window is wanted.
+  pet-first" product contract; the expanded screen is opt-in and, while shown,
+  the pet steps aside so the window reads like the reference app.
+- Remaining differences from the high-DPI concept mock are inherent, not
+  layout: the single-weight system font (no true bold), colored-initial source
+  badges instead of bundled app-logo icons (real icons are extracted only on
+  the Windows native backend), and no OS window chrome / global top search bar
+  (ClipCat is a frameless floating window). These are font/asset/policy limits,
+  not the three-pane structure.
 - First cut (this ADR) implements the Clipboard/Pinned views, the detail pane
   and Copy/Pin/Delete. Statistics / Customization / Settings nav destinations
   and the Edit-note / Open-source / Quick-copy detail actions are follow-ups.

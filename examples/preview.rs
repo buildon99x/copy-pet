@@ -308,7 +308,8 @@ fn main() {
         pet_png("frame_12_permission_missing", &sc);
     }
 
-    // frame_13/14: the expanded three-pane screen (ADR-0012), EN + KO
+    // frame_13/14: the expanded three-pane window (ADR-0012), EN + KO — a
+    // pet-less landscape window, rendered at 1.5x for crisp text
     for (lang, name) in [(Lang::En, "frame_13_expanded_screen"), (Lang::Ko, "frame_14_expanded_korean")] {
         let store = demo_store();
         let mut panel = Panel::default();
@@ -316,10 +317,9 @@ fn main() {
         panel.toggle_expanded();
         panel.sel = 1;
         let lt = panel.layout();
-        let mut sc = base_scene(lang);
-        sc.origin = lt.cat;
-        let mut pm = Pixmap::new(lt.canvas_w as u32, lt.canvas_h as u32).unwrap();
-        render::render_card(&mut pm, &sc, 1.0);
+        let s = 1.5f32;
+        let mut pm = Pixmap::new((lt.canvas_w * s) as u32, (lt.canvas_h * s) as u32).unwrap();
+        pm.fill(tiny_skia::Color::from_rgba8(15, 18, 24, 255));
         let view = render::ExpandedView {
             panel: &panel,
             store: &store,
@@ -335,7 +335,7 @@ fn main() {
             copies: 1_248,
             autoclose: true,
         };
-        render::draw_expanded_panel(&mut pm, &view, 1.0);
+        render::draw_expanded_panel(&mut pm, &view, s);
         save(&pm, &dir, name);
     }
 }

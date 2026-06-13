@@ -32,13 +32,16 @@ pub const DEFAULT_OFF: (f32, f32) = (-56.0, -282.0);
 /// can't produce an absurd canvas.
 pub const MAX_OFF: f32 = 4096.0;
 
-/// Expanded "full screen" mode: a fixed-size three-pane card (sidebar, clip
-/// list, clip detail). Not user-resizable — the compact card's w/h/off are
-/// kept separately and restored on collapse. See ADR-0012.
-pub const EXP_W: f32 = 760.0;
-pub const EXP_H: f32 = 560.0;
-/// Expanded card offset relative to the cat: centers the cat below the card.
-pub const EXP_OFF: (f32, f32) = (-260.0, -564.0);
+/// Expanded "full screen" mode: a landscape three-pane window (sidebar, clip
+/// list, clip detail) that fills the whole window — the desktop pet is hidden,
+/// matching the design package's full-app concept. Not user-resizable; the
+/// compact card's w/h/off are kept separately and restored on collapse.
+/// See ADR-0012.
+pub const EXP_W: f32 = 940.0;
+pub const EXP_H: f32 = 620.0;
+/// Window padding around the expanded card — room for the rounded corners and
+/// soft shadow; the desktop shows through there on the native backend.
+pub const EXP_PAD: f32 = 10.0;
 
 pub const BTN: f32 = 18.0;
 pub const ROW_H: f32 = 34.0;
@@ -315,13 +318,12 @@ impl Panel {
     }
 
     /// The full geometry for the current card size/offset. In expanded mode
-    /// the card is the fixed three-pane size/offset instead of the user's.
+    /// the card fills the whole window (no cat) — see [`Panel::expanded_window`].
     pub fn layout(&self) -> Layout {
-        let (w, h, off_x, off_y) = if self.expanded {
-            (EXP_W, EXP_H, EXP_OFF.0, EXP_OFF.1)
-        } else {
-            (self.w, self.h, self.off.0, self.off.1)
-        };
+        if self.expanded {
+            return self.expanded_window();
+        }
+        let (w, h, off_x, off_y) = (self.w, self.h, self.off.0, self.off.1);
         // canvas = union of the cat canvas and the margin-padded card
         let left = (off_x - MARGIN).min(0.0);
         let top = (off_y - MARGIN).min(0.0);
@@ -366,13 +368,47 @@ impl Panel {
         }
     }
 
+    /// Window geometry while expanded: the card fills the window (inset by
+    /// [`EXP_PAD`] for the shadow/rounded corners); no cat canvas. The compact
+    /// `Layout` button/search/row fields are filled but unused (the expanded
+    /// renderer/hit-test use [`Panel::expanded_layout`] instead).
+    fn expanded_window(&self) -> Layout {
+        let pad = EXP_PAD;
+        let (cx, cy) = (pad, pad);
+        let (cw, ch) = (EXP_W - 2.0 * pad, EXP_H - 2.0 * pad);
+        Layout {
+            canvas_w: EXP_W,
+            canvas_h: EXP_H,
+            cat: (0.0, 0.0),
+            card_x: cx,
+            card_y: cy,
+            card_w: cw,
+            card_h: ch,
+            btn_y: cy + 6.0,
+            btn_close_x: cx + cw - 26.0,
+            btn_lang_x: cx + cw - 48.0,
+            btn_clear_x: cx + cw - 70.0,
+            btn_pause_x: cx + cw - 92.0,
+            btn_filter_x: cx + cw - 114.0,
+            search_x: cx + 8.0,
+            search_y: cy + 30.0,
+            search_w: cw - 16.0,
+            search_h: 20.0,
+            rows_y: cy + HEADER_H,
+            row_x: cx + 8.0,
+            row_w: cw - 20.0,
+            rows: 1,
+            footer_y: cy + ch - FOOTER_H,
+        }
+    }
+
     /// Sub-rects of the expanded three-pane screen (only meaningful while
     /// `expanded`); derived from the card rect in [`Panel::layout`].
     pub fn expanded_layout(&self) -> ExpandedLayout {
         let l = self.layout();
         let (cx, cy, cw, ch) = (l.card_x, l.card_y, l.card_w, l.card_h);
-        let sidebar_w = 210.0;
-        let detail_w = 250.0;
+        let sidebar_w = 232.0;
+        let detail_w = 292.0;
         let list_w = cw - sidebar_w - detail_w;
         let list = (cx + sidebar_w, cy, list_w, ch);
         ExpandedLayout {

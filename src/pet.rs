@@ -963,6 +963,37 @@ impl Pet {
     /// Builds the scene and rasterizes it with the chosen background.
     fn draw(&self, pm: &mut Pixmap, card: bool) {
         let t = self.now_t();
+
+        // Expanded screen is a pet-less, landscape full window: skip the cat
+        // scene entirely and let the three-pane card fill the window.
+        if self.panel.expanded {
+            if card {
+                pm.fill(tiny_skia::Color::from_rgba8(
+                    render::CARD_BG.0, render::CARD_BG.1, render::CARD_BG.2, 255,
+                ));
+            } else {
+                pm.fill(tiny_skia::Color::TRANSPARENT);
+            }
+            let (lv, into, need) = level_progress(self.st.total_xp);
+            let view = render::ExpandedView {
+                panel: &self.panel,
+                store: &self.clips,
+                lang: self.lang(),
+                version: env!("CARGO_PKG_VERSION"),
+                capture: self.st.clip_capture,
+                caret: (t * 1.6).fract() < 0.65,
+                level: lv,
+                xp_into: into,
+                xp_need: need,
+                keys: self.st.keys_today,
+                clicks: self.st.clicks_today,
+                copies: self.st.copies_today,
+                autoclose: self.st.panel_autoclose,
+            };
+            render::draw_expanded_panel(pm, &view, self.scale());
+            return;
+        }
+
         let bt = t - self.blink_start;
         let blink = if bt < 0.14 {
             1.0 - ((bt / 0.07) - 1.0).abs()
@@ -1037,36 +1068,15 @@ impl Pet {
             render::render(pm, &scene, self.scale());
         }
         if self.panel.open {
-            let caret = (t * 1.6).fract() < 0.65;
-            if self.panel.expanded {
-                let (lv, into, need) = level_progress(self.st.total_xp);
-                let view = render::ExpandedView {
-                    panel: &self.panel,
-                    store: &self.clips,
-                    lang: self.lang(),
-                    version: env!("CARGO_PKG_VERSION"),
-                    capture: self.st.clip_capture,
-                    caret,
-                    level: lv,
-                    xp_into: into,
-                    xp_need: need,
-                    keys: self.st.keys_today,
-                    clicks: self.st.clicks_today,
-                    copies: self.st.copies_today,
-                    autoclose: self.st.panel_autoclose,
-                };
-                render::draw_expanded_panel(pm, &view, self.scale());
-            } else {
-                let view = render::PanelView {
-                    panel: &self.panel,
-                    store: &self.clips,
-                    lang: self.lang(),
-                    capture: self.st.clip_capture,
-                    hint: &self.panel_hint,
-                    caret,
-                };
-                render::draw_panel(pm, &view, self.scale());
-            }
+            let view = render::PanelView {
+                panel: &self.panel,
+                store: &self.clips,
+                lang: self.lang(),
+                capture: self.st.clip_capture,
+                hint: &self.panel_hint,
+                caret: (t * 1.6).fract() < 0.65,
+            };
+            render::draw_panel(pm, &view, self.scale());
         }
     }
 
