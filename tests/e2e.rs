@@ -219,6 +219,41 @@ fn render_filtered_panel_end_to_end() {
     assert!(opaque, "card render fills the canvas");
 }
 
+/// M1 dark-premium primitives: the public rounded-rect / focus-ring /
+/// source-badge helpers rasterize, and the focus ring paints the gold token
+/// (`border.focus`) so selection chrome is one shared implementation.
+#[test]
+fn dark_premium_primitives_render() {
+    use clipcat::render::{fill_round_rect, focus_border, source_badge, Badge};
+    use clipcat::tokens;
+    use tiny_skia::Transform;
+
+    let mut pm = Pixmap::new(80, 40).unwrap();
+    let ts = Transform::identity();
+    // panel-card surface fill should cover the canvas with the panel token.
+    fill_round_rect(&mut pm, (0.0, 0.0, 80.0, 40.0), 8.0, tokens::SURFACE_PANEL, ts);
+    let center = pm.pixel(40, 20).unwrap();
+    assert_eq!(
+        (center.red(), center.green(), center.blue()),
+        (tokens::SURFACE_PANEL.0, tokens::SURFACE_PANEL.1, tokens::SURFACE_PANEL.2),
+        "surface fill uses the panel token color",
+    );
+
+    // gold focus ring must deposit the border.focus token along the edge.
+    focus_border(&mut pm, (2.0, 2.0, 76.0, 36.0), 8.0, ts);
+    let gold = (0..pm.width())
+        .flat_map(|x| (0..pm.height()).map(move |y| (x, y)))
+        .filter_map(|(x, y)| pm.pixel(x, y))
+        .any(|p| p.red() > 0xE0 && p.green() > 0xB0 && p.blue() < 0x70);
+    assert!(gold, "focus ring paints the gold border.focus token");
+
+    // source badge: a colored letter chip rasterizes (no icon path).
+    let badge = Badge::from_source(Some("VS Code"));
+    let before = pm.data().to_vec();
+    source_badge(&mut pm, 20.0, 20.0, 16.0, &badge, ts);
+    assert_ne!(before, pm.data(), "source badge draws pixels");
+}
+
 /// Hotkey configuration e2e: default spec, persistence round-trip, custom
 /// values and the reset of hand-edited garbage.
 #[test]

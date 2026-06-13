@@ -8,6 +8,7 @@ use crate::i18n::{self, t, Lang, Msg};
 use crate::panel as pl;
 use crate::panel::Panel;
 use crate::sysfont;
+use crate::tokens;
 use tiny_skia::{
     FillRule, FilterQuality, LineCap, LineJoin, Paint, Path, PathBuilder, Pixmap, PixmapPaint,
     Rect, Stroke, Transform,
@@ -226,6 +227,79 @@ fn round_rect(x: f32, y: f32, w: f32, h: f32, r: f32) -> Option<Path> {
     pb.cubic_to(x, y + r - k, x + r - k, y, x + r, y);
     pb.close();
     pb.finish()
+}
+
+// ---- dark-premium primitives ----------------------------------------------
+//
+// Public, transform-aware draw helpers built on the geometry above and the
+// [`crate::tokens`] palette. They take a `&mut Pixmap` plus the same
+// scale+translate `Transform` the renderer uses, so the upcoming panel/pet
+// restyle milestones share one rounded-rect / focus-ring / source-badge
+// implementation instead of re-deriving them per call site.
+
+/// A logical-coordinate rounded rectangle: `(x, y, w, h)` plus corner radius.
+pub type RRect = (f32, f32, f32, f32);
+
+/// Fill a rounded rectangle (logical coords) under `ts`.
+pub fn fill_round_rect(pm: &mut Pixmap, rect: RRect, r: f32, c: tokens::Rgba, ts: Transform) {
+    if let Some(p) = round_rect(rect.0, rect.1, rect.2, rect.3, r) {
+        pm.fill_path(&p, &paint(c), FillRule::Winding, ts, None);
+    }
+}
+
+/// Stroke a rounded rectangle (logical coords) under `ts`.
+pub fn stroke_round_rect(pm: &mut Pixmap, rect: RRect, r: f32, c: tokens::Rgba, width: f32, ts: Transform) {
+    if let Some(p) = round_rect(rect.0, rect.1, rect.2, rect.3, r) {
+        let stroke = Stroke {
+            width,
+            line_cap: LineCap::Round,
+            line_join: LineJoin::Round,
+            ..Default::default()
+        };
+        pm.stroke_path(&p, &paint(c), &stroke, ts, None);
+    }
+}
+
+/// Gold focus ring (`border.focus` / `stroke.focus`) inset half a stroke so it
+/// sits crisply inside the given rect — for selected rows and focused controls.
+pub fn focus_border(pm: &mut Pixmap, rect: RRect, r: f32, ts: Transform) {
+    let i = tokens::STROKE_FOCUS / 2.0;
+    stroke_round_rect(
+        pm,
+        (rect.0 + i, rect.1 + i, rect.2 - 2.0 * i, rect.3 - 2.0 * i),
+        (r - i).max(0.0),
+        tokens::BORDER_FOCUS,
+        tokens::STROKE_FOCUS,
+        ts,
+    );
+}
+
+/// Draw the per-app source identity badge — a `size`-wide rounded chip centered
+/// at (`cx`, `cy`): the extracted app icon when present, otherwise the app
+/// initial on the stable [`source_color`] chip. Shared by the fish and the
+/// panel rows so one app always reads as one color (the spec's identity rule).
+pub fn source_badge(pm: &mut Pixmap, cx: f32, cy: f32, size: f32, badge: &Badge, ts: Transform) {
+    let r = size * 0.30;
+    if let Some(icon) = &badge.icon {
+        let chip = round_rect(cx - size / 2.0, cy - size / 2.0, size, size, r);
+        if let Some(chip) = chip {
+            pm.fill_path(&chip, &paint((255, 255, 255, 235)), FillRule::Winding, ts, None);
+        }
+        let k = size / icon.width() as f32;
+        let it = ts.pre_translate(cx - size / 2.0, cy - size / 2.0).pre_scale(k, k);
+        let pp = PixmapPaint {
+            quality: FilterQuality::Bilinear,
+            ..Default::default()
+        };
+        pm.draw_pixmap(0, 0, icon.as_ref(), &pp, it, None);
+    } else {
+        let (r8, g8, b8) = badge.color;
+        fill_round_rect(pm, (cx - size / 2.0, cy - size / 2.0, size, size), r, (r8, g8, b8, 255), ts);
+        let px = size * 0.58;
+        let label = badge.letter.to_string();
+        let lw = sysfont::measure(&label, px);
+        sysfont::draw(pm, &label, cx - lw / 2.0, cy - 3.5 * px, px, tokens::TEXT_PRIMARY, ts);
+    }
 }
 
 struct Cv<'a> {
