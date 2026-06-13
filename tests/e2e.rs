@@ -594,6 +594,8 @@ fn stats_bubble_renders_with_system_font() {
         breath: 0.0,
         tail_phase: 0.0,
         mouth_open: 0.0,
+        ear_twitch: 0.0,
+        look: 0.0,
         accessory: Accessory::None,
         particles: &[],
         fish: None,

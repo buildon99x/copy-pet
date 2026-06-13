@@ -22,6 +22,8 @@ fn base_scene(lang: Lang) -> Scene<'static> {
         breath: 0.3,
         tail_phase: 1.2,
         mouth_open: 0.0,
+        ear_twitch: 0.0,
+        look: 0.0,
         accessory: Accessory::Scarf,
         particles: &[],
         fish: None,

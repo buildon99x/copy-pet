@@ -17,15 +17,17 @@ use tiny_skia::{
 pub const CANVAS_W: f32 = 240.0;
 pub const CANVAS_H: f32 = 256.0;
 
-// palette
-const OUTLINE: (u8, u8, u8, u8) = (84, 72, 58, 255);
-const FUR: (u8, u8, u8, u8) = (250, 247, 242, 255);
-const EAR_PINK: (u8, u8, u8, u8) = (247, 200, 207, 255);
+// palette — mascot colors from the design tokens (cat.* in colors.json); the
+// desk/keyboard are the dark-premium surfaces so the warm cat reads against a
+// cool slate slab, matching the reference art.
+const OUTLINE: (u8, u8, u8, u8) = (90, 62, 48, 255); // tokens cat.line #5A3E30
+const FUR: (u8, u8, u8, u8) = (255, 243, 226, 255); // tokens cat.fur #FFF3E2
+const EAR_PINK: (u8, u8, u8, u8) = (255, 213, 207, 255); // tokens cat.innerEar #FFD5CF
 const BLUSH: (u8, u8, u8, u8) = (245, 168, 176, 255);
-const DESK_TOP: (u8, u8, u8, u8) = (207, 159, 110, 255);
-const DESK_FRONT: (u8, u8, u8, u8) = (179, 133, 79, 255);
-const KEY_BASE: (u8, u8, u8, u8) = (78, 85, 102, 255);
-const KEY_CAP: (u8, u8, u8, u8) = (153, 161, 181, 255);
+const DESK_TOP: (u8, u8, u8, u8) = (38, 44, 58, 255); // dark shelf top
+const DESK_FRONT: (u8, u8, u8, u8) = (22, 26, 35, 255); // darker shelf front
+const KEY_BASE: (u8, u8, u8, u8) = (32, 38, 51, 255); // tokens surface.card
+const KEY_CAP: (u8, u8, u8, u8) = (124, 134, 156, 255);
 const TEXT: (u8, u8, u8, u8) = (84, 72, 58, 255);
 const TEXT_DIM: (u8, u8, u8, u8) = (149, 138, 124, 255);
 const FISH_BLUE: (u8, u8, u8) = (108, 160, 220);
@@ -181,6 +183,10 @@ pub struct Scene<'a> {
     pub breath: f32,
     pub tail_phase: f32,
     pub mouth_open: f32,
+    /// Curious ear-flick rotation (degrees) and horizontal eye-glance (px);
+    /// both 0 outside the Curious mood. See [`crate::pet::PetMood::Curious`].
+    pub ear_twitch: f32,
+    pub look: f32,
     pub accessory: Accessory,
     pub particles: &'a [Particle],
     pub fish: Option<FishView<'a>>,
@@ -428,8 +434,13 @@ fn draw_scene(pm: &mut Pixmap, sc: &Scene, scale: f32) {
     cv.fill_t(&body, FUR, body_t);
     cv.stroke_t(&body, OUTLINE, 3.0, body_t);
 
-    // ears (under head outline)
+    // ears (under head outline) — a curious flick rotates them about the crown
     {
+        let head_t = if sc.ear_twitch.abs() > 0.01 {
+            Transform::from_rotate_at(sc.ear_twitch, 120.0, 92.0).post_concat(head_t)
+        } else {
+            head_t
+        };
         let mut le = PathBuilder::new();
         le.move_to(72.0, 98.0);
         le.line_to(78.0, 56.0);
@@ -476,13 +487,13 @@ fn draw_scene(pm: &mut Pixmap, sc: &Scene, scale: f32) {
     cv.fill(&round_rect(16.0, 222.0, 208.0, 20.0, 6.0), DESK_FRONT);
     let top = round_rect(12.0, 212.0, 216.0, 14.0, 7.0);
     cv.fill(&top, DESK_TOP);
-    cv.stroke(&top, fade(OUTLINE, 0.55), 2.0);
+    cv.stroke(&top, tokens::BORDER_SUBTLE, 1.5);
 
     // keyboard
     {
         let base = round_rect(74.0, 200.0, 92.0, 18.0, 5.0);
         cv.fill(&base, KEY_BASE);
-        cv.stroke(&base, fade(OUTLINE, 0.7), 2.0);
+        cv.stroke(&base, tokens::BORDER_STRONG, 1.5);
         for row in 0..2 {
             let y = 203.5 + row as f32 * 7.0;
             let n = 7 - row; // 7 keys then 6
@@ -552,11 +563,13 @@ fn draw_face(cv: &mut Cv, sc: &Scene, t: Transform) {
             cv.stroke_t(&pb.finish(), OUTLINE, 2.6, t);
         } else {
             let ry = 5.2 * (1.0 - closed * 0.85);
-            // big sparkly eyes while a fish is incoming
+            // big sparkly eyes while a fish is incoming; curious glance shifts
+            // the pupil sideways
             let r = if chase { 6.2 } else { 5.2 };
-            cv.fill_t(&oval(ex, 122.0, r, (ry * r / 5.2).max(0.8)), OUTLINE, t);
+            let px = ex + sc.look;
+            cv.fill_t(&oval(px, 122.0, r, (ry * r / 5.2).max(0.8)), OUTLINE, t);
             if ry > 2.0 {
-                cv.fill_t(&oval(ex - 1.6, 120.2, 1.7, 1.7 * (ry / 5.2)), (255, 255, 255, 230), t);
+                cv.fill_t(&oval(px - 1.6, 120.2, 1.7, 1.7 * (ry / 5.2)), (255, 255, 255, 230), t);
             }
         }
     }

@@ -138,6 +138,8 @@ pub struct Pet {
     last_bounce: Option<(f32, u64)>,
     particles: Vec<Particle>,
     zzz_next: f32,
+    /// Next time a typing-extreme spark may emit (motion spec `sparks: true`).
+    spark_next: f32,
     toast: Option<(String, f32)>, // text, expires_at (seconds since start)
     bubble_alpha: f32,
     // copy-event fish
@@ -194,6 +196,7 @@ impl Pet {
             last_bounce: None,
             particles: Vec::new(),
             zzz_next: 0.0,
+            spark_next: 0.0,
             toast: None,
             bubble_alpha: 0.0,
             fish: None,
@@ -674,6 +677,23 @@ impl Pet {
             }
         }
 
+        // typing-extreme sparks flicking off the paws (motion spec sparks:true)
+        if self.kps >= KPS_EXTREME && t > self.spark_next {
+            self.spark_next = t + 0.07;
+            let r = rand_f(&mut self.rng);
+            let left = r < 0.5;
+            self.particles.push(Particle {
+                x: if left { 92.0 } else { 150.0 } + (r - 0.5) * 10.0,
+                y: 188.0,
+                vx: (r - 0.5) * 60.0,
+                vy: -40.0 - r * 20.0,
+                life: 1.0,
+                kind: ParticleKind::Sparkle,
+                size: 3.5 + r * 2.0,
+                spin: 0.0,
+            });
+        }
+
         // zzz particles while asleep
         if self.sleep > 0.7 && t > self.zzz_next {
             self.zzz_next = t + 1.4;
@@ -841,6 +861,15 @@ impl Pet {
             None => 0.0,
         };
 
+        // curious idle gestures: a slow side glance with the occasional ear
+        // flick (motion spec random_gesture window), zero in every other mood.
+        let (ear_twitch, look) = if self.mood() == PetMood::Curious {
+            let flick = if (t % 5.0) < 0.22 { (t * 46.0).sin() * 5.0 } else { 0.0 };
+            (flick, (t * 0.5).sin() * 2.6)
+        } else {
+            (0.0, 0.0)
+        };
+
         let scene = Scene {
             paw_l: ease_press(self.paw_l),
             paw_r: ease_press(self.paw_r),
@@ -852,6 +881,8 @@ impl Pet {
             breath,
             tail_phase: self.tail_phase,
             mouth_open,
+            ear_twitch,
+            look,
             accessory: Accessory::from_id(self.st.accessory),
             particles: &self.particles,
             fish,
