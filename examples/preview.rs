@@ -7,8 +7,46 @@
 use clipcat::clipboard::ClipStore;
 use clipcat::i18n::Lang;
 use clipcat::panel::Panel;
-use clipcat::render::{self, Accessory, Badge, BubbleData, FishView, PanelView, Scene, XpPop};
+use clipcat::render::{
+    self, Accessory, Badge, BubbleData, FishView, Particle, ParticleKind, PanelView, Scene, XpPop,
+};
 use tiny_skia::Pixmap;
+
+/// One panel regression frame's variable inputs.
+struct PanelFrame<'a> {
+    name: &'a str,
+    lang: Lang,
+    capture: bool,
+    source: Option<&'a str>,
+    query: &'a str,
+    clear_armed: bool,
+    empty: bool,
+}
+
+fn panel_frame(dir: &str, pf: PanelFrame) {
+    let store = if pf.empty { ClipStore::default() } else { demo_store() };
+    let mut panel = Panel::default();
+    panel.toggle();
+    panel.source = pf.source.map(str::to_string);
+    panel.query = pf.query.to_string();
+    panel.clear_armed = pf.clear_armed;
+    panel.sel = 0;
+    let lt = panel.layout();
+    let mut sc = base_scene(pf.lang);
+    sc.origin = lt.cat;
+    let mut pm = Pixmap::new(lt.canvas_w as u32, lt.canvas_h as u32).unwrap();
+    render::render_card(&mut pm, &sc, 1.0);
+    let view = PanelView {
+        panel: &panel,
+        store: &store,
+        lang: pf.lang,
+        capture: pf.capture,
+        hint: "WIN+SHIFT+V",
+        caret: true,
+    };
+    render::draw_panel(&mut pm, &view, 1.0);
+    save(&pm, dir, pf.name);
+}
 
 fn base_scene(lang: Lang) -> Scene<'static> {
     Scene {
@@ -172,5 +210,101 @@ fn main() {
         let mut pm = Pixmap::new(64, 64).unwrap();
         render::draw_icon_scaled(&mut pm, 2.0);
         save(&pm, &dir, "5-icon");
+    }
+
+    // 6. the design package's required visual-regression frames
+    //    (docs/design/docs/09_visual_regression_frames.md)
+    let pet_png = |name: &str, sc: &Scene| {
+        let mut pm = Pixmap::new(240, 256).unwrap();
+        render::render_card(&mut pm, sc, 1.0);
+        save(&pm, &dir, name);
+    };
+
+    // frame_01: idle
+    pet_png("frame_01_pet_idle", &base_scene(Lang::En));
+
+    // frame_02: typing slow (one paw down, gentle)
+    {
+        let mut sc = base_scene(Lang::En);
+        sc.paw_l = 0.35;
+        sc.paw_r = 0.0;
+        sc.excite = 0.2;
+        pet_png("frame_02_pet_typing_slow", &sc);
+    }
+
+    // frame_03: typing extreme (both paws flying, sparks)
+    {
+        let sparks: Vec<Particle> = [(92.0, -1.0), (150.0, 1.0), (110.0, 0.3)]
+            .iter()
+            .map(|&(x, d)| Particle {
+                x,
+                y: 188.0,
+                vx: d * 40.0,
+                vy: -45.0,
+                life: 0.9,
+                kind: ParticleKind::Sparkle,
+                size: 4.5,
+                spin: 0.0,
+            })
+            .collect();
+        let mut sc = base_scene(Lang::En);
+        sc.paw_l = 0.9;
+        sc.paw_r = 0.25;
+        sc.excite = 1.0;
+        sc.particles = &sparks;
+        pet_png("frame_03_pet_typing_extreme", &sc);
+    }
+
+    // frame_04: copy fish mid-flight (mouth opening)
+    {
+        let badge = Badge::from_source(Some("Code"));
+        let mut sc = base_scene(Lang::En);
+        sc.mouth_open = 0.6;
+        sc.fish = Some(FishView { x: 168.0, y: 78.0, rot: 22.0, scale: 0.95, badge: &badge });
+        pet_png("frame_04_copy_fish_midflight", &sc);
+    }
+
+    // frame_05: nom + "+5 XP" popup, sparkles and a heart
+    {
+        let fx = [
+            Particle { x: 112.0, y: 116.0, vx: -10.0, vy: -30.0, life: 0.9, kind: ParticleKind::Heart, size: 5.0, spin: 0.0 },
+            Particle { x: 132.0, y: 120.0, vx: 18.0, vy: -24.0, life: 0.8, kind: ParticleKind::Sparkle, size: 4.0, spin: 0.0 },
+        ];
+        let pops = [XpPop { x: 120.0, y: 96.0, life: 1.0, amount: 5 }];
+        let mut sc = base_scene(Lang::En);
+        sc.happy = 0.9;
+        sc.squash = 0.5;
+        sc.particles = &fx;
+        sc.xp_pops = &pops;
+        pet_png("frame_05_nom_xp", &sc);
+    }
+
+    // frame_06: hover stats bubble
+    {
+        let mut sc = base_scene(Lang::En);
+        sc.bubble_alpha = 1.0;
+        sc.bubble = Some(BubbleData {
+            level: 24,
+            pct: 0.68,
+            keys: 12430,
+            clicks: 3210,
+            copies: 1248,
+            minutes: 95,
+        });
+        pet_png("frame_06_hover_stats_bubble", &sc);
+    }
+
+    // frames 07-12: the panel states + an empty/permission case
+    panel_frame(&dir, PanelFrame { name: "frame_07_panel_default", lang: Lang::En, capture: true, source: None, query: "", clear_armed: false, empty: false });
+    panel_frame(&dir, PanelFrame { name: "frame_08_panel_search_korean", lang: Lang::Ko, capture: true, source: None, query: "안녕", clear_armed: false, empty: false });
+    panel_frame(&dir, PanelFrame { name: "frame_09_panel_source_filter", lang: Lang::En, capture: true, source: Some("Code"), query: "", clear_armed: false, empty: false });
+    panel_frame(&dir, PanelFrame { name: "frame_10_clear_armed_danger", lang: Lang::En, capture: true, source: None, query: "", clear_armed: true, empty: false });
+    panel_frame(&dir, PanelFrame { name: "frame_11_empty_state", lang: Lang::En, capture: true, source: None, query: "", clear_armed: false, empty: true });
+
+    // frame_12: macOS Accessibility-permission missing (instruction toast)
+    {
+        let mut sc = base_scene(Lang::En);
+        sc.toast = Some(("Enable Accessibility for global shortcuts & typing reactions", 1.0));
+        pet_png("frame_12_permission_missing", &sc);
     }
 }
