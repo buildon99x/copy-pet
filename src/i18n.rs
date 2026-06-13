@@ -87,6 +87,8 @@ pub enum Msg {
     BubbleActive,
     /// Short "level" prefix on the stats bubble / tooltip.
     LevelShort,
+    /// Shown once when a corrupt clips.json was backed up and reset.
+    ToastClipsCorrupt,
 }
 
 /// Looks up a fixed string for the language.
@@ -186,6 +188,8 @@ pub fn t(lang: Lang, msg: Msg) -> &'static str {
         (BubbleActive, Lang::Ko) => "활동",
         (LevelShort, Lang::En) => "LV",
         (LevelShort, Lang::Ko) => "LV",
+        (ToastClipsCorrupt, Lang::En) => "History was corrupt — started fresh",
+        (ToastClipsCorrupt, Lang::Ko) => "기록이 손상되어 새로 시작했어요",
     }
 }
 
@@ -328,7 +332,7 @@ mod tests {
             ToastCapturePaused, ToastCaptureOn, ToastAutoCloseOn, ToastAutoCloseOff,
             MenuAutoUpdate, ToastUpdateDownloading,
             ToastUpdateFailed, ToastAccessibility, BubbleKeys, BubbleClicks, BubbleClips,
-            BubbleActive, LevelShort,
+            BubbleActive, LevelShort, ToastClipsCorrupt,
         ];
         for msg in all {
             assert!(!t(Lang::En, msg).is_empty());

@@ -172,9 +172,10 @@ impl Pet {
         let now = Instant::now();
         let (level, _, _) = level_progress(st.total_xp);
         let panel = Panel::with_geometry(st.panel_w, st.panel_h, (st.panel_off_x, st.panel_off_y));
-        Pet {
+        let clips = ClipStore::load();
+        let mut pet = Pet {
             st,
-            clips: ClipStore::load(),
+            clips,
             panel,
             dirty: false,
             last_save: now,
@@ -217,7 +218,12 @@ impl Pet {
             size_changed: false,
             pending_shift: (0.0, 0.0),
             drag: None,
+        };
+        // A corrupt history was backed up and reset during load — say so once.
+        if pet.clips.take_recovered_corrupt() {
+            pet.set_toast(t(pet.lang(), Msg::ToastClipsCorrupt).to_string(), 5.0);
         }
+        pet
     }
 
     pub fn scale(&self) -> f32 {

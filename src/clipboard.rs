@@ -5,7 +5,7 @@
 //! `state.json`. Everything stays local — there is no network code.
 
 use serde::{Deserialize, Serialize};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 /// Most unpinned clips kept in history (oldest evicted first).
@@ -74,6 +74,9 @@ pub struct ClipStore {
     /// Monotonic mutation counter; bumps whenever the list could look
     /// different, so the panel's cached filtered view knows to recompute.
     version: u64,
+    /// Set when `load()` found a corrupt `clips.json`, backed it up and started
+    /// fresh — so the UI can toast it once (panel error-UX spec). Runtime-only.
+    recovered_corrupt: bool,
 }
 
 #[derive(Deserialize, Default)]
@@ -127,12 +130,36 @@ fn clips_file() -> Option<PathBuf> {
 
 impl ClipStore {
     pub fn load() -> ClipStore {
-        let items = clips_file()
-            .and_then(|p| std::fs::read_to_string(p).ok())
-            .and_then(|s| serde_json::from_str::<ClipsFile>(&s).ok())
-            .map(|f| f.clips)
-            .unwrap_or_default();
-        ClipStore::from_items(items)
+        match clips_file() {
+            Some(p) => ClipStore::load_from(&p),
+            None => ClipStore::from_items(Vec::new()),
+        }
+    }
+
+    /// Loads the history from a specific file. A missing/unreadable file is
+    /// just first-run (start empty); an *existing* file that won't parse is
+    /// corrupt — rename it to `clips.corrupt.<ts>.json` for forensics, start
+    /// fresh, and flag a one-time toast (panel error-UX spec).
+    fn load_from(path: &Path) -> ClipStore {
+        let Ok(text) = std::fs::read_to_string(path) else {
+            return ClipStore::from_items(Vec::new());
+        };
+        match serde_json::from_str::<ClipsFile>(&text) {
+            Ok(f) => ClipStore::from_items(f.clips),
+            Err(_) => {
+                let backup = path.with_file_name(format!("clips.corrupt.{}.json", now_ts()));
+                let _ = std::fs::rename(path, &backup);
+                let mut s = ClipStore::from_items(Vec::new());
+                s.recovered_corrupt = true;
+                s
+            }
+        }
+    }
+
+    /// True once after a corrupt `clips.json` was recovered at load; the value
+    /// is taken so the toast fires a single time.
+    pub fn take_recovered_corrupt(&mut self) -> bool {
+        std::mem::take(&mut self.recovered_corrupt)
     }
 
     fn from_items(items: Vec<Clip>) -> ClipStore {
@@ -143,6 +170,7 @@ impl ClipStore {
             dirty: false,
             undo: Vec::new(),
             version: 0,
+            recovered_corrupt: false,
         }
     }
 
@@ -367,6 +395,42 @@ mod tests {
             s.add_copy(t.to_string(), None);
         }
         s
+    }
+
+    #[test]
+    fn corrupt_history_is_backed_up_and_reset() {
+        let dir = std::env::temp_dir().join(format!("clipcat-corrupt-{}", now_ts()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("clips.json");
+        std::fs::write(&path, b"{ this is not valid json ]]").unwrap();
+
+        let mut s = ClipStore::load_from(&path);
+        assert!(s.is_empty(), "a corrupt history starts fresh");
+        assert!(s.take_recovered_corrupt(), "and flags the one-time toast");
+        assert!(!s.take_recovered_corrupt(), "flag is taken, fires only once");
+
+        // the bad file was preserved (renamed), not silently dropped
+        assert!(!path.exists(), "the corrupt file was moved aside");
+        let backed_up = std::fs::read_dir(&dir)
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .any(|e| e.file_name().to_string_lossy().starts_with("clips.corrupt."));
+        assert!(backed_up, "a clips.corrupt.* backup exists");
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn valid_history_loads_without_recovery() {
+        let dir = std::env::temp_dir().join(format!("clipcat-ok-{}", now_ts()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("clips.json");
+        std::fs::write(&path, br#"{"clips":[]}"#).unwrap();
+        let mut s = ClipStore::load_from(&path);
+        assert!(!s.take_recovered_corrupt());
+        // a missing file is first-run, not corruption
+        let mut fresh = ClipStore::load_from(&dir.join("nope.json"));
+        assert!(!fresh.take_recovered_corrupt());
+        std::fs::remove_dir_all(&dir).ok();
     }
 
     #[test]
