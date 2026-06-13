@@ -76,6 +76,7 @@ const CMD_SOUND0: usize = 30; // ..=32
 const CMD_ACC0: usize = 40; // 40 = none, 41..=46 accessories
 const CMD_LANG_EN: usize = 50;
 const CMD_LANG_KO: usize = 51;
+const CMD_WINLEVEL0: usize = 52; // 52 top, 53 normal, 54 hide
 
 fn wz(s: &str) -> Vec<u16> {
     s.encode_utf16().chain(std::iter::once(0)).collect()
@@ -334,6 +335,26 @@ impl App {
         };
         let (dx, dy) = fit_delta(card, monitor_work_rect(self.hwnd)?);
         (dx.abs() >= 0.5 || dy.abs() >= 0.5).then_some((dx, dy))
+    }
+
+    /// Applies the persisted window level: 0 = always on top, 1 = normal (can
+    /// go behind other windows), 2 = hidden (restored from the tray icon or
+    /// the global panel hotkey). Keeps `self.visible` — which gates the
+    /// per-tick blit — in sync.
+    unsafe fn apply_window_level(&mut self) {
+        if self.pet.window_level() == 2 {
+            self.visible = false;
+            ShowWindow(self.hwnd, SW_HIDE);
+        } else {
+            self.visible = true;
+            let after = if self.pet.window_level() == 0 {
+                HWND_TOPMOST
+            } else {
+                HWND_NOTOPMOST
+            };
+            SetWindowPos(self.hwnd, after, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+            ShowWindow(self.hwnd, SW_SHOWNOACTIVATE);
+        }
     }
 
     fn update_tray_tip(&self) {
@@ -824,6 +845,7 @@ struct MenuSnapshot {
     locked: bool,
     scale_idx: usize,
     sound: u8,
+    window_level: u8,
     accessory: usize,
     level: u32,
     autostart: bool,
@@ -949,6 +971,26 @@ unsafe fn show_menu(hwnd: HWND, ms: &MenuSnapshot) -> usize {
         wz(t(lang, Msg::MenuSound)).as_ptr(),
     );
 
+    // window stacking submenu (always on top / normal / hide)
+    let win_menu = CreatePopupMenu();
+    for (i, name) in [Msg::WinLevelTop, Msg::WinLevelNormal, Msg::WinLevelHide]
+        .iter()
+        .enumerate()
+    {
+        AppendMenuW(
+            win_menu,
+            MF_STRING | chk(ms.window_level as usize == i),
+            CMD_WINLEVEL0 + i,
+            wz(t(lang, *name)).as_ptr(),
+        );
+    }
+    AppendMenuW(
+        menu,
+        MF_POPUP,
+        win_menu as usize,
+        wz(t(lang, Msg::MenuWindowLevel)).as_ptr(),
+    );
+
     AppendMenuW(
         menu,
         MF_STRING | chk(ms.locked),
@@ -1033,6 +1075,7 @@ fn menu_snapshot() -> Option<MenuSnapshot> {
         locked: a.pet.st.locked,
         scale_idx: a.pet.st.scale_idx,
         sound: a.pet.st.sound_mode,
+        window_level: a.pet.window_level(),
         accessory: a.pet.st.accessory,
         level: a.pet.level(),
         autostart: unsafe { autostart_enabled() },
@@ -1152,6 +1195,12 @@ unsafe fn open_menu(hwnd: HWND) {
                     a.pet.dirty = true;
                 });
             }
+            c if (CMD_WINLEVEL0..CMD_WINLEVEL0 + 3).contains(&c) => {
+                with_app(|a| {
+                    a.pet.set_window_level((c - CMD_WINLEVEL0) as u8);
+                    a.apply_window_level();
+                });
+            }
             c if (CMD_ACC0..=CMD_ACC0 + ACCESSORIES.len()).contains(&c) => {
                 with_app(|a| {
                     a.pet.st.accessory = c - CMD_ACC0;
@@ -1205,7 +1254,13 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
         }
         WM_HOTKEY => {
             if wp as i32 == HOTKEY_ID {
-                with_app(|a| a.pet.toggle_panel());
+                with_app(|a| {
+                    // the panel hotkey also un-hides a hidden pet
+                    if a.pet.show_window() {
+                        a.apply_window_level();
+                    }
+                    a.pet.toggle_panel();
+                });
             }
             0
         }
@@ -1426,9 +1481,13 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
             let ev = (lp & 0xFFFF) as u32;
             match ev {
                 WM_LBUTTONUP => {
+                    // toggle hide/show through the window level so the tray and
+                    // the menu's "Hide" agree; un-hide restores the prior level
                     with_app(|a| {
-                        a.visible = !a.visible;
-                        ShowWindow(hwnd, if a.visible { SW_SHOWNOACTIVATE } else { SW_HIDE });
+                        if !a.pet.show_window() {
+                            a.pet.set_window_level(2);
+                        }
+                        a.apply_window_level();
                     });
                 }
                 WM_RBUTTONUP | WM_CONTEXTMENU => {
@@ -1662,6 +1721,7 @@ pub fn run() {
             a.pet.render(&mut a.pm);
             a.blit();
         }); // first paint
+        with_app(|a| a.apply_window_level()); // enforce a persisted level/hide
         SetTimer(hwnd, TIMER_ID, TICK_MS, None);
 
         let mut msg: MSG = std::mem::zeroed();

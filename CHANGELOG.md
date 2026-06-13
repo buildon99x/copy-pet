@@ -17,6 +17,10 @@ versions follow [SemVer](https://semver.org/). Maintenance rules:
 ## [Unreleased]
 
 ### Added
+- New **Window** setting (tray menu on Windows, right-click menu on macOS)
+  with three modes: **Always on top** (the default), **Normal** — the pet can
+  now sit behind other windows like an ordinary one — and **Hide**. A hidden
+  pet comes back from its tray icon or by pressing the clipboard hotkey.
 - The clipboard panel is now yours to arrange: drag its **header** to move
   the panel anywhere — the cat stays put — and drag the **grip in its
   bottom-right corner** to resize it (a taller panel shows more clips).

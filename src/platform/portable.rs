@@ -308,6 +308,26 @@ impl PortableApp {
         self.pet.save();
     }
 
+    /// Applies the persisted window level: 0 = always on top, 1 = normal (can
+    /// go behind other windows), 2 = hidden (restored from the tray on macOS
+    /// or the global panel hotkey). Surfaced via the menu on macOS only.
+    fn apply_window_level(&self) {
+        let Some(window) = &self.window else {
+            return;
+        };
+        match self.pet.window_level() {
+            2 => window.set_visible(false),
+            level => {
+                window.set_visible(true);
+                window.set_window_level(if level == 0 {
+                    WindowLevel::AlwaysOnTop
+                } else {
+                    WindowLevel::Normal
+                });
+            }
+        }
+    }
+
     /// Puts text on the OS clipboard (a clip picked from the panel).
     fn set_clipboard(&self, text: String) {
         if let Ok(mut guard) = self.suppress.lock() {
@@ -366,6 +386,7 @@ impl PortableApp {
             MenuOutcome::ToggleAutostart => {
                 super::mac_autostart::set(!autostart);
             }
+            MenuOutcome::ApplyWindowLevel => self.apply_window_level(),
             MenuOutcome::InstallUpdate => crate::update::open_releases_page(),
         }
     }
@@ -520,6 +541,7 @@ impl ApplicationHandler for PortableApp {
         self.resize_surface();
         self.last_frame = Instant::now();
         self.paint();
+        self.apply_window_level(); // enforce a persisted level/hide
     }
 
     fn window_event(&mut self, event_loop: &ActiveEventLoop, _id: WindowId, event: WindowEvent) {
@@ -683,6 +705,10 @@ impl ApplicationHandler for PortableApp {
             self.last_frame = now;
             // the global panel hotkey fired on the input thread
             if self.panel_toggle.swap(false, Ordering::Relaxed) {
+                // the hotkey also un-hides a hidden pet
+                if self.pet.show_window() {
+                    self.apply_window_level();
+                }
                 self.pet.toggle_panel();
             }
             // the macOS event tap couldn't start (Accessibility not granted)

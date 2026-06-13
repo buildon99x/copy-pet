@@ -24,6 +24,8 @@ pub enum MenuAction {
     SetSize(usize),
     SetAccessory(usize),
     SetSound(u8),
+    /// Window stacking: 0 = always on top, 1 = normal, 2 = hidden.
+    SetWindowLevel(u8),
     ToggleLock,
     SetLang(Lang),
     ToggleAutostart,
@@ -90,6 +92,9 @@ pub enum MenuOutcome {
     ShowAbout,
     /// Flip the platform autostart registration.
     ToggleAutostart,
+    /// Apply the just-set window stacking level (`st.window_level`): topmost,
+    /// normal or hidden. OS work, so the backend does it.
+    ApplyWindowLevel,
     /// Open the releases page / start the update.
     InstallUpdate,
     /// Save and exit.

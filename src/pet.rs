@@ -102,6 +102,9 @@ pub struct Pet {
     /// [`Pet::take_fit_panel`] and nudges the card on-screen if it opened
     /// off the monitor (the core can't see screen bounds).
     fit_panel: bool,
+    /// The window level to restore to when un-hiding (the level in effect
+    /// before "Hide" was chosen). See [`Pet::show_window`].
+    prev_level: u8,
     /// Window-position delta (physical px) accumulated by layout changes so
     /// the cat stays put on screen; drained via [`Pet::take_window_shift`].
     pending_shift: (f32, f32),
@@ -151,6 +154,7 @@ impl Pet {
             level_changed: false,
             size_changed: false,
             fit_panel: false,
+            prev_level: 0,
             pending_shift: (0.0, 0.0),
             drag: None,
         }
@@ -345,6 +349,41 @@ impl Pet {
                 p.panel.cat_scale = SCALES[idx];
             });
             self.dirty = true;
+        }
+    }
+
+    // ---- window stacking level (0 top / 1 normal / 2 hidden) ----------------
+
+    /// The persisted window level the backend should enforce.
+    pub fn window_level(&self) -> u8 {
+        self.st.window_level
+    }
+
+    /// Sets the window level, remembering the previous visible level so a
+    /// later [`Pet::show_window`] can restore it. The backend applies the
+    /// effect (topmost / normal / hide) on a `MenuOutcome::ApplyWindowLevel`.
+    pub fn set_window_level(&mut self, level: u8) {
+        let level = level.min(2);
+        if level == self.st.window_level {
+            return;
+        }
+        if level == 2 {
+            self.prev_level = self.st.window_level; // a visible level (not 2)
+        }
+        self.st.window_level = level;
+        self.dirty = true;
+    }
+
+    /// Un-hides the window if it was hidden, restoring the level in effect
+    /// before "Hide". Returns true when it changed (the backend then re-applies
+    /// the level). Used by the tray and the global panel hotkey.
+    pub fn show_window(&mut self) -> bool {
+        if self.st.window_level == 2 {
+            self.st.window_level = self.prev_level;
+            self.dirty = true;
+            true
+        } else {
+            false
         }
     }
 
@@ -979,6 +1018,17 @@ impl Pet {
             .collect();
         m.push(MenuItem::parent(t(lang, Msg::MenuSound), sound_items));
 
+        // Window stacking submenu (always on top / normal / hide).
+        let levels = [Msg::WinLevelTop, Msg::WinLevelNormal, Msg::WinLevelHide];
+        let level_items = levels
+            .iter()
+            .enumerate()
+            .map(|(i, msg)| {
+                MenuItem::leaf(t(lang, *msg), MenuAction::SetWindowLevel(i as u8), self.st.window_level as usize == i)
+            })
+            .collect();
+        m.push(MenuItem::parent(t(lang, Msg::MenuWindowLevel), level_items));
+
         m.push(MenuItem::leaf(
             t(lang, Msg::MenuLock),
             MenuAction::ToggleLock,
@@ -1035,6 +1085,11 @@ impl Pet {
             MenuAction::SetSound(mode) => {
                 self.st.sound_mode = mode.min(2);
                 self.dirty = true;
+            }
+            MenuAction::SetWindowLevel(level) => {
+                self.set_window_level(level);
+                // the actual topmost/normal/hide is OS work — let the backend do it
+                return MenuOutcome::ApplyWindowLevel;
             }
             MenuAction::ToggleLock => {
                 self.st.locked = !self.st.locked;
@@ -1291,6 +1346,26 @@ mod tests {
         let mut p = pet();
         assert_eq!(p.apply_menu_action(MenuAction::About), MenuOutcome::ShowAbout);
         assert_eq!(p.apply_menu_action(MenuAction::Quit), MenuOutcome::Quit);
+    }
+
+    #[test]
+    fn window_level_menu_sets_state_and_restores_on_show() {
+        let mut p = pet();
+        // default is always-on-top (0): that radio item is checked
+        assert!(find(&p.build_menu("HK", false), MenuAction::SetWindowLevel(0)).unwrap().checked);
+        // choosing Hide stores the level and asks the backend to apply it
+        assert_eq!(
+            p.apply_menu_action(MenuAction::SetWindowLevel(2)),
+            MenuOutcome::ApplyWindowLevel
+        );
+        assert_eq!(p.window_level(), 2);
+        let m = p.build_menu("HK", false);
+        assert!(find(&m, MenuAction::SetWindowLevel(2)).unwrap().checked);
+        assert!(!find(&m, MenuAction::SetWindowLevel(0)).unwrap().checked);
+        // show_window un-hides, restoring the level in effect before Hide (0)
+        assert!(p.show_window());
+        assert_eq!(p.window_level(), 0);
+        assert!(!p.show_window(), "no-op when already visible");
     }
 
     #[test]

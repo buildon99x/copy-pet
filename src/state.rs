@@ -21,6 +21,10 @@ pub struct Persist {
     pub sound_mode: u8,    // 0 off, 1 events only, 2 taps + events
     pub bubble_pinned: bool,
     pub locked: bool,
+    /// Window stacking: 0 = always on top (default), 1 = normal (can go behind
+    /// other windows), 2 = hidden (restored from the tray or the panel hotkey).
+    /// Surfaced on Windows (tray) and macOS (tray); Linux keeps always-on-top.
+    pub window_level: u8,
     /// "en" / "ko"; empty means "not chosen yet" -> detected from the OS.
     pub lang: String,
     /// When false, copy events are ignored (privacy pause).
@@ -64,6 +68,7 @@ impl Default for Persist {
             sound_mode: 1,
             bubble_pinned: false,
             locked: false,
+            window_level: 0,
             lang: String::new(),
             clip_capture: true,
             hotkey: crate::hotkey::DEFAULT.to_string(),
