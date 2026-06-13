@@ -1336,23 +1336,22 @@ pub struct ExpandedView<'a> {
     pub panel: &'a Panel,
     pub store: &'a ClipStore,
     pub lang: Lang,
+    pub version: &'a str,
     pub capture: bool,
     pub caret: bool,
     pub level: u32,
-    pub xp_pct: f32,
+    pub xp_into: u64,
+    pub xp_need: u64,
     pub keys: u64,
     pub clicks: u64,
     pub copies: u64,
     pub autoclose: bool,
 }
 
-/// Draws the expanded three-pane screen (sidebar | clip list | detail).
+/// Draws the expanded three-pane screen (sidebar | clip list | detail),
+/// matching the design package's full-app concept.
 pub fn draw_expanded_panel(pm: &mut Pixmap, v: &ExpandedView, scale: f32) {
     let mut cv = Cv { pm, ts: Transform::from_scale(scale, scale) };
-    let lang = v.lang;
-    let txt = tokens::TEXT_PRIMARY;
-    let txt2 = tokens::TEXT_SECONDARY;
-    let muted = tokens::TEXT_MUTED;
     let el = v.panel.expanded_layout();
     let (cx, cy, cw, ch) = el.card;
 
@@ -1361,99 +1360,184 @@ pub fn draw_expanded_panel(pm: &mut Pixmap, v: &ExpandedView, scale: f32) {
     cv.fill(&round_rect(cx, cy, cw, ch, 20.0), tokens::SURFACE_PANEL);
     cv.stroke(&round_rect(cx, cy, cw, ch, 20.0), tokens::BORDER_STRONG, 1.5);
 
-    // ---- sidebar -----------------------------------------------------------
+    draw_exp_sidebar(&mut cv, v, &el);
+    draw_exp_list(&mut cv, v, &el);
+    draw_detail_pane(&mut cv, v, &el, crate::clipboard::now_ts());
+
+    // collapse button (top-right): inward chevrons
+    let (bx, by, bw, bh) = el.collapse;
+    fill_round_rect(cv.pm, (bx, by, bw, bh), 6.0, tokens::SURFACE_CONTROL, cv.ts);
+    stroke_round_rect(cv.pm, (bx, by, bw, bh), 6.0, tokens::BORDER_SUBTLE, 1.5, cv.ts);
+    let (mx, my) = (bx + bw / 2.0, by + bh / 2.0);
+    cv.line(&[(mx - 4.5, my - 4.0), (mx - 1.0, my), (mx - 4.5, my + 4.0)], tokens::TEXT_SECONDARY, 1.7);
+    cv.line(&[(mx + 4.5, my - 4.0), (mx + 1.0, my), (mx + 4.5, my + 4.0)], tokens::TEXT_SECONDARY, 1.7);
+    let _ = v.caret;
+}
+
+fn draw_exp_sidebar(cv: &mut Cv, v: &ExpandedView, el: &pl::ExpandedLayout) {
+    let lang = v.lang;
+    let (txt, txt2, muted) = (tokens::TEXT_PRIMARY, tokens::TEXT_SECONDARY, tokens::TEXT_MUTED);
     let (sx, sy, sw, sh) = el.sidebar;
-    // rounded on the left to follow the card; the right edge tucks under the
-    // list column (its small rounded notch reads as the card surface behind).
     cv.fill(&round_rect(sx, sy, sw, sh, 18.0), tokens::SURFACE_WINDOW);
     cv.fill(&round_rect(sx + sw - 18.0, sy, 18.0, sh, 0.0), tokens::SURFACE_WINDOW);
     cv.line(&[(sx + sw, sy + 6.0), (sx + sw, sy + sh - 6.0)], tokens::BORDER_SUBTLE, 1.0);
 
-    // logo: gold fish mark + ClipCat
-    let (lx, ly) = (sx + 16.0, sy + 20.0);
+    // logo row: gold fish mark + ClipCat + version
+    let (lx, ly) = (sx + 16.0, sy + 18.0);
     {
         let mut pb = PathBuilder::new();
-        pb.move_to(lx + 12.0, ly);
-        pb.quad_to(lx + 6.0, ly - 5.5, lx + 0.5, ly);
-        pb.quad_to(lx + 6.0, ly + 5.5, lx + 12.0, ly);
+        pb.move_to(lx + 11.0, ly);
+        pb.quad_to(lx + 5.5, ly - 5.0, lx + 0.5, ly);
+        pb.quad_to(lx + 5.5, ly + 5.0, lx + 11.0, ly);
         pb.close();
         cv.fill(&pb.finish(), tokens::ACCENT_GOLD);
-        cv.line(&[(lx + 12.0, ly), (lx + 16.5, ly - 4.0), (lx + 16.5, ly + 4.0), (lx + 12.0, ly)], tokens::ACCENT_GOLD_2, 1.6);
+        cv.line(&[(lx + 11.0, ly), (lx + 15.0, ly - 3.5), (lx + 15.0, ly + 3.5), (lx + 11.0, ly)], tokens::ACCENT_GOLD_2, 1.5);
     }
-    cv.ui_text("ClipCat", lx + 22.0, ly - 7.0, 2.1, txt);
+    cv.ui_text("ClipCat", lx + 20.0, ly - 6.5, 1.9, txt);
+    let vw = sysfont::measure(v.version, 1.1);
+    cv.ui_text(v.version, sx + sw - 14.0 - vw, ly - 4.0, 1.1, muted);
 
-    // level badge (gold ring) + XP bar
-    let badge_cx = sx + sw - 24.0;
-    cv.fill(&oval(badge_cx, sy + 20.0, 13.0, 13.0), tokens::ACCENT_GOLD);
-    {
-        let s = format!("{}", v.level);
-        let w = sysfont::measure(&s, 1.5);
-        cv.ui_text(&s, badge_cx - w / 2.0, sy + 14.5, 1.5, (30, 24, 12, 255));
-    }
-    let xpb = (sx + 16.0, sy + 44.0, sw - 32.0, 8.0);
-    fill_round_rect(cv.pm, xpb, 4.0, tokens::SURFACE_CONTROL, cv.ts);
-    fill_round_rect(cv.pm, (xpb.0, xpb.1, (xpb.2 * v.xp_pct.clamp(0.0, 1.0)).max(4.0), xpb.3), 4.0, tokens::ACCENT_GOLD, cv.ts);
+    // avatar card: mini cat on the left, level ring on the right
+    let av = (sx + 14.0, sy + 34.0, sw - 28.0, 60.0);
+    fill_round_rect(cv.pm, av, 14.0, tokens::SURFACE_CARD, cv.ts);
+    mini_cat(cv, av.0 + 34.0, av.1 + 30.0);
+    let ring_cx = av.0 + av.2 - 26.0;
+    let ring_cy = av.1 + 30.0;
+    let pct = if v.xp_need > 0 { v.xp_into as f32 / v.xp_need as f32 } else { 0.0 };
+    progress_ring(cv, ring_cx, ring_cy, 16.0, pct);
+    let lv = format!("Lv. {}", v.level);
+    let lw = sysfont::measure(&lv, 1.15);
+    cv.ui_text(&lv, ring_cx - lw / 2.0, ring_cy - 4.0, 1.15, txt);
 
-    // TODAY stats
-    cv.ui_text(t(lang, Msg::ExpToday), sx + 16.0, sy + 62.0, 1.2, muted);
+    // XP text + bar
+    let xpline = format!("{} / {} XP", fmt_thousands(v.xp_into), fmt_thousands(v.xp_need));
+    cv.ui_text(&xpline, sx + 16.0, sy + 100.0, 1.3, txt2);
+    let xpb = (sx + 16.0, sy + 116.0, sw - 32.0, 7.0);
+    fill_round_rect(cv.pm, xpb, 3.5, tokens::SURFACE_CONTROL, cv.ts);
+    fill_round_rect(cv.pm, (xpb.0, xpb.1, (xpb.2 * pct.clamp(0.0, 1.0)).max(4.0), xpb.3), 3.5, tokens::ACCENT_GOLD, cv.ts);
+
+    // three stat cards (keys / clicks / copies) with colored icons
     let stats = [
-        (Msg::BubbleKeys, fmt_thousands(v.keys)),
-        (Msg::BubbleClicks, fmt_thousands(v.clicks)),
-        (Msg::BubbleClips, fmt_thousands(v.copies)),
+        (fmt_thousands(v.keys), Msg::BubbleKeys, tokens::ACCENT_PURPLE),
+        (fmt_thousands(v.clicks), Msg::BubbleClicks, tokens::ACCENT_GREEN),
+        (fmt_thousands(v.copies), Msg::BubbleClips, tokens::ACCENT_BLUE),
     ];
-    for (i, (label, value)) in stats.iter().enumerate() {
-        let y = sy + 80.0 + i as f32 * 16.0;
-        cv.ui_text(t(lang, *label), sx + 16.0, y, 1.4, txt2);
-        let vw = sysfont::measure(value, 1.4);
-        cv.ui_text(value, sx + sw - 16.0 - vw, y, 1.4, txt);
+    let gap = 6.0;
+    let cw3 = (sw - 32.0 - 2.0 * gap) / 3.0;
+    for (i, (value, label, color)) in stats.iter().enumerate() {
+        let bx = sx + 16.0 + i as f32 * (cw3 + gap);
+        let by = sy + 132.0;
+        fill_round_rect(cv.pm, (bx, by, cw3, 50.0), 10.0, tokens::SURFACE_CARD, cv.ts);
+        stat_icon(cv, *label, bx + cw3 / 2.0, by + 13.0, *color);
+        let vwi = sysfont::measure(value, 1.4);
+        cv.ui_text(value, bx + (cw3 - vwi) / 2.0, by + 23.0, 1.4, txt);
+        let lab = t(lang, *label);
+        let lwi = sysfont::measure(lab, 1.05);
+        cv.ui_text(lab, bx + (cw3 - lwi) / 2.0, by + 37.0, 1.05, muted);
     }
 
-    // nav items
+    // nav items with icons + count badges
     for (i, nav) in pl::NavView::ALL.iter().enumerate() {
         let y = el.nav_y0 + i as f32 * el.nav_h;
         let selected = *nav == v.panel.nav;
         if selected {
-            fill_round_rect(cv.pm, (sx + 8.0, y, sw - 16.0, el.nav_h - 4.0), 8.0, tokens::SURFACE_CONTROL, cv.ts);
-            fill_round_rect(cv.pm, (sx + 8.0, y + 4.0, 3.0, el.nav_h - 12.0), 1.5, tokens::ACCENT_GOLD, cv.ts);
+            fill_round_rect(cv.pm, (sx + 10.0, y, sw - 20.0, el.nav_h - 4.0), 8.0, fade(tokens::ACCENT_GOLD, 0.14), cv.ts);
+            fill_round_rect(cv.pm, (sx + 10.0, y + 5.0, 3.0, el.nav_h - 14.0), 1.5, tokens::ACCENT_GOLD, cv.ts);
         }
-        let label = t(lang, nav_msg(*nav));
-        cv.ui_text(label, sx + 20.0, y + (el.nav_h - 4.0) / 2.0 - 5.5, 1.7, if selected { txt } else { txt2 });
-        // count badge for Clipboard/Pinned
+        let icol = if selected { tokens::ACCENT_GOLD } else { txt2 };
+        nav_icon(cv, *nav, sx + 24.0, y + (el.nav_h - 4.0) / 2.0, icol);
+        cv.ui_text(t(lang, nav_msg(*nav)), sx + 38.0, y + (el.nav_h - 4.0) / 2.0 - 5.5, 1.6, if selected { tokens::ACCENT_GOLD } else { txt });
         if let Some(n) = nav_count(*nav, v.store) {
             let s = n.to_string();
-            let w = sysfont::measure(&s, 1.3);
-            cv.ui_text(&s, sx + sw - 18.0 - w, y + (el.nav_h - 4.0) / 2.0 - 4.5, 1.3, muted);
+            let bw = sysfont::measure(&s, 1.2) + 12.0;
+            let chip = (sx + sw - 16.0 - bw, y + (el.nav_h - 4.0) / 2.0 - 7.0, bw, 14.0);
+            let cc = if selected { fade(tokens::ACCENT_GOLD, 0.22) } else { tokens::SURFACE_CONTROL };
+            fill_round_rect(cv.pm, chip, 7.0, cc, cv.ts);
+            cv.ui_text(&s, chip.0 + 6.0, chip.1 + 1.0, 1.2, if selected { tokens::ACCENT_GOLD } else { muted });
         }
     }
 
-    // capture status (sidebar bottom)
-    let cap_y = sy + sh - 22.0;
+    // auto-close panel toggle card
+    let ac = (sx + 14.0, sy + sh - 104.0, sw - 28.0, 36.0);
+    fill_round_rect(cv.pm, ac, 10.0, tokens::SURFACE_CARD, cv.ts);
+    cv.ui_text(t(lang, Msg::MenuAutoClose), ac.0 + 12.0, ac.1 + 8.0, 1.3, txt);
+    cv.ui_text(t(lang, Msg::ExpAfterCopy), ac.0 + 12.0, ac.1 + 22.0, 1.05, muted);
+    toggle_switch(cv, el.autoclose_toggle, v.autoclose);
+
+    // capture status card + pause/resume button
+    let cc = (sx + 14.0, sy + sh - 60.0, sw - 28.0, 36.0);
+    fill_round_rect(cv.pm, cc, 10.0, tokens::SURFACE_CARD, cv.ts);
     let (dot, msg) = if v.capture {
         (tokens::ACCENT_GREEN, Msg::CaptureRunning)
     } else {
         (tokens::ACCENT_RED, Msg::CapturePaused)
     };
-    cv.fill(&oval(sx + 18.0, cap_y, 3.0, 3.0), dot);
-    cv.ui_text(t(lang, msg), sx + 28.0, cap_y - 5.0, 1.3, muted);
+    cv.fill(&oval(cc.0 + 14.0, cc.1 + 14.0, 3.0, 3.0), dot);
+    cv.ui_text(t(lang, Msg::MenuCapture), cc.0 + 24.0, cc.1 + 8.0, 1.3, txt);
+    cv.ui_text(t(lang, msg), cc.0 + 24.0, cc.1 + 22.0, 1.05, if v.capture { tokens::ACCENT_GREEN } else { tokens::ACCENT_RED });
+    let cb = el.capture_btn;
+    fill_round_rect(cv.pm, cb, 7.0, tokens::SURFACE_CONTROL, cv.ts);
+    let (bcx, bcy) = (cb.0 + cb.2 / 2.0, cb.1 + cb.3 / 2.0);
+    if v.capture {
+        cv.fill(&round_rect(bcx - 3.5, bcy - 4.0, 2.6, 8.0, 1.0), txt2);
+        cv.fill(&round_rect(bcx + 1.0, bcy - 4.0, 2.6, 8.0, 1.0), txt2);
+    } else {
+        let mut pb = PathBuilder::new();
+        pb.move_to(bcx - 3.0, bcy - 4.0);
+        pb.line_to(bcx + 4.0, bcy);
+        pb.line_to(bcx - 3.0, bcy + 4.0);
+        pb.close();
+        cv.fill(&pb.finish(), tokens::ACCENT_GREEN);
+    }
 
-    // ---- list column -------------------------------------------------------
+    // footer links
+    cv.ui_text("GitHub   ·   Help   ·   About", sx + 16.0, sy + sh - 18.0, 1.1, muted);
+}
+
+fn draw_exp_list(cv: &mut Cv, v: &ExpandedView, el: &pl::ExpandedLayout) {
+    let lang = v.lang;
+    let (txt, txt2, muted) = (tokens::TEXT_PRIMARY, tokens::TEXT_SECONDARY, tokens::TEXT_MUTED);
     let rows = v.panel.expanded_visible(v.store);
-    let (lxc, _, lwc, _) = el.list;
-    // search box
+    let (lxc, lyc, lwc, _) = el.list;
+    let now = crate::clipboard::now_ts();
+
+    // toolbar: source-filter chip + clear-unpinned + clip count
+    let tf = el.toolbar_filter;
+    fill_round_rect(cv.pm, tf, 8.0, tokens::SURFACE_CONTROL, cv.ts);
+    stroke_round_rect(cv.pm, tf, 8.0, tokens::BORDER_SUBTLE, 1.2, cv.ts);
+    let flabel = match &v.panel.source {
+        Some(s) => sysfont::truncate_to_width(s, 1.3, tf.2 - 24.0),
+        None => sysfont::truncate_to_width(t(lang, Msg::AllSources), 1.3, tf.2 - 24.0),
+    };
+    cv.ui_text(&flabel, tf.0 + 10.0, tf.1 + (tf.3 - 9.1) / 2.0, 1.3, txt2);
+    // caret ▾
+    let (fcx, fcy) = (tf.0 + tf.2 - 11.0, tf.1 + tf.3 / 2.0);
+    cv.line(&[(fcx - 3.0, fcy - 1.5), (fcx, fcy + 2.0), (fcx + 3.0, fcy - 1.5)], muted, 1.4);
+    // clear-unpinned (trash) — turns red when armed
+    let tc = el.toolbar_clear;
+    let armed = v.panel.clear_armed;
+    fill_round_rect(cv.pm, tc, 8.0, if armed { fade(tokens::ACCENT_RED, 0.18) } else { tokens::SURFACE_CONTROL }, cv.ts);
+    stroke_round_rect(cv.pm, tc, 8.0, if armed { tokens::ACCENT_RED } else { tokens::BORDER_SUBTLE }, 1.2, cv.ts);
+    trash_icon(cv, tc.0 + tc.2 / 2.0, tc.1 + tc.3 / 2.0, if armed { tokens::ACCENT_RED } else { txt2 });
+    // count, right-aligned
+    let count = i18n::clip_count(lang, v.store.len(), v.store.pinned_count());
+    let cwi = sysfont::measure(&count, 1.25);
+    cv.ui_text(&count, lxc + lwc - 14.0 - cwi, tf.1 + (tf.3 - 8.75) / 2.0, 1.25, muted);
+
+    // search/filter input
     let (qx, qy, qw, qh) = el.search;
     fill_round_rect(cv.pm, (qx, qy, qw, qh), 9.0, tokens::SURFACE_CONTROL, cv.ts);
     stroke_round_rect(cv.pm, (qx, qy, qw, qh), 9.0, tokens::BORDER_SUBTLE, 1.5, cv.ts);
     cv.stroke(&oval(qx + 11.0, qy + qh / 2.0 - 1.5, 3.4, 3.4), muted, 1.7);
     cv.line(&[(qx + 14.0, qy + qh / 2.0 + 1.5), (qx + 17.0, qy + qh / 2.0 + 4.5)], muted, 1.7);
     if v.panel.query.is_empty() {
-        cv.ui_text(t(lang, Msg::SearchHint), qx + 22.0, qy + (qh - 12.6) / 2.0, 1.8, muted);
+        cv.ui_text(t(lang, Msg::SearchHint), qx + 22.0, qy + (qh - 12.6) / 2.0, 1.7, muted);
     } else {
-        cv.ui_text(&v.panel.query, qx + 22.0, qy + (qh - 12.6) / 2.0, 1.8, txt);
+        cv.ui_text(&v.panel.query, qx + 22.0, qy + (qh - 12.6) / 2.0, 1.7, txt);
     }
 
-    let now = crate::clipboard::now_ts();
     let hover_row = v.panel.cursor.and_then(|(hx, hy)| {
-        if hx >= lxc && hx <= lxc + lwc { row_at_expanded(&el, hy) } else { None }
+        if hx >= lxc && hx <= lxc + lwc { row_at_expanded(el, hy) } else { None }
     });
     if rows.is_empty() {
         let msg = if v.store.is_empty() { t(lang, Msg::PanelEmpty) } else { t(lang, Msg::PanelNoMatch) };
@@ -1464,70 +1548,98 @@ pub fn draw_expanded_panel(pm: &mut Pixmap, v: &ExpandedView, scale: f32) {
         let idx = v.panel.scroll + i;
         let Some(clip) = rows.get(idx) else { break };
         let ry = el.rows_y + i as f32 * pl::ROW_H;
-        let rrect = (lxc + 8.0, ry + 1.0, lwc - 16.0, pl::ROW_H - 2.0);
+        let rrect = (lxc + 8.0, ry + 1.0, lwc - 16.0, pl::ROW_H - 3.0);
         if idx == v.panel.sel {
             fill_round_rect(cv.pm, rrect, 8.0, tokens::SURFACE_CARD, cv.ts);
             focus_border(cv.pm, rrect, 8.0, cv.ts);
         } else if hover_row == Some(idx) {
             fill_round_rect(cv.pm, rrect, 8.0, tokens::SURFACE_CONTROL_HOVER, cv.ts);
         }
-        // pin star
-        let star = star_path(lxc + 20.0, ry + pl::ROW_H / 2.0, 6.0, 0.0);
-        if clip.pinned {
-            cv.fill(&star, PIN_GOLD);
-        } else {
-            cv.stroke(&star, fade(muted, 0.7), 1.3);
-        }
-        // source badge + preview + meta
-        let tx = lxc + 34.0;
-        let tmax = lwc - 16.0 - 34.0 - 30.0;
-        let prev = sysfont::truncate_to_width(&clip.preview(), 1.8, tmax);
-        cv.ui_text(&prev, tx, ry + 5.0, 1.8, txt);
-        let mut mx = tx;
-        if let Some(src) = &clip.source {
-            source_badge(cv.pm, mx + 4.0, ry + 24.5, 8.0, &Badge::from_source(Some(src)), cv.ts);
-            mx += 12.0;
-        }
-        let mut meta = i18n::time_ago(lang, now.saturating_sub(clip.ts));
-        if let Some(src) = &clip.source {
-            meta = format!("{src} - {meta}");
-        }
-        let meta = sysfont::truncate_to_width(&meta, 1.3, tmax - (mx - tx));
-        cv.ui_text(&meta, mx, ry + 20.5, 1.3, muted);
-        // quick-copy digit badge for the first ten rows
+        // left index badge (purple, top 10) else a pin star
+        let cyr = ry + pl::ROW_H / 2.0;
         if idx < pl::QUICK_KEYS {
-            let bx = lxc + lwc - 22.0;
-            cv.fill(&oval(bx, ry + pl::ROW_H / 2.0, 7.0, 7.0), tokens::ACCENT_PURPLE);
+            cv.fill(&oval(lxc + 24.0, cyr, 8.0, 8.0), tokens::ACCENT_PURPLE);
             let d = char::from(b'0' + idx as u8).to_string();
-            let dw = sysfont::measure(&d, 1.3);
-            cv.ui_text(&d, bx - dw / 2.0, ry + pl::ROW_H / 2.0 - 4.6, 1.3, tokens::TEXT_PRIMARY);
+            let dw = sysfont::measure(&d, 1.35);
+            cv.ui_text(&d, lxc + 24.0 - dw / 2.0, cyr - 4.7, 1.35, tokens::TEXT_PRIMARY);
+        } else {
+            let star = star_path(lxc + 24.0, cyr, 6.0, 0.0);
+            if clip.pinned { cv.fill(&star, PIN_GOLD); } else { cv.stroke(&star, fade(muted, 0.6), 1.3); }
+        }
+        if idx < pl::QUICK_KEYS && clip.pinned {
+            cv.fill(&star_path(lxc + 38.0, ry + 8.0, 4.0, 0.0), PIN_GOLD);
+        }
+        // title + preview (two lines), right reserved for source/time
+        let tx = lxc + 40.0;
+        let right_w = 84.0;
+        let tmax = lwc - 16.0 - 40.0 - right_w;
+        let mut lines = clip.text.lines();
+        let title = sysfont::truncate_to_width(lines.next().unwrap_or("").trim(), 1.55, tmax);
+        cv.ui_text(&title, tx, ry + 5.0, 1.55, txt);
+        if let Some(second) = lines.next() {
+            let s = sysfont::truncate_to_width(second.trim(), 1.25, tmax);
+            cv.ui_text(&s, tx, ry + 20.0, 1.25, muted);
+        }
+        // right: source badge + app name (top) and time (below), right-aligned
+        let rxr = lxc + lwc - 16.0;
+        let age = i18n::time_ago(lang, now.saturating_sub(clip.ts));
+        let aw = sysfont::measure(&age, 1.2);
+        cv.ui_text(&age, rxr - aw, ry + 20.0, 1.2, muted);
+        if let Some(src) = &clip.source {
+            let name = sysfont::truncate_to_width(src, 1.25, right_w - 14.0);
+            let nw = sysfont::measure(&name, 1.25);
+            cv.ui_text(&name, rxr - nw, ry + 6.0, 1.25, txt2);
+            source_badge(cv.pm, rxr - nw - 9.0, ry + 9.0, 9.0, &Badge::from_source(Some(src)), cv.ts);
         }
     }
 
-    // ---- detail pane -------------------------------------------------------
-    draw_detail_pane(&mut cv, v, &el, &rows, now);
-
-    // ---- collapse button ---------------------------------------------------
-    let (bx, by, bw, bh) = el.collapse;
-    fill_round_rect(cv.pm, (bx, by, bw, bh), 6.0, tokens::SURFACE_CONTROL, cv.ts);
-    stroke_round_rect(cv.pm, (bx, by, bw, bh), 6.0, tokens::BORDER_SUBTLE, 1.5, cv.ts);
-    let (mx, my) = (bx + bw / 2.0, by + bh / 2.0);
-    // inward chevrons (collapse)
-    cv.line(&[(mx - 4.5, my - 4.0), (mx - 1.0, my), (mx - 4.5, my + 4.0)], txt2, 1.7);
-    cv.line(&[(mx + 4.5, my - 4.0), (mx + 1.0, my), (mx + 4.5, my + 4.0)], txt2, 1.7);
-    let _ = v.caret;
-    let _ = v.autoclose;
+    // pagination bar (visual): ‹ 1 2 3 … N ›
+    let total = rows.len();
+    let pages = total.div_ceil(el.rows.max(1)).max(1);
+    let cur = v.panel.scroll / el.rows.max(1) + 1;
+    draw_pagination(cv, lxc, lyc + el.list.3 - 26.0, lwc, pages, cur);
 }
 
-fn draw_detail_pane(cv: &mut Cv, v: &ExpandedView, el: &pl::ExpandedLayout, rows: &[&crate::clipboard::Clip], now: u64) {
+/// Pagination row centered in the list footer.
+fn draw_pagination(cv: &mut Cv, lx: f32, y: f32, lw: f32, pages: usize, cur: usize) {
+    let (txt2, muted) = (tokens::TEXT_SECONDARY, tokens::TEXT_MUTED);
+    let mut labels: Vec<String> = Vec::new();
+    labels.push("‹".into());
+    let show: Vec<usize> = if pages <= 4 {
+        (1..=pages).collect()
+    } else {
+        vec![1, 2, 3, pages]
+    };
+    for (i, p) in show.iter().enumerate() {
+        if i == 3 && pages > 4 {
+            labels.push("…".into());
+        }
+        labels.push(p.to_string());
+    }
+    labels.push("›".into());
+    let widths: Vec<f32> = labels.iter().map(|s| sysfont::measure(s, 1.3).max(8.0) + 12.0).collect();
+    let total_w: f32 = widths.iter().sum();
+    let mut x = lx + (lw - total_w) / 2.0;
+    for (lab, w) in labels.iter().zip(&widths) {
+        let active = lab.parse::<usize>().ok() == Some(cur);
+        if active {
+            stroke_round_rect(cv.pm, (x, y, *w, 22.0), 7.0, tokens::ACCENT_GOLD, 1.5, cv.ts);
+        }
+        let tw = sysfont::measure(lab, 1.3);
+        cv.ui_text(lab, x + (w - tw) / 2.0, y + 6.5, 1.3, if active { tokens::ACCENT_GOLD } else { txt2 });
+        x += w;
+    }
+    let _ = muted;
+}
+
+fn draw_detail_pane(cv: &mut Cv, v: &ExpandedView, el: &pl::ExpandedLayout, now: u64) {
     let lang = v.lang;
     let (dx, dy, dw, dh) = el.detail;
-    let txt = tokens::TEXT_PRIMARY;
-    let txt2 = tokens::TEXT_SECONDARY;
-    let muted = tokens::TEXT_MUTED;
+    let (txt, txt2, muted) = (tokens::TEXT_PRIMARY, tokens::TEXT_SECONDARY, tokens::TEXT_MUTED);
     cv.line(&[(dx, dy + 6.0), (dx, dy + dh - 6.0)], tokens::BORDER_SUBTLE, 1.0);
     let px = dx + 14.0;
     let pw = dw - 28.0;
+    let rows = v.panel.expanded_visible(v.store);
 
     let Some(clip) = rows.get(v.panel.sel) else {
         let m = t(lang, Msg::DetailEmpty);
@@ -1536,70 +1648,275 @@ fn draw_detail_pane(cv: &mut Cv, v: &ExpandedView, el: &pl::ExpandedLayout, rows
         return;
     };
 
-    // title (first line) + pin star
-    let title = sysfont::truncate_to_width(clip.preview().lines().next().unwrap_or(""), 2.0, pw - 16.0);
-    cv.ui_text(&title, px, dy + 16.0, 2.0, txt);
-    let star = star_path(dx + dw - 16.0, dy + 22.0, 6.5, 0.0);
+    // title + pin star
+    let title = sysfont::truncate_to_width(clip.preview().lines().next().unwrap_or("").trim(), 1.9, pw - 18.0);
+    cv.ui_text(&title, px, dy + 14.0, 1.9, txt);
+    let star = star_path(dx + dw - 16.0, dy + 20.0, 6.5, 0.0);
     if clip.pinned { cv.fill(&star, PIN_GOLD); } else { cv.stroke(&star, fade(muted, 0.7), 1.3); }
 
-    // source line
+    // source + time + size line
+    let mut sxs = px;
     if let Some(src) = &clip.source {
-        source_badge(cv.pm, px + 4.0, dy + 40.0, 9.0, &Badge::from_source(Some(src)), cv.ts);
-        let s = sysfont::truncate_to_width(&format!("{src} - {}", i18n::time_ago(lang, now.saturating_sub(clip.ts))), 1.3, pw - 14.0);
-        cv.ui_text(&s, px + 13.0, dy + 36.0, 1.3, muted);
+        source_badge(cv.pm, px + 4.5, dy + 36.0, 9.0, &Badge::from_source(Some(src)), cv.ts);
+        cv.ui_text(src, px + 13.0, dy + 32.0, 1.25, txt2);
+        sxs = px + 13.0 + sysfont::measure(src, 1.25) + 8.0;
     }
+    let meta = format!("{} · {} B", i18n::time_ago(lang, now.saturating_sub(clip.ts)), clip.text.len());
+    cv.ui_text(&meta, sxs, dy + 32.0, 1.2, muted);
 
-    // preview box (first lines of the clip text)
-    let box_y = dy + 52.0;
-    let box_h = 120.0;
+    // code/preview box
+    let box_y = dy + 50.0;
+    let box_h = 96.0;
     fill_round_rect(cv.pm, (px, box_y, pw, box_h), 10.0, tokens::SURFACE_WINDOW, cv.ts);
     stroke_round_rect(cv.pm, (px, box_y, pw, box_h), 10.0, tokens::BORDER_SUBTLE, 1.0, cv.ts);
-    for (i, line) in clip.text.lines().take(7).enumerate() {
-        let l = sysfont::truncate_to_width(line, 1.5, pw - 16.0);
-        cv.ui_text(&l, px + 8.0, box_y + 8.0 + i as f32 * 15.0, 1.5, txt2);
+    for (i, line) in clip.text.lines().take(5).enumerate() {
+        let l = sysfont::truncate_to_width(line, 1.4, pw - 16.0);
+        // first line bright, rest tinted like console output
+        let c = if i == 0 { txt } else { tokens::ACCENT_GREEN };
+        cv.ui_text(&l, px + 8.0, box_y + 9.0 + i as f32 * 15.0, 1.4, c);
     }
 
-    // action buttons: Copy (gold, primary), Pin/Unpin (neutral), Delete (red).
-    // `accent` is the text+border color for the non-primary buttons.
+    // action grid (3 columns x 2 rows)
     let pin_label = if clip.pinned { Msg::ActUnpin } else { Msg::ActPin };
-    let actions = [
-        (Msg::ActCopy, true, tokens::ACCENT_GOLD),
-        (pin_label, false, tokens::TEXT_SECONDARY),
-        (Msg::ActDelete, false, tokens::ACCENT_RED),
+    let quick = if v.panel.sel < pl::QUICK_KEYS { format!("{}", v.panel.sel) } else { String::new() };
+    let specs: [(Msg, &str, ExpKind); 6] = [
+        (Msg::ActCopy, "Enter", ExpKind::Primary),
+        (Msg::ActQuickCopy, &quick, ExpKind::Normal),
+        (pin_label, "Ctrl P", ExpKind::Normal),
+        (Msg::ActEditNote, "", ExpKind::Muted),
+        (Msg::ActDelete, "Del", ExpKind::Danger),
+        (Msg::ActOpenSource, "", ExpKind::Muted),
     ];
-    for (i, (label, primary, accent)) in actions.iter().enumerate() {
-        let by = el.action_y0 + i as f32 * (el.action_h + 6.0);
-        let brect = (px, by, pw, el.action_h);
-        let fg = if *primary {
-            fill_round_rect(cv.pm, brect, 8.0, tokens::ACCENT_GOLD, cv.ts);
-            (30, 24, 12, 255)
-        } else {
-            fill_round_rect(cv.pm, brect, 8.0, tokens::SURFACE_CONTROL, cv.ts);
-            stroke_round_rect(cv.pm, brect, 8.0, fade(*accent, 0.6), 1.5, cv.ts);
-            *accent
+    let rects = v.panel.expanded_action_rects();
+    for ((label, hint, kind), r) in specs.iter().zip(rects) {
+        let fg = match kind {
+            ExpKind::Primary => {
+                fill_round_rect(cv.pm, r, 8.0, tokens::ACCENT_GOLD, cv.ts);
+                (30, 24, 12, 255)
+            }
+            ExpKind::Danger => {
+                fill_round_rect(cv.pm, r, 8.0, tokens::SURFACE_CONTROL, cv.ts);
+                stroke_round_rect(cv.pm, r, 8.0, fade(tokens::ACCENT_RED, 0.6), 1.4, cv.ts);
+                tokens::ACCENT_RED
+            }
+            ExpKind::Muted => {
+                fill_round_rect(cv.pm, r, 8.0, tokens::SURFACE_CONTROL, cv.ts);
+                stroke_round_rect(cv.pm, r, 8.0, tokens::BORDER_SUBTLE, 1.2, cv.ts);
+                tokens::TEXT_MUTED
+            }
+            ExpKind::Normal => {
+                fill_round_rect(cv.pm, r, 8.0, tokens::SURFACE_CONTROL, cv.ts);
+                stroke_round_rect(cv.pm, r, 8.0, tokens::BORDER_SUBTLE, 1.2, cv.ts);
+                tokens::TEXT_SECONDARY
+            }
         };
         let s = t(lang, *label);
-        let w = sysfont::measure(s, 1.6);
-        cv.ui_text(s, px + (pw - w) / 2.0, by + (el.action_h - 12.6) / 2.0, 1.6, fg);
+        let sw2 = sysfont::measure(s, 1.3);
+        let has_hint = !hint.is_empty();
+        let ty = if has_hint { r.1 + 6.0 } else { r.1 + (r.3 - 9.1) / 2.0 };
+        cv.ui_text(s, r.0 + (r.2 - sw2) / 2.0, ty, 1.3, fg);
+        if has_hint {
+            let hw = sysfont::measure(hint, 1.0);
+            cv.ui_text(hint, r.0 + (r.2 - hw) / 2.0, r.1 + r.3 - 11.0, 1.0, tokens::TEXT_MUTED);
+        }
     }
 
-    // clip info (Copied / Source / Size / Type)
-    let info_y = el.action_y0 + 3.0 * (el.action_h + 6.0) + 8.0;
+    // CLIP INFO
+    let info_y = el.action_y0 + 2.0 * (el.action_h + 6.0) + 12.0;
+    cv.ui_text(t(lang, Msg::ClipInfo), px, info_y, 1.1, muted);
     let kb = clip.text.len();
     let size = if kb >= 1024 { format!("{:.1} KB", kb as f32 / 1024.0) } else { format!("{kb} B") };
     let info = [
-        (Msg::DetailCreated, i18n::time_ago(lang, now.saturating_sub(clip.ts))),
+        (Msg::DetailId, format!("#{:08x}", clip.id)),
+        (Msg::DetailCreated, fmt_datetime(clip.ts)),
         (Msg::DetailSource, clip.source.clone().unwrap_or_else(|| "—".into())),
         (Msg::DetailSize, size),
         (Msg::DetailType, "Text".into()),
     ];
     for (i, (label, value)) in info.iter().enumerate() {
-        let y = info_y + i as f32 * 16.0;
-        cv.ui_text(t(lang, *label), px, y, 1.3, muted);
-        let val = sysfont::truncate_to_width(value, 1.3, pw - 70.0);
-        let vw = sysfont::measure(&val, 1.3);
-        cv.ui_text(&val, px + pw - vw, y, 1.3, txt2);
+        let y = info_y + 16.0 + i as f32 * 15.0;
+        cv.ui_text(t(lang, *label), px, y, 1.25, muted);
+        let val = sysfont::truncate_to_width(value, 1.25, pw - 64.0);
+        let vw = sysfont::measure(&val, 1.25);
+        cv.ui_text(&val, px + pw - vw, y, 1.25, txt2);
     }
+
+    // tip box at the bottom
+    let tip_h = 40.0;
+    let tip_y = dy + dh - tip_h - 12.0;
+    fill_round_rect(cv.pm, (px, tip_y, pw, tip_h), 10.0, fade(tokens::ACCENT_GOLD, 0.10), cv.ts);
+    cv.ui_text("Tip", px + 10.0, tip_y + 7.0, 1.2, tokens::ACCENT_GOLD);
+    let tip = t(lang, Msg::ExpTip);
+    // wrap the tip across two lines within the box
+    let max = pw - 20.0;
+    let (l1, l2) = wrap_two(tip, 1.05, max);
+    cv.ui_text(&l1, px + 10.0, tip_y + 20.0, 1.05, txt2);
+    if !l2.is_empty() {
+        cv.ui_text(&l2, px + 10.0, tip_y + 31.0, 1.05, txt2);
+    }
+}
+
+/// Visual style of a detail action button.
+enum ExpKind {
+    Primary,
+    Normal,
+    Muted,
+    Danger,
+}
+
+/// Split `s` into at most two lines that each fit `max` width (greedy on
+/// whitespace; the second line is truncated if it still overflows).
+fn wrap_two(s: &str, px: f32, max: f32) -> (String, String) {
+    if sysfont::measure(s, px) <= max {
+        return (s.to_string(), String::new());
+    }
+    let mut l1 = String::new();
+    let mut rest = String::new();
+    let mut filling = true;
+    for word in s.split(' ') {
+        if filling {
+            let trial = if l1.is_empty() { word.to_string() } else { format!("{l1} {word}") };
+            if sysfont::measure(&trial, px) <= max {
+                l1 = trial;
+                continue;
+            }
+            filling = false;
+        }
+        if rest.is_empty() {
+            rest = word.to_string();
+        } else {
+            rest.push(' ');
+            rest.push_str(word);
+        }
+    }
+    (l1, sysfont::truncate_to_width(&rest, px, max))
+}
+
+/// Gold progress ring (track + arc from 12 o'clock) for the level badge.
+fn progress_ring(cv: &mut Cv, cx: f32, cy: f32, r: f32, pct: f32) {
+    cv.stroke(&oval(cx, cy, r, r), tokens::SURFACE_CONTROL, 3.0);
+    let n = 48usize;
+    let steps = (pct.clamp(0.0, 1.0) * n as f32).round() as usize;
+    if steps == 0 {
+        return;
+    }
+    let mut pts = Vec::with_capacity(steps + 1);
+    for i in 0..=steps {
+        let a = -std::f32::consts::FRAC_PI_2 + (i as f32 / n as f32) * std::f32::consts::TAU;
+        pts.push((cx + a.cos() * r, cy + a.sin() * r));
+    }
+    cv.line(&pts, tokens::ACCENT_GOLD, 3.0);
+}
+
+/// A pill toggle switch (gold when on).
+fn toggle_switch(cv: &mut Cv, r: (f32, f32, f32, f32), on: bool) {
+    let track = if on { tokens::ACCENT_GOLD } else { tokens::SURFACE_CONTROL_ACTIVE };
+    fill_round_rect(cv.pm, r, r.3 / 2.0, track, cv.ts);
+    let knob_r = r.3 / 2.0 - 2.0;
+    let kx = if on { r.0 + r.2 - knob_r - 2.0 } else { r.0 + knob_r + 2.0 };
+    cv.fill(&oval(kx, r.1 + r.3 / 2.0, knob_r, knob_r), (255, 255, 255, 240));
+}
+
+/// A tiny cat face for the sidebar avatar.
+fn mini_cat(cv: &mut Cv, cx: f32, cy: f32) {
+    // ears
+    for s in [-1.0f32, 1.0] {
+        let mut pb = PathBuilder::new();
+        pb.move_to(cx + s * 13.0, cy - 6.0);
+        pb.line_to(cx + s * 16.0, cy - 20.0);
+        pb.line_to(cx + s * 3.0, cy - 13.0);
+        pb.close();
+        let ear = pb.finish();
+        cv.fill(&ear, FUR);
+        cv.stroke(&ear, OUTLINE, 1.6);
+    }
+    cv.fill(&oval(cx, cy, 16.0, 14.0), FUR);
+    cv.stroke(&oval(cx, cy, 16.0, 14.0), OUTLINE, 1.8);
+    cv.fill(&oval(cx - 6.0, cy - 1.0, 1.8, 2.2), OUTLINE);
+    cv.fill(&oval(cx + 6.0, cy - 1.0, 1.8, 2.2), OUTLINE);
+    cv.fill(&oval(cx - 7.5, cy + 4.0, 3.0, 1.8), fade(BLUSH, 0.7));
+    cv.fill(&oval(cx + 7.5, cy + 4.0, 3.0, 1.8), fade(BLUSH, 0.7));
+    let mut m = PathBuilder::new();
+    m.move_to(cx - 3.0, cy + 4.0);
+    m.quad_to(cx, cy + 7.0, cx + 3.0, cy + 4.0);
+    cv.stroke(&m.finish(), OUTLINE, 1.5);
+}
+
+/// Colored line icon for a sidebar stat card.
+fn stat_icon(cv: &mut Cv, which: Msg, cx: f32, cy: f32, color: (u8, u8, u8, u8)) {
+    match which {
+        Msg::BubbleKeys => {
+            cv.stroke(&round_rect(cx - 7.0, cy - 4.0, 14.0, 9.0, 2.0), color, 1.4);
+            cv.line(&[(cx - 3.0, cy + 2.0), (cx + 3.0, cy + 2.0)], color, 1.3);
+        }
+        Msg::BubbleClicks => {
+            cv.stroke(&oval(cx, cy, 4.5, 6.0), color, 1.4);
+            cv.line(&[(cx, cy - 6.0), (cx, cy - 2.0)], color, 1.3);
+        }
+        _ => {
+            cv.stroke(&round_rect(cx - 5.0, cy - 6.0, 10.0, 13.0, 2.0), color, 1.4);
+            cv.fill(&round_rect(cx - 2.5, cy - 8.0, 5.0, 3.0, 1.0), color);
+        }
+    }
+}
+
+/// Line icon for a sidebar nav item.
+fn nav_icon(cv: &mut Cv, nav: pl::NavView, cx: f32, cy: f32, color: (u8, u8, u8, u8)) {
+    match nav {
+        pl::NavView::Clipboard => {
+            cv.stroke(&round_rect(cx - 5.0, cy - 6.0, 10.0, 13.0, 2.0), color, 1.4);
+            cv.fill(&round_rect(cx - 2.5, cy - 8.0, 5.0, 3.0, 1.0), color);
+        }
+        pl::NavView::Pinned => {
+            let s = star_path(cx, cy, 6.0, 0.0);
+            cv.stroke(&s, color, 1.4);
+        }
+        pl::NavView::Statistics => {
+            for (i, h) in [4.0f32, 8.0, 5.5].iter().enumerate() {
+                let x = cx - 5.0 + i as f32 * 5.0;
+                cv.line(&[(x, cy + 6.0), (x, cy + 6.0 - h)], color, 1.6);
+            }
+        }
+        pl::NavView::Customization => {
+            cv.line(&[(cx - 6.0, cy - 3.0), (cx + 6.0, cy - 3.0)], color, 1.4);
+            cv.line(&[(cx - 6.0, cy + 3.0), (cx + 6.0, cy + 3.0)], color, 1.4);
+            cv.fill(&oval(cx + 2.0, cy - 3.0, 2.2, 2.2), color);
+            cv.fill(&oval(cx - 2.0, cy + 3.0, 2.2, 2.2), color);
+        }
+        pl::NavView::Settings => {
+            cv.stroke(&oval(cx, cy, 5.5, 5.5), color, 1.4);
+            cv.fill(&oval(cx, cy, 2.0, 2.0), color);
+        }
+    }
+}
+
+fn trash_icon(cv: &mut Cv, cx: f32, cy: f32, color: (u8, u8, u8, u8)) {
+    cv.line(&[(cx - 5.0, cy - 4.0), (cx + 5.0, cy - 4.0)], color, 1.5);
+    cv.line(&[(cx - 1.8, cy - 5.6), (cx + 1.8, cy - 5.6)], color, 1.5);
+    let mut pb = PathBuilder::new();
+    pb.move_to(cx - 3.6, cy - 4.0);
+    pb.line_to(cx - 3.0, cy + 5.2);
+    pb.line_to(cx + 3.0, cy + 5.2);
+    pb.line_to(cx + 3.6, cy - 4.0);
+    cv.stroke(&pb.finish(), color, 1.5);
+}
+
+/// epoch seconds -> "YYYY-MM-DD HH:MM:SS" (UTC), dependency-free.
+fn fmt_datetime(secs: u64) -> String {
+    let days = (secs / 86400) as i64;
+    let rem = secs % 86400;
+    let (h, mi, s) = (rem / 3600, (rem % 3600) / 60, rem % 60);
+    let z = days + 719468;
+    let era = if z >= 0 { z } else { z - 146096 } / 146097;
+    let doe = z - era * 146097;
+    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
+    let y = yoe + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 };
+    let y = if m <= 2 { y + 1 } else { y };
+    format!("{y:04}-{m:02}-{d:02} {h:02}:{mi:02}:{s:02}")
 }
 
 /// Which list row (if any) is under canvas-y `hy` in the expanded list.

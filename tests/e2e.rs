@@ -356,6 +356,36 @@ fn expanded_screen_opens_navigates_and_copies() {
     assert!(p.panel_open() && !p.panel_expanded());
 }
 
+/// Expanded screen sidebar + toolbar controls: the auto-close toggle, the
+/// capture pause button, the source-filter chip and the two-step clear button.
+#[test]
+fn expanded_sidebar_and_toolbar_controls() {
+    let mut p = pet();
+    copy(&mut p, "a", Some("Code"));
+    copy(&mut p, "b", Some("Chrome"));
+    p.apply_menu_action(MenuAction::ToggleExpanded);
+    let el = p.panel.expanded_layout();
+    let click = |p: &mut clipcat::pet::Pet, r: (f32, f32, f32, f32)| {
+        p.panel_click(r.0 + r.2 / 2.0, r.1 + r.3 / 2.0);
+    };
+
+    let ac0 = p.st.panel_autoclose;
+    click(&mut p, el.autoclose_toggle);
+    assert_ne!(p.st.panel_autoclose, ac0, "auto-close toggle flips the setting");
+
+    let cap0 = p.st.clip_capture;
+    click(&mut p, el.capture_btn);
+    assert_ne!(p.st.clip_capture, cap0, "capture button toggles capture");
+
+    click(&mut p, el.toolbar_filter);
+    assert!(p.panel.source.is_some(), "filter chip cycles to an app");
+
+    click(&mut p, el.toolbar_clear);
+    assert!(p.panel.clear_armed, "first clear press arms");
+    click(&mut p, el.toolbar_clear);
+    assert!(!p.panel.clear_armed, "second clear press fires and disarms");
+}
+
 /// Hotkey configuration e2e: default spec, persistence round-trip, custom
 /// values and the reset of hand-edited garbage.
 #[test]

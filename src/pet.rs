@@ -621,12 +621,42 @@ impl Pet {
         self.run_action(action)
     }
 
-    /// Routes a click in the expanded screen: collapse, switch nav, select a
-    /// row, or run a detail-pane action.
+    /// Routes a click in the expanded screen: collapse, sidebar/toolbar
+    /// controls, switch nav, select a row, or run a detail-pane action.
     fn expanded_click(&mut self, cx: f32, cy: f32) -> Option<String> {
-        match self.panel.expanded_hit(cx, cy, &self.clips) {
+        let hit = self.panel.expanded_hit(cx, cy, &self.clips);
+        // any interaction except a second clear press disarms the clear button
+        if !matches!(hit, ExpandedHit::ClearUnpinned) {
+            self.panel.clear_armed = false;
+        }
+        match hit {
             ExpandedHit::Collapse => {
                 self.relayout(|p| p.panel.toggle_expanded());
+                None
+            }
+            ExpandedHit::ToggleAutoclose => {
+                self.toggle_panel_autoclose();
+                None
+            }
+            ExpandedHit::ToggleCapture => {
+                self.run_action(PanelAction::ToggleCapture);
+                None
+            }
+            ExpandedHit::CycleSource => {
+                self.panel.cycle_source(&self.clips);
+                self.panel.sel = 0;
+                self.panel.scroll = 0;
+                None
+            }
+            ExpandedHit::ClearUnpinned => {
+                let action = if self.panel.clear_armed {
+                    self.panel.clear_armed = false;
+                    PanelAction::Clear
+                } else {
+                    self.panel.clear_armed = true;
+                    PanelAction::ArmClear
+                };
+                self.run_action(action);
                 None
             }
             ExpandedHit::Nav(n) => {
@@ -642,7 +672,7 @@ impl Pet {
             ExpandedHit::Action(a) => {
                 let id = self.panel.expanded_visible(&self.clips).get(self.panel.sel)?.id;
                 match a {
-                    ExpAction::Copy => self.copy_text(id),
+                    ExpAction::Copy | ExpAction::QuickCopy => self.copy_text(id),
                     ExpAction::Pin => {
                         self.run_action(PanelAction::TogglePin(id));
                         None
@@ -651,6 +681,9 @@ impl Pet {
                         self.run_action(PanelAction::Delete(id));
                         None
                     }
+                    // Edit Note / Open Source: shown for parity with the design,
+                    // no behavior yet (no per-clip notes, no source launching).
+                    ExpAction::EditNote | ExpAction::OpenSource => None,
                 }
             }
             ExpandedHit::None => None,
@@ -1011,10 +1044,12 @@ impl Pet {
                     panel: &self.panel,
                     store: &self.clips,
                     lang: self.lang(),
+                    version: env!("CARGO_PKG_VERSION"),
                     capture: self.st.clip_capture,
                     caret,
                     level: lv,
-                    xp_pct: into as f32 / need as f32,
+                    xp_into: into,
+                    xp_need: need,
                     keys: self.st.keys_today,
                     clicks: self.st.clicks_today,
                     copies: self.st.copies_today,

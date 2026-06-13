@@ -161,14 +161,38 @@ pub enum ExpandedHit {
     Nav(NavView),
     Row(usize),
     Action(ExpAction),
+    /// Sidebar "auto-close panel" toggle.
+    ToggleAutoclose,
+    /// Sidebar capture pause/resume button.
+    ToggleCapture,
+    /// Toolbar source-filter chip (cycles apps).
+    CycleSource,
+    /// Toolbar clear-unpinned button (two-step, like the compact panel).
+    ClearUnpinned,
 }
 
-/// A detail-pane action button in the expanded screen.
+/// A detail-pane action button in the expanded screen (the 3x2 grid, in
+/// reading order).
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub enum ExpAction {
     Copy,
+    QuickCopy,
     Pin,
+    EditNote,
     Delete,
+    OpenSource,
+}
+
+impl ExpAction {
+    /// The grid order matching [`Panel::expanded_action_rects`].
+    pub const GRID: [ExpAction; 6] = [
+        ExpAction::Copy,
+        ExpAction::QuickCopy,
+        ExpAction::Pin,
+        ExpAction::EditNote,
+        ExpAction::Delete,
+        ExpAction::OpenSource,
+    ];
 }
 
 /// Sidebar destinations in the expanded screen.
@@ -213,6 +237,12 @@ pub struct ExpandedLayout {
     /// Detail action buttons start y + per-button height.
     pub action_y0: f32,
     pub action_h: f32,
+    /// Sidebar auto-close toggle switch and capture pause/resume button.
+    pub autoclose_toggle: (f32, f32, f32, f32),
+    pub capture_btn: (f32, f32, f32, f32),
+    /// List toolbar: the source-filter chip and the clear-unpinned button.
+    pub toolbar_filter: (f32, f32, f32, f32),
+    pub toolbar_clear: (f32, f32, f32, f32),
 }
 
 pub struct Panel {
@@ -341,8 +371,8 @@ impl Panel {
     pub fn expanded_layout(&self) -> ExpandedLayout {
         let l = self.layout();
         let (cx, cy, cw, ch) = (l.card_x, l.card_y, l.card_w, l.card_h);
-        let sidebar_w = 196.0;
-        let detail_w = 244.0;
+        let sidebar_w = 210.0;
+        let detail_w = 250.0;
         let list_w = cw - sidebar_w - detail_w;
         let list = (cx + sidebar_w, cy, list_w, ch);
         ExpandedLayout {
@@ -351,14 +381,36 @@ impl Panel {
             list,
             detail: (cx + sidebar_w + list_w, cy, detail_w, ch),
             collapse: (cx + cw - 26.0, cy + 8.0, 18.0, 18.0),
-            nav_y0: cy + 176.0,
-            nav_h: 30.0,
-            search: (list.0 + 12.0, cy + 44.0, list_w - 24.0, 22.0),
-            rows_y: cy + 80.0,
-            rows: (((ch - 80.0 - 34.0) / ROW_H) as usize).max(1),
-            action_y0: cy + 246.0,
-            action_h: 26.0,
+            nav_y0: cy + 210.0,
+            nav_h: 32.0,
+            // toolbar (filter/clear/count) + filter input sit above the rows
+            search: (list.0 + 14.0, cy + 84.0, list_w - 28.0, 24.0),
+            rows_y: cy + 118.0,
+            rows: (((ch - 118.0 - 38.0) / ROW_H) as usize).max(1),
+            action_y0: cy + 232.0,
+            action_h: 34.0,
+            autoclose_toggle: (cx + sidebar_w - 50.0, cy + ch - 96.0, 34.0, 18.0),
+            capture_btn: (cx + sidebar_w - 48.0, cy + ch - 52.0, 30.0, 20.0),
+            toolbar_filter: (list.0 + 14.0, cy + 50.0, 96.0, 24.0),
+            toolbar_clear: (list.0 + 118.0, cy + 50.0, 30.0, 24.0),
         }
+    }
+
+    /// The six detail-pane action buttons (3 columns x 2 rows), matching
+    /// [`ExpAction::GRID`], used by both the renderer and hit-testing.
+    pub fn expanded_action_rects(&self) -> [(f32, f32, f32, f32); 6] {
+        let el = self.expanded_layout();
+        let (dx, _, dw, _) = el.detail;
+        let (px, pw) = (dx + 14.0, dw - 28.0);
+        let gap = 6.0;
+        let bw = (pw - 2.0 * gap) / 3.0;
+        let bh = el.action_h;
+        let mut r = [(0.0, 0.0, 0.0, 0.0); 6];
+        for (i, slot) in r.iter_mut().enumerate() {
+            let (col, row) = (i % 3, i / 3);
+            *slot = (px + col as f32 * (bw + gap), el.action_y0 + row as f32 * (bh + gap), bw, bh);
+        }
+        r
     }
 
     /// Enter/leave the expanded three-pane screen.
@@ -388,6 +440,18 @@ impl Panel {
         if inr(el.collapse) {
             return ExpandedHit::Collapse;
         }
+        if inr(el.autoclose_toggle) {
+            return ExpandedHit::ToggleAutoclose;
+        }
+        if inr(el.capture_btn) {
+            return ExpandedHit::ToggleCapture;
+        }
+        if inr(el.toolbar_filter) {
+            return ExpandedHit::CycleSource;
+        }
+        if inr(el.toolbar_clear) {
+            return ExpandedHit::ClearUnpinned;
+        }
         let (sx, _, sw, _) = el.sidebar;
         for (i, nav) in NavView::ALL.iter().enumerate() {
             let ny = el.nav_y0 + i as f32 * el.nav_h;
@@ -396,12 +460,11 @@ impl Panel {
             }
         }
         let has_sel = self.sel < self.expanded_visible(store).len();
-        let (dx, _, dw, _) = el.detail;
-        let (px, pw) = (dx + 14.0, dw - 28.0);
-        for (i, act) in [ExpAction::Copy, ExpAction::Pin, ExpAction::Delete].into_iter().enumerate() {
-            let by = el.action_y0 + i as f32 * (el.action_h + 6.0);
-            if has_sel && x >= px && x <= px + pw && y >= by && y <= by + el.action_h {
-                return ExpandedHit::Action(act);
+        if has_sel {
+            for (act, r) in ExpAction::GRID.iter().zip(self.expanded_action_rects()) {
+                if x >= r.0 && x <= r.0 + r.2 && y >= r.1 && y <= r.1 + r.3 {
+                    return ExpandedHit::Action(*act);
+                }
             }
         }
         let (lxc, _, lwc, _) = el.list;
