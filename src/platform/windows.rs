@@ -13,7 +13,7 @@
 use crate::hotkey::{self, Hotkey};
 use crate::i18n::{self, t, Lang, Msg};
 use crate::input;
-use crate::panel::NavKey;
+use crate::panel::{fit_delta, NavKey, Rect};
 use crate::pet::{window_size, Pet, SCALES};
 use crate::render::{self, Badge};
 use crate::state::{Persist, ACCESSORIES};
@@ -257,6 +257,7 @@ impl App {
     /// focus, the plain pet must never steal it. Move + resize + repaint go
     /// out as one atomic `UpdateLayeredWindow` (no flicker during drags).
     unsafe fn apply_size(&mut self) {
+        let fit = self.pet.take_fit_panel();
         let (w, h) = self.pet.canvas_size();
         let (dx, dy) = self.pet.take_window_shift();
         let mut rc = RECT {
@@ -305,6 +306,33 @@ impl App {
         self.pet.dirty = true;
         self.pet.render(&mut self.pm);
         self.blit_at(Some((nx, ny)));
+
+        // The panel just opened: if the card landed off the monitor (the pet
+        // sits near an edge, or a persisted offset put it offscreen), slide
+        // the card — not the cat — back into view and re-apply once. `fit` is
+        // already drained, so the recursive call can't loop.
+        if fit && self.pet.panel_open() {
+            if let Some((sdx, sdy)) = self.panel_fit_shift(nx, ny) {
+                self.pet.shift_panel(sdx, sdy);
+                self.apply_size();
+            }
+        }
+    }
+
+    /// Canvas-unit shift that brings the open panel card fully onto the work
+    /// area of the monitor it sits on, or None when it already fits. `(nx,
+    /// ny)` is the window's top-left in screen pixels.
+    unsafe fn panel_fit_shift(&self, nx: i32, ny: i32) -> Option<(f32, f32)> {
+        let s = self.pet.scale();
+        let l = self.pet.panel.layout();
+        let card = Rect {
+            x: nx as f32 + l.card_x * s,
+            y: ny as f32 + l.card_y * s,
+            w: l.card_w * s,
+            h: l.card_h * s,
+        };
+        let (dx, dy) = fit_delta(card, monitor_work_rect(self.hwnd)?);
+        (dx.abs() >= 0.5 || dy.abs() >= 0.5).then_some((dx / s, dy / s))
     }
 
     fn update_tray_tip(&self) {
@@ -1469,6 +1497,29 @@ fn clamp_to_screen(x: i32, y: i32, w: i32, h: i32) -> (i32, i32) {
         let nx = x.clamp(vx - w + 60, vx + vw - 60);
         let ny = y.clamp(vy - h + 60, vy + vh - 60);
         (nx, ny)
+    }
+}
+
+/// The work area (screen pixels, taskbar excluded) of the monitor nearest
+/// `hwnd`. Used to keep a freshly opened panel on the same monitor as the pet.
+fn monitor_work_rect(hwnd: HWND) -> Option<Rect> {
+    unsafe {
+        let mon = MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST);
+        if mon.is_null() {
+            return None;
+        }
+        let mut mi: MONITORINFO = std::mem::zeroed();
+        mi.cbSize = std::mem::size_of::<MONITORINFO>() as u32;
+        if GetMonitorInfoW(mon, &mut mi) == 0 {
+            return None;
+        }
+        let r = mi.rcWork;
+        Some(Rect {
+            x: r.left as f32,
+            y: r.top as f32,
+            w: (r.right - r.left) as f32,
+            h: (r.bottom - r.top) as f32,
+        })
     }
 }
 

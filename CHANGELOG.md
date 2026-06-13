@@ -40,6 +40,13 @@ versions follow [SemVer](https://semver.org/). Maintenance rules:
   every text surface renders with fonts read from your OS. (On a system
   with no usable font at all, text shows as placeholder boxes.)
 
+### Fixed
+- The clipboard panel **no longer opens off-screen**. When the cat sits near
+  a screen edge — or its remembered panel position would reach past the
+  monitor — the panel now slides itself fully into view as it opens, with the
+  cat staying exactly where it is. You can still drag the panel partly off the
+  edge yourself; it just won't get stuck there next time you open it.
+
 ## [2.1.0] - 2026-06-12
 
 ### Added

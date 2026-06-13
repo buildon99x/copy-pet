@@ -98,6 +98,10 @@ pub struct Pet {
     last_min_bucket: u64,
     level_changed: bool,
     size_changed: bool,
+    /// Set when the panel just opened; the backend drains it via
+    /// [`Pet::take_fit_panel`] and nudges the card on-screen if it opened
+    /// off the monitor (the core can't see screen bounds).
+    fit_panel: bool,
     /// Window-position delta (physical px) accumulated by layout changes so
     /// the cat stays put on screen; drained via [`Pet::take_window_shift`].
     pending_shift: (f32, f32),
@@ -145,6 +149,7 @@ impl Pet {
             last_min_bucket: 0,
             level_changed: false,
             size_changed: false,
+            fit_panel: false,
             pending_shift: (0.0, 0.0),
             drag: None,
         }
@@ -327,6 +332,36 @@ impl Pet {
     pub fn toggle_panel(&mut self) {
         self.drag = None;
         self.relayout(|p| p.panel.toggle());
+        // ask the backend to fit the card on screen once it's positioned —
+        // a pet near a screen edge would otherwise open the panel offscreen
+        if self.panel.open {
+            self.fit_panel = true;
+        }
+    }
+
+    /// Returns `true` once after the panel opened, so the backend pulls the
+    /// card on-screen if needed (see [`Pet::shift_panel`]). Only an *open*
+    /// transition sets it, never a drag, so the card can still be parked
+    /// partly off-screen by hand.
+    pub fn take_fit_panel(&mut self) -> bool {
+        std::mem::take(&mut self.fit_panel)
+    }
+
+    /// Slides the open panel card by a delta in canvas units **without moving
+    /// the cat** — it re-origins the canvas and flags the window shift exactly
+    /// like a header drag, then persists the new offset. The backend uses it
+    /// (after [`Pet::take_fit_panel`]) to bring a card that opened off the
+    /// monitor back into view. No-op when the panel is closed or the delta is
+    /// zero.
+    pub fn shift_panel(&mut self, dx: f32, dy: f32) {
+        if !self.panel.open || (dx == 0.0 && dy == 0.0) {
+            return;
+        }
+        self.relayout(|p| p.panel.drag_by(PanelDrag::Move, dx, dy));
+        self.panel.refresh(&self.clips);
+        self.st.panel_off_x = self.panel.off.0;
+        self.st.panel_off_y = self.panel.off.1;
+        self.dirty = true;
     }
 
     // ---- panel card drag (move / resize) -------------------------------------
@@ -1285,6 +1320,44 @@ mod tests {
         assert_eq!((cx, cy), (0.0, 0.0));
         // the window shifts so the cat itself never moves on screen
         assert_eq!(p.take_window_shift(), (-(cat.0 as i32), -(cat.1 as i32)));
+    }
+
+    #[test]
+    fn opening_the_panel_requests_a_fit_once() {
+        let mut p = pet();
+        assert!(!p.take_fit_panel(), "closed panel: nothing to fit");
+        p.toggle_panel(); // open
+        assert!(p.take_fit_panel(), "opening asks the backend to fit on screen");
+        assert!(!p.take_fit_panel(), "drained: only fired once");
+        p.toggle_panel(); // close
+        assert!(!p.take_fit_panel(), "closing never requests a fit");
+    }
+
+    #[test]
+    fn shift_panel_moves_the_card_without_moving_the_cat() {
+        let mut p = pet();
+        p.toggle_panel();
+        let _ = p.take_size_changed();
+        let _ = p.take_window_shift(); // drain the open transition
+        let off0 = p.panel.off;
+        let anchor0 = p.cat_anchor();
+
+        p.shift_panel(40.0, -30.0);
+        assert_eq!(p.panel.off, (off0.0 + 40.0, off0.1 - 30.0), "card slides by the delta");
+        assert_eq!((p.st.panel_off_x, p.st.panel_off_y), p.panel.off, "offset is persisted");
+        assert!(p.take_size_changed(), "the canvas re-origins around the cat");
+
+        // the window shift exactly cancels the cat's canvas move, so the cat
+        // stays put on screen (anchor + shift is invariant)
+        let (dx, dy) = p.take_window_shift();
+        let anchor1 = p.cat_anchor();
+        assert_eq!((anchor1.0 + dx as f32, anchor1.1 + dy as f32), anchor0);
+
+        // a closed panel ignores the shift
+        p.toggle_panel();
+        let off = p.panel.off;
+        p.shift_panel(10.0, 10.0);
+        assert_eq!(p.panel.off, off);
     }
 
     #[test]

@@ -42,7 +42,7 @@
 
 use crate::hotkey::Hotkey;
 use crate::input;
-use crate::panel::NavKey;
+use crate::panel::{fit_delta, NavKey, Rect};
 use crate::pet::Pet;
 use crate::state::{Persist, ACCESSORIES};
 #[cfg(not(target_os = "macos"))]
@@ -166,6 +166,7 @@ impl PortableApp {
         let Some(window) = self.window.clone() else {
             return;
         };
+        let fit = self.pet.take_fit_panel();
         let (nw, nh) = self.pet.canvas_size();
         let (nw, nh) = (nw as u32, nh as u32);
 
@@ -185,6 +186,45 @@ impl PortableApp {
             self.resize_surface();
         }
         self.paint();
+
+        // The panel just opened: if the card landed off the monitor (the pet
+        // sits near an edge, or a persisted offset put it offscreen), slide
+        // the card — not the cat — back into view and re-apply once. `fit` is
+        // already drained, so the recursive call can't loop.
+        if fit && self.pet.panel_open() {
+            if let Some((sdx, sdy)) = self.panel_fit_shift(&window) {
+                self.pet.shift_panel(sdx, sdy);
+                self.apply_size();
+            }
+        }
+    }
+
+    /// Canvas-unit shift that brings the open panel card fully onto the
+    /// monitor it sits on, or None when it already fits. winit exposes the
+    /// full monitor rect (not the taskbar-excluded work area), so the panel
+    /// can still sit under a taskbar — acceptable; the win is keeping it on
+    /// the screen at all.
+    fn panel_fit_shift(&self, window: &Window) -> Option<(f32, f32)> {
+        let s = self.pet.scale();
+        let win = window.outer_position().ok()?;
+        let l = self.pet.panel.layout();
+        let card = Rect {
+            x: win.x as f32 + l.card_x * s,
+            y: win.y as f32 + l.card_y * s,
+            w: l.card_w * s,
+            h: l.card_h * s,
+        };
+        let mon = window.current_monitor()?;
+        let mp = mon.position();
+        let ms = mon.size();
+        let vis = Rect {
+            x: mp.x as f32,
+            y: mp.y as f32,
+            w: ms.width as f32,
+            h: ms.height as f32,
+        };
+        let (dx, dy) = fit_delta(card, vis);
+        (dx.abs() >= 0.5 || dy.abs() >= 0.5).then_some((dx / s, dy / s))
     }
 
     /// Cursor position in screen coordinates (window position + local

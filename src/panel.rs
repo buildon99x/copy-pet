@@ -62,6 +62,43 @@ pub fn clamp_geometry(w: f32, h: f32, off_x: f32, off_y: f32) -> (f32, f32, f32,
     )
 }
 
+/// An axis-aligned rectangle. Used only by [`fit_delta`], so it carries no
+/// coordinate-space assumptions — the backends pass screen pixels.
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub struct Rect {
+    pub x: f32,
+    pub y: f32,
+    pub w: f32,
+    pub h: f32,
+}
+
+/// The smallest `(dx, dy)` that slides `card` fully inside `vis`, in whatever
+/// units the two share. Zero when it already fits. When the card is larger
+/// than `vis` on an axis its **start** edge (left/top) is aligned, so the
+/// panel header, search box and top clips stay reachable rather than the
+/// footer. The backends use this to pull a panel that opened off the monitor
+/// back into view by moving the card (the cat stays anchored), so a pet near
+/// a screen edge — or a card whose offset was dragged offscreen and persisted
+/// — never hides the panel.
+pub fn fit_delta(card: Rect, vis: Rect) -> (f32, f32) {
+    (
+        axis_fit(card.x, card.w, vis.x, vis.w),
+        axis_fit(card.y, card.h, vis.y, vis.h),
+    )
+}
+
+/// One axis of [`fit_delta`]: shift needed so `[pos, pos+len)` lies within
+/// `[vmin, vmin+vlen)`, aligning the start when it can't fully fit.
+fn axis_fit(pos: f32, len: f32, vmin: f32, vlen: f32) -> f32 {
+    if len >= vlen || pos < vmin {
+        vmin - pos
+    } else if pos + len > vmin + vlen {
+        vmin + vlen - pos - len
+    } else {
+        0.0
+    }
+}
+
 /// Computed panel geometry for the current card size/offset, all in canvas
 /// units. The canvas is the union of the cat's 240x256 canvas and the card
 /// (plus a margin); `cat` is where the cat canvas sits inside it.
@@ -694,6 +731,31 @@ mod tests {
         assert_eq!(l.cat, (-(p.off.0 - 4.0), -(p.off.1 - 4.0)));
         p.drag_by(PanelDrag::Move, -9999.0, 9999.0);
         assert_eq!(p.off, (-MAX_OFF, MAX_OFF));
+    }
+
+    #[test]
+    fn fit_delta_pulls_an_offscreen_card_back() {
+        // a 1000x800 monitor at the origin
+        let vis = Rect { x: 0.0, y: 0.0, w: 1000.0, h: 800.0 };
+        let card = |x, y| Rect { x, y, w: 300.0, h: 400.0 };
+        // already inside: no move
+        assert_eq!(fit_delta(card(100.0, 100.0), vis), (0.0, 0.0));
+        // off the top-left: pushed down-right by the overflow
+        assert_eq!(fit_delta(card(-40.0, -60.0), vis), (40.0, 60.0));
+        // off the bottom-right: pulled up-left so the far edge lands on vis
+        assert_eq!(fit_delta(card(800.0, 600.0), vis), (-100.0, -200.0));
+        // only one axis offscreen
+        assert_eq!(fit_delta(card(-10.0, 300.0), vis), (10.0, 0.0));
+    }
+
+    #[test]
+    fn fit_delta_aligns_start_when_card_exceeds_viewport() {
+        // a short viewport the tall card can't fit inside
+        let vis = Rect { x: 50.0, y: 20.0, w: 1000.0, h: 300.0 };
+        let card = Rect { x: 100.0, y: 100.0, w: 300.0, h: 400.0 };
+        // height exceeds vis: align the card top to vis top (header stays on
+        // screen), x already fits
+        assert_eq!(fit_delta(card, vis), (0.0, -80.0));
     }
 
     #[test]
