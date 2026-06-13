@@ -205,6 +205,24 @@ pub fn truncate_to_width(text: &str, px: f32, max_w: f32) -> String {
     out
 }
 
+/// Splits `text` into up to two lines, each fitting `max_w` canvas units at
+/// size `px`. The first line greedily takes as many characters as fit; the
+/// remainder goes on the second line, truncated with ".." if it overflows.
+/// The second line is empty when everything fit on the first.
+pub fn wrap_two(text: &str, px: f32, max_w: f32) -> (String, String) {
+    let mut l1 = String::new();
+    let mut w = 0.0;
+    for (i, c) in text.char_indices() {
+        let a = advance_of(c, px);
+        if w + a > max_w {
+            return (l1, truncate_to_width(&text[i..], px, max_w));
+        }
+        l1.push(c);
+        w += a;
+    }
+    (l1, String::new())
+}
+
 // ---- rasterizing -------------------------------------------------------------
 
 /// One rasterized glyph: an alpha coverage mask plus its placement relative

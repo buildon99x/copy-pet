@@ -67,3 +67,31 @@ model inside the existing window.
 - ⚠️ During a card drag the surface is recreated per tick (~30/s) like any
   OS window resize. Position writes go through the dirty flag + 30 s
   autosave, not per-tick disk writes.
+
+## Update (2026-06-13): fixed-scale panel + symmetric cat drag
+
+Two refinements, still within the one-window union model (no second OS
+window):
+
+- **The panel always renders at scale 1.0**, independent of the cat's size
+  (small/normal/large). The union is now assembled in **physical pixels**:
+  the cat block is `240×256 × cat_scale`, the card block is `w×h × 1.0`, and
+  `off` is the card's physical offset from the cat block. `Panel::layout()`
+  takes the cat scale (cached on `Panel::cat_scale`, synced by
+  `Pet::set_scale_idx`) and returns physical-pixel geometry; `Layout.cat`
+  and `canvas_*` are physical. The cat draw translates **after** the scale
+  (`from_scale(s,s).post_translate(origin)`); the panel draw uses identity.
+  At `cat_scale == 1.0` every value is byte-identical to before, so the
+  existing geometry tests are unchanged. Card placement (`card_x/card_y`) is
+  invariant to `cat_scale`, so the panel never shifts or rescales when the
+  cat does. Backends feed **physical** client pixels to panel hit-testing
+  (panel coords == physical at 1.0) and to `Pet::cat_point`, which divides by
+  the cat scale itself.
+- **Dragging the cat body moves only the cat.** Mirroring the existing
+  "drag the card, the cat stays put", `Pet::drag_pet` shifts `off` by
+  `-delta` under a **panel-anchored** relayout (`panel_anchor` /
+  `relayout_panel_anchored`), so the window re-origins to hold the card
+  pixel-fixed while the cat slides. Backends route a cat-body drag through
+  `drag_pet` (incremental deltas) only while the panel is open; with the
+  panel closed the whole window still moves as before. `save_pos` is skipped
+  during a panel-open cat drag — the position lives in the persisted `off`.

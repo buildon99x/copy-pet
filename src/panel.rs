@@ -33,7 +33,10 @@ pub const DEFAULT_OFF: (f32, f32) = (-56.0, -282.0);
 pub const MAX_OFF: f32 = 4096.0;
 
 pub const BTN: f32 = 18.0;
+/// Per-clip row height in the compact list view (the default).
 pub const ROW_H: f32 = 34.0;
+/// Per-clip row height in the roomier rounded-box "thumbnail" view.
+pub const ROW_H_THUMB: f32 = 52.0;
 /// Row x-zones: pin toggle | clip body | delete.
 pub const PIN_ZONE: f32 = 34.0; // x < row_x + PIN_ZONE
 pub const DEL_ZONE: f32 = 28.0; // x > row_x + row_w - DEL_ZONE
@@ -62,26 +65,68 @@ pub fn clamp_geometry(w: f32, h: f32, off_x: f32, off_y: f32) -> (f32, f32, f32,
     )
 }
 
-/// Computed panel geometry for the current card size/offset, all in canvas
-/// units. The canvas is the union of the cat's 240x256 canvas and the card
-/// (plus a margin); `cat` is where the cat canvas sits inside it.
+/// An axis-aligned rectangle. Used only by [`fit_delta`], so it carries no
+/// coordinate-space assumptions — the backends pass screen pixels.
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub struct Rect {
+    pub x: f32,
+    pub y: f32,
+    pub w: f32,
+    pub h: f32,
+}
+
+/// The smallest `(dx, dy)` that slides `card` fully inside `vis`, in whatever
+/// units the two share. Zero when it already fits. When the card is larger
+/// than `vis` on an axis its **start** edge (left/top) is aligned, so the
+/// panel header, search box and top clips stay reachable rather than the
+/// footer. The backends use this to pull a panel that opened off the monitor
+/// back into view by moving the card (the cat stays anchored), so a pet near
+/// a screen edge — or a card whose offset was dragged offscreen and persisted
+/// — never hides the panel.
+pub fn fit_delta(card: Rect, vis: Rect) -> (f32, f32) {
+    (
+        axis_fit(card.x, card.w, vis.x, vis.w),
+        axis_fit(card.y, card.h, vis.y, vis.h),
+    )
+}
+
+/// One axis of [`fit_delta`]: shift needed so `[pos, pos+len)` lies within
+/// `[vmin, vmin+vlen)`, aligning the start when it can't fully fit.
+fn axis_fit(pos: f32, len: f32, vmin: f32, vlen: f32) -> f32 {
+    if len >= vlen || pos < vmin {
+        vmin - pos
+    } else if pos + len > vmin + vlen {
+        vmin + vlen - pos - len
+    } else {
+        0.0
+    }
+}
+
+/// Computed panel geometry for the current card size/offset, in **physical
+/// pixels**. The canvas is the union of the cat block (240x256 scaled by the
+/// cat's size) and the fixed-scale card (plus a margin); `cat` is where the
+/// cat block sits inside it. Card-relative fields (`card_*`, `btn_*`,
+/// `search_*`, `rows_*`, `row_*`, `footer_y`) are also physical pixels but,
+/// since the card always renders at scale 1.0, they equal the card's own
+/// canvas units.
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub struct Layout {
     pub canvas_w: f32,
     pub canvas_h: f32,
-    /// Top-left of the cat canvas inside the window canvas.
+    /// Top-left of the cat block inside the window canvas (physical pixels).
     pub cat: (f32, f32),
     pub card_x: f32,
     pub card_y: f32,
     pub card_w: f32,
     pub card_h: f32,
-    /// Header buttons, right-aligned: filter, pause, clear, language, close.
+    /// Header buttons, right-aligned: view, filter, pause, clear, language, close.
     pub btn_y: f32,
     pub btn_close_x: f32,
     pub btn_lang_x: f32,
     pub btn_clear_x: f32,
     pub btn_pause_x: f32,
     pub btn_filter_x: f32,
+    pub btn_view_x: f32,
     pub search_x: f32,
     pub search_y: f32,
     pub search_w: f32,
@@ -89,6 +134,8 @@ pub struct Layout {
     pub rows_y: f32,
     pub row_x: f32,
     pub row_w: f32,
+    /// Per-row height (depends on the list/thumbnail view).
+    pub row_h: f32,
     /// Clip rows that fit between the header and the footer.
     pub rows: usize,
     pub footer_y: f32,
@@ -111,6 +158,8 @@ pub enum PanelAction {
     /// Toggle clipboard capture on/off.
     ToggleCapture,
     ToggleLang,
+    /// Switch the clip list between the compact list and roomy cards.
+    ToggleView,
     Close,
 }
 
@@ -163,7 +212,18 @@ pub struct Panel {
     pub w: f32,
     pub h: f32,
     /// Card top-left relative to the cat's top-left (user-movable, persisted).
+    /// In panel units, i.e. physical pixels — the card always renders at scale
+    /// 1.0 regardless of the cat's size (see [`Layout`]).
     pub off: (f32, f32),
+    /// The cat's current size multiplier, mirrored from the Pet so [`layout`]
+    /// can place the (fixed-scale) card next to the (scaled) cat. The card
+    /// itself never uses this. Kept in sync by `Pet::set_scale_idx`.
+    ///
+    /// [`layout`]: Panel::layout
+    pub cat_scale: f32,
+    /// List style mirrored from `st.panel_view`: 0 = compact list, 1 = roomier
+    /// rounded-box cards. Drives the per-row height (see [`Panel::row_h`]).
+    pub view: u8,
     /// Cached filtered row order (the panel is redrawn every tick while
     /// open; without this the query would re-scan every clip text per frame).
     cache: RefCell<ViewCache>,
@@ -182,6 +242,8 @@ impl Default for Panel {
             w: DEFAULT_W,
             h: DEFAULT_H,
             off: DEFAULT_OFF,
+            cat_scale: 1.0,
+            view: 0,
             cache: RefCell::new(ViewCache::default()),
         }
     }
@@ -208,15 +270,31 @@ impl Panel {
         }
     }
 
-    /// The full geometry for the current card size/offset.
+    /// Per-clip row height for the active view (compact list vs. roomy cards).
+    pub fn row_h(&self) -> f32 {
+        if self.view == 1 {
+            ROW_H_THUMB
+        } else {
+            ROW_H
+        }
+    }
+
+    /// The full geometry for the current card size/offset, in **physical
+    /// pixels**. The card always renders at scale 1.0 (panel units == physical
+    /// pixels), while the cat block is sized by `cat_scale`; the canvas is the
+    /// union of the two, so a larger cat grows the window only on the cat's
+    /// side and the card keeps its fixed size and its `off` from the cat.
     pub fn layout(&self) -> Layout {
         let (w, h) = (self.w, self.h);
         let (off_x, off_y) = self.off;
-        // canvas = union of the cat canvas and the margin-padded card
+        // physical size of the cat block (the card block is already 1.0)
+        let cat_w = crate::render::CANVAS_W * self.cat_scale;
+        let cat_h = crate::render::CANVAS_H * self.cat_scale;
+        // canvas = union of the cat block and the margin-padded card
         let left = (off_x - MARGIN).min(0.0);
         let top = (off_y - MARGIN).min(0.0);
-        let right = (off_x + w + MARGIN).max(crate::render::CANVAS_W);
-        let bottom = (off_y + h + MARGIN).max(crate::render::CANVAS_H);
+        let right = (off_x + w + MARGIN).max(cat_w);
+        let bottom = (off_y + h + MARGIN).max(cat_h);
         let cat = (-left, -top);
         let card_x = cat.0 + off_x;
         let card_y = cat.1 + off_y;
@@ -235,6 +313,7 @@ impl Panel {
             btn_clear_x: btn_close_x - 44.0,
             btn_pause_x: btn_close_x - 66.0,
             btn_filter_x: btn_close_x - 88.0,
+            btn_view_x: btn_close_x - 110.0,
             search_x: card_x + 8.0,
             search_y: card_y + 30.0,
             search_w: w - 16.0,
@@ -242,7 +321,8 @@ impl Panel {
             rows_y: card_y + HEADER_H,
             row_x: card_x + 8.0,
             row_w: w - 20.0,
-            rows: (((h - HEADER_H - FOOTER_H) / ROW_H) as usize).max(1),
+            row_h: self.row_h(),
+            rows: (((h - HEADER_H - FOOTER_H) / self.row_h()) as usize).max(1),
             footer_y: card_y + h - FOOTER_H,
         }
     }
@@ -274,7 +354,7 @@ impl Panel {
         if x >= x1 - GRIP && x <= x1 + 2.0 && y >= y1 - GRIP && y <= y1 + 2.0 {
             return Some(PanelDrag::Resize);
         }
-        if self.hit(x, y) && y < l.search_y - 2.0 && x < l.btn_filter_x - 4.0 {
+        if self.hit(x, y) && y < l.search_y - 2.0 && x < l.btn_view_x - 4.0 {
             return Some(PanelDrag::Move);
         }
         None
@@ -378,10 +458,10 @@ impl Panel {
     /// Row index (into the filtered list) under the y coordinate, if any.
     pub fn row_at(&self, y: f32, total: usize) -> Option<usize> {
         let l = self.layout();
-        if y < l.rows_y || y >= l.rows_y + ROW_H * l.rows as f32 {
+        if y < l.rows_y || y >= l.rows_y + l.row_h * l.rows as f32 {
             return None;
         }
-        let i = self.scroll + ((y - l.rows_y) / ROW_H) as usize;
+        let i = self.scroll + ((y - l.rows_y) / l.row_h) as usize;
         (i < total).then_some(i)
     }
 
@@ -431,6 +511,9 @@ impl Panel {
             // pure panel state: cycle the source filter, no action needed
             self.cycle_source(store);
             return None;
+        }
+        if on_btn(l.btn_view_x) {
+            return Some(PanelAction::ToggleView);
         }
         // clip rows
         let visible = self.visible(store);
@@ -611,6 +694,15 @@ mod tests {
             p.click(l.btn_close_x + 8.0, l.btn_y + 8.0, &s),
             Some(PanelAction::Close)
         );
+        // view-toggle button (leftmost of the header cluster)
+        assert_eq!(
+            p.click(l.btn_view_x + 8.0, l.btn_y + 8.0, &s),
+            Some(PanelAction::ToggleView)
+        );
+        // the view button is not part of the move-drag handle
+        assert_eq!(p.drag_hit(l.btn_view_x + 8.0, l.btn_y + 8.0), None);
+        // the header strip left of it still moves the card
+        assert_eq!(p.drag_hit(l.btn_view_x - 12.0, l.btn_y + 8.0), Some(PanelDrag::Move));
     }
 
     #[test]
@@ -694,6 +786,64 @@ mod tests {
         assert_eq!(l.cat, (-(p.off.0 - 4.0), -(p.off.1 - 4.0)));
         p.drag_by(PanelDrag::Move, -9999.0, 9999.0);
         assert_eq!(p.off, (-MAX_OFF, MAX_OFF));
+    }
+
+    #[test]
+    fn fit_delta_pulls_an_offscreen_card_back() {
+        // a 1000x800 monitor at the origin
+        let vis = Rect { x: 0.0, y: 0.0, w: 1000.0, h: 800.0 };
+        let card = |x, y| Rect { x, y, w: 300.0, h: 400.0 };
+        // already inside: no move
+        assert_eq!(fit_delta(card(100.0, 100.0), vis), (0.0, 0.0));
+        // off the top-left: pushed down-right by the overflow
+        assert_eq!(fit_delta(card(-40.0, -60.0), vis), (40.0, 60.0));
+        // off the bottom-right: pulled up-left so the far edge lands on vis
+        assert_eq!(fit_delta(card(800.0, 600.0), vis), (-100.0, -200.0));
+        // only one axis offscreen
+        assert_eq!(fit_delta(card(-10.0, 300.0), vis), (10.0, 0.0));
+    }
+
+    #[test]
+    fn fit_delta_aligns_start_when_card_exceeds_viewport() {
+        // a short viewport the tall card can't fit inside
+        let vis = Rect { x: 50.0, y: 20.0, w: 1000.0, h: 300.0 };
+        let card = Rect { x: 100.0, y: 100.0, w: 300.0, h: 400.0 };
+        // height exceeds vis: align the card top to vis top (header stays on
+        // screen), x already fits
+        assert_eq!(fit_delta(card, vis), (0.0, -80.0));
+    }
+
+    #[test]
+    fn thumbnail_view_uses_taller_rows_and_hit_tests_them() {
+        let s = store(6);
+        let mut p = open_panel();
+        let list = p.layout();
+        assert_eq!(list.row_h, ROW_H);
+        p.view = 1;
+        let cards = p.layout();
+        assert_eq!(cards.row_h, ROW_H_THUMB);
+        assert!(cards.rows < list.rows, "taller cards => fewer fit on screen");
+        // row_at honors the active (taller) row height
+        let y = cards.rows_y + ROW_H_THUMB * 1.5;
+        assert_eq!(p.row_at(y, 6), Some(1));
+        // a click in that card's body still copies it
+        let act = p.click(cards.row_x + 60.0, y, &s);
+        assert!(matches!(act, Some(PanelAction::Copy(_))));
+    }
+
+    #[test]
+    fn layout_scales_only_the_cat_block() {
+        let mut p = open_panel();
+        let base = p.layout();
+        p.cat_scale = 1.3; // grow the cat
+        let big = p.layout();
+        // the card never scales: its placement and size are invariant
+        assert_eq!(
+            (big.card_x, big.card_y, big.card_w, big.card_h),
+            (base.card_x, base.card_y, base.card_w, base.card_h),
+        );
+        // the union grows only because the cat block grew
+        assert!(big.canvas_w >= base.canvas_w && big.canvas_h >= base.canvas_h);
     }
 
     #[test]

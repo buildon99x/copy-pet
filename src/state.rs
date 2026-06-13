@@ -21,6 +21,10 @@ pub struct Persist {
     pub sound_mode: u8,    // 0 off, 1 events only, 2 taps + events
     pub bubble_pinned: bool,
     pub locked: bool,
+    /// Window stacking: 0 = always on top (default), 1 = normal (can go behind
+    /// other windows), 2 = hidden (restored from the tray or the panel hotkey).
+    /// Surfaced on Windows (tray) and macOS (tray); Linux keeps always-on-top.
+    pub window_level: u8,
     /// "en" / "ko"; empty means "not chosen yet" -> detected from the OS.
     pub lang: String,
     /// When false, copy events are ignored (privacy pause).
@@ -40,6 +44,9 @@ pub struct Persist {
     pub panel_off_y: f32,
     /// When true (default), picking a clip closes the panel for pasting.
     pub panel_autoclose: bool,
+    /// Panel list style: 0 = compact list (default), 1 = roomier rounded-box
+    /// "thumbnail" cards that show more of each clip.
+    pub panel_view: u8,
     // lifetime
     pub total_keys: u64,
     pub total_clicks: u64,
@@ -64,6 +71,7 @@ impl Default for Persist {
             sound_mode: 1,
             bubble_pinned: false,
             locked: false,
+            window_level: 0,
             lang: String::new(),
             clip_capture: true,
             hotkey: crate::hotkey::DEFAULT.to_string(),
@@ -73,6 +81,7 @@ impl Default for Persist {
             panel_off_x: crate::panel::DEFAULT_OFF.0,
             panel_off_y: crate::panel::DEFAULT_OFF.1,
             panel_autoclose: true,
+            panel_view: 0,
             total_keys: 0,
             total_clicks: 0,
             total_copies: 0,

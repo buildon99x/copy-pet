@@ -13,7 +13,7 @@
 use crate::hotkey::{self, Hotkey};
 use crate::i18n::{self, t, Lang, Msg};
 use crate::input;
-use crate::panel::NavKey;
+use crate::panel::{fit_delta, NavKey, Rect};
 use crate::pet::{window_size, Pet, SCALES};
 use crate::render::{self, Badge};
 use crate::state::{Persist, ACCESSORIES};
@@ -71,11 +71,13 @@ const CMD_CAPTURE: usize = 17;
 const CMD_UPDATE: usize = 18;
 const CMD_AUTOUPDATE: usize = 19;
 const CMD_AUTOCLOSE: usize = 23;
+const CMD_GITHUB: usize = 24;
 const CMD_SIZE0: usize = 20; // ..=22
 const CMD_SOUND0: usize = 30; // ..=32
 const CMD_ACC0: usize = 40; // 40 = none, 41..=46 accessories
 const CMD_LANG_EN: usize = 50;
 const CMD_LANG_KO: usize = 51;
+const CMD_WINLEVEL0: usize = 52; // 52 top, 53 normal, 54 hide
 
 fn wz(s: &str) -> Vec<u16> {
     s.encode_utf16().chain(std::iter::once(0)).collect()
@@ -146,11 +148,12 @@ impl App {
         (rc.left, rc.top)
     }
 
-    /// Client coords (from an lParam) to window-canvas coords.
-    fn canvas_xy(&self, lp: LPARAM) -> (f32, f32) {
-        let scale = self.pet.scale();
-        let cx = (lp & 0xFFFF) as i16 as f32 / scale;
-        let cy = ((lp >> 16) & 0xFFFF) as i16 as f32 / scale;
+    /// Client coords (from an lParam) in physical pixels. The panel is
+    /// hit-tested at scale 1.0 (its coords are physical) and `Pet::cat_point`
+    /// divides by the cat scale itself, so neither needs pre-division.
+    fn client_xy(&self, lp: LPARAM) -> (f32, f32) {
+        let cx = (lp & 0xFFFF) as i16 as f32;
+        let cy = ((lp >> 16) & 0xFFFF) as i16 as f32;
         (cx, cy)
     }
 
@@ -257,6 +260,7 @@ impl App {
     /// focus, the plain pet must never steal it. Move + resize + repaint go
     /// out as one atomic `UpdateLayeredWindow` (no flicker during drags).
     unsafe fn apply_size(&mut self) {
+        let fit = self.pet.take_fit_panel();
         let (w, h) = self.pet.canvas_size();
         let (dx, dy) = self.pet.take_window_shift();
         let mut rc = RECT {
@@ -305,6 +309,67 @@ impl App {
         self.pet.dirty = true;
         self.pet.render(&mut self.pm);
         self.blit_at(Some((nx, ny)));
+
+        // The panel just opened: if the card landed off the monitor (the pet
+        // sits near an edge, or a persisted offset put it offscreen), slide
+        // the card — not the cat — back into view and re-apply once. `fit` is
+        // already drained, so the recursive call can't loop.
+        if fit && self.pet.panel_open() {
+            if let Some((sdx, sdy)) = self.panel_fit_shift(nx, ny) {
+                self.pet.shift_panel(sdx, sdy);
+                self.apply_size();
+            }
+        }
+    }
+
+    /// Shift (physical pixels) that brings the open panel card fully onto the
+    /// work area of the monitor it sits on, or None when it already fits.
+    /// `(nx, ny)` is the window's top-left in screen pixels. The card geometry
+    /// is already physical (it renders at scale 1.0), so no scale conversion.
+    unsafe fn panel_fit_shift(&self, nx: i32, ny: i32) -> Option<(f32, f32)> {
+        let l = self.pet.panel.layout();
+        let card = Rect {
+            x: nx as f32 + l.card_x,
+            y: ny as f32 + l.card_y,
+            w: l.card_w,
+            h: l.card_h,
+        };
+        let (dx, dy) = fit_delta(card, monitor_work_rect(self.hwnd)?);
+        (dx.abs() >= 0.5 || dy.abs() >= 0.5).then_some((dx, dy))
+    }
+
+    /// Applies the persisted window level: 0 = always on top, 1 = normal (can
+    /// go behind other windows), 2 = hidden (restored from the tray icon or
+    /// the global panel hotkey). Keeps `self.visible` — which gates the
+    /// per-tick blit — in sync.
+    unsafe fn apply_window_level(&mut self) {
+        if self.pet.window_level() == 2 {
+            self.visible = false;
+            ShowWindow(self.hwnd, SW_HIDE);
+        } else {
+            self.visible = true;
+            let after = if self.pet.window_level() == 0 {
+                HWND_TOPMOST
+            } else {
+                HWND_NOTOPMOST
+            };
+            SetWindowPos(self.hwnd, after, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+            ShowWindow(self.hwnd, SW_SHOWNOACTIVATE);
+        }
+    }
+
+    /// Brings the (possibly obscured or hidden) window to the front and gives
+    /// it focus — the panel hotkey's "reveal". Un-hides first; in Normal mode
+    /// the window isn't topmost, so raise it above other windows too.
+    unsafe fn reveal(&mut self) {
+        if self.pet.show_window() {
+            self.apply_window_level(); // was hidden -> show at its level
+        } else if self.pet.window_level() == 1 {
+            // Normal: raise above other (non-topmost) windows
+            SetWindowPos(self.hwnd, HWND_TOP, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+        }
+        SetForegroundWindow(self.hwnd);
+        SetFocus(self.hwnd);
     }
 
     fn update_tray_tip(&self) {
@@ -795,6 +860,7 @@ struct MenuSnapshot {
     locked: bool,
     scale_idx: usize,
     sound: u8,
+    window_level: u8,
     accessory: usize,
     level: u32,
     autostart: bool,
@@ -920,6 +986,26 @@ unsafe fn show_menu(hwnd: HWND, ms: &MenuSnapshot) -> usize {
         wz(t(lang, Msg::MenuSound)).as_ptr(),
     );
 
+    // window stacking submenu (always on top / normal / hide)
+    let win_menu = CreatePopupMenu();
+    for (i, name) in [Msg::WinLevelTop, Msg::WinLevelNormal, Msg::WinLevelHide]
+        .iter()
+        .enumerate()
+    {
+        AppendMenuW(
+            win_menu,
+            MF_STRING | chk(ms.window_level as usize == i),
+            CMD_WINLEVEL0 + i,
+            wz(t(lang, *name)).as_ptr(),
+        );
+    }
+    AppendMenuW(
+        menu,
+        MF_POPUP,
+        win_menu as usize,
+        wz(t(lang, Msg::MenuWindowLevel)).as_ptr(),
+    );
+
     AppendMenuW(
         menu,
         MF_STRING | chk(ms.locked),
@@ -973,6 +1059,12 @@ unsafe fn show_menu(hwnd: HWND, ms: &MenuSnapshot) -> usize {
         CMD_ABOUT,
         wz(t(lang, Msg::MenuAbout)).as_ptr(),
     );
+    AppendMenuW(
+        menu,
+        MF_STRING,
+        CMD_GITHUB,
+        wz(t(lang, Msg::MenuGithub)).as_ptr(),
+    );
     AppendMenuW(menu, MF_SEPARATOR, 0, null());
     AppendMenuW(
         menu,
@@ -1004,6 +1096,7 @@ fn menu_snapshot() -> Option<MenuSnapshot> {
         locked: a.pet.st.locked,
         scale_idx: a.pet.st.scale_idx,
         sound: a.pet.st.sound_mode,
+        window_level: a.pet.window_level(),
         accessory: a.pet.st.accessory,
         level: a.pet.level(),
         autostart: unsafe { autostart_enabled() },
@@ -1044,6 +1137,7 @@ unsafe fn open_menu(hwnd: HWND) {
                     MB_OK | MB_ICONINFORMATION,
                 );
             }
+            CMD_GITHUB => crate::update::open_github(),
             CMD_RESET => {
                 let answer = MessageBoxW(
                     hwnd,
@@ -1123,6 +1217,12 @@ unsafe fn open_menu(hwnd: HWND) {
                     a.pet.dirty = true;
                 });
             }
+            c if (CMD_WINLEVEL0..CMD_WINLEVEL0 + 3).contains(&c) => {
+                with_app(|a| {
+                    a.pet.set_window_level((c - CMD_WINLEVEL0) as u8);
+                    a.apply_window_level();
+                });
+            }
             c if (CMD_ACC0..=CMD_ACC0 + ACCESSORIES.len()).contains(&c) => {
                 with_app(|a| {
                     a.pet.st.accessory = c - CMD_ACC0;
@@ -1176,13 +1276,19 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
         }
         WM_HOTKEY => {
             if wp as i32 == HOTKEY_ID {
-                with_app(|a| a.pet.toggle_panel());
+                with_app(|a| {
+                    // the hotkey always *shows* the panel (never toggles closed)
+                    // and reveals the window — un-hidden, raised and focused —
+                    // so an obscured (Normal) or hidden panel reappears
+                    a.pet.open_panel();
+                    a.reveal();
+                });
             }
             0
         }
         WM_LBUTTONDOWN => {
             with_app(|a| {
-                let (cx, cy) = a.canvas_xy(lp);
+                let (cx, cy) = a.client_xy(lp);
                 // header strip / resize grip start a card drag (the grip
                 // pokes slightly past the card edge, hence the extra check)
                 if a.pet.panel_drag_start(cx, cy) {
@@ -1212,7 +1318,7 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
         }
         WM_MOUSEMOVE => {
             with_app(|a| {
-                let (cx, cy) = a.canvas_xy(lp);
+                let (cx, cy) = a.client_xy(lp);
                 a.pet.set_cursor(cx, cy);
                 if !a.hover_tracking {
                     a.hover_tracking = true;
@@ -1226,14 +1332,13 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
                     TrackMouseEvent(&mut tme);
                 }
                 if a.panel_drag {
-                    // card drag: feed screen-pixel deltas as canvas units;
+                    // card drag: feed screen-pixel deltas as panel units (1.0);
                     // the tick applies the new layout (resize + shift)
                     let mut pt = POINT { x: 0, y: 0 };
                     GetCursorPos(&mut pt);
-                    let s = a.pet.scale();
                     let (dx, dy) = (pt.x - a.drag_cursor.x, pt.y - a.drag_cursor.y);
                     if dx != 0 || dy != 0 {
-                        a.pet.panel_drag_update(dx as f32 / s, dy as f32 / s);
+                        a.pet.panel_drag_update(dx as f32, dy as f32);
                         a.drag_cursor = pt;
                     }
                 } else if a.mouse_down && !a.pet.st.locked {
@@ -1243,15 +1348,24 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
                     let dy = pt.y - a.drag_cursor.y;
                     if a.drag_moved || dx.abs() > 3 || dy.abs() > 3 {
                         a.drag_moved = true;
-                        SetWindowPos(
-                            hwnd,
-                            null_mut(),
-                            a.drag_win.0 + dx,
-                            a.drag_win.1 + dy,
-                            0,
-                            0,
-                            SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE,
-                        );
+                        if a.pet.panel_open() {
+                            // cat-body drag with the panel open: slide the cat,
+                            // keep the card fixed (incremental, re-base each step;
+                            // the tick applies the window shift). Don't move the
+                            // whole window — that would drag the card along.
+                            a.pet.drag_pet(dx as f32, dy as f32);
+                            a.drag_cursor = pt;
+                        } else {
+                            SetWindowPos(
+                                hwnd,
+                                null_mut(),
+                                a.drag_win.0 + dx,
+                                a.drag_win.1 + dy,
+                                0,
+                                0,
+                                SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE,
+                            );
+                        }
                     }
                 }
             });
@@ -1277,10 +1391,15 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
                     a.mouse_down = false;
                     ReleaseCapture();
                     if a.drag_moved {
-                        let (x, y) = a.window_pos();
-                        a.pet.save_pos(x, y);
+                        // a panel-open cat drag lives in the card offset (already
+                        // persisted by drag_pet); only a plain window move needs
+                        // its new screen position saved
+                        if !a.pet.panel_open() {
+                            let (x, y) = a.window_pos();
+                            a.pet.save_pos(x, y);
+                        }
                     } else {
-                        let (cx, cy) = a.canvas_xy(lp);
+                        let (cx, cy) = a.client_xy(lp);
                         let (lx, ly) = a.pet.cat_point(cx, cy);
                         a.pet.click_bounce(lx, ly);
                     }
@@ -1291,7 +1410,7 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
         WM_LBUTTONDBLCLK => {
             with_app(|a| {
                 a.mouse_down = false;
-                let (cx, cy) = a.canvas_xy(lp);
+                let (cx, cy) = a.client_xy(lp);
                 // a fast second header/grip drag arrives as a double-click
                 if a.pet.panel_drag_start(cx, cy) {
                     a.panel_drag = true;
@@ -1384,9 +1503,13 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
             let ev = (lp & 0xFFFF) as u32;
             match ev {
                 WM_LBUTTONUP => {
+                    // toggle hide/show through the window level so the tray and
+                    // the menu's "Hide" agree; un-hide restores the prior level
                     with_app(|a| {
-                        a.visible = !a.visible;
-                        ShowWindow(hwnd, if a.visible { SW_SHOWNOACTIVATE } else { SW_HIDE });
+                        if !a.pet.show_window() {
+                            a.pet.set_window_level(2);
+                        }
+                        a.apply_window_level();
                     });
                 }
                 WM_RBUTTONUP | WM_CONTEXTMENU => {
@@ -1469,6 +1592,29 @@ fn clamp_to_screen(x: i32, y: i32, w: i32, h: i32) -> (i32, i32) {
         let nx = x.clamp(vx - w + 60, vx + vw - 60);
         let ny = y.clamp(vy - h + 60, vy + vh - 60);
         (nx, ny)
+    }
+}
+
+/// The work area (screen pixels, taskbar excluded) of the monitor nearest
+/// `hwnd`. Used to keep a freshly opened panel on the same monitor as the pet.
+fn monitor_work_rect(hwnd: HWND) -> Option<Rect> {
+    unsafe {
+        let mon = MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST);
+        if mon.is_null() {
+            return None;
+        }
+        let mut mi: MONITORINFO = std::mem::zeroed();
+        mi.cbSize = std::mem::size_of::<MONITORINFO>() as u32;
+        if GetMonitorInfoW(mon, &mut mi) == 0 {
+            return None;
+        }
+        let r = mi.rcWork;
+        Some(Rect {
+            x: r.left as f32,
+            y: r.top as f32,
+            w: (r.right - r.left) as f32,
+            h: (r.bottom - r.top) as f32,
+        })
     }
 }
 
@@ -1597,6 +1743,7 @@ pub fn run() {
             a.pet.render(&mut a.pm);
             a.blit();
         }); // first paint
+        with_app(|a| a.apply_window_level()); // enforce a persisted level/hide
         SetTimer(hwnd, TIMER_ID, TICK_MS, None);
 
         let mut msg: MSG = std::mem::zeroed();

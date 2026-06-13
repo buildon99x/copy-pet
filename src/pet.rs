@@ -98,6 +98,13 @@ pub struct Pet {
     last_min_bucket: u64,
     level_changed: bool,
     size_changed: bool,
+    /// Set when the panel just opened; the backend drains it via
+    /// [`Pet::take_fit_panel`] and nudges the card on-screen if it opened
+    /// off the monitor (the core can't see screen bounds).
+    fit_panel: bool,
+    /// The window level to restore to when un-hiding (the level in effect
+    /// before "Hide" was chosen). See [`Pet::show_window`].
+    prev_level: u8,
     /// Window-position delta (physical px) accumulated by layout changes so
     /// the cat stays put on screen; drained via [`Pet::take_window_shift`].
     pending_shift: (f32, f32),
@@ -109,7 +116,9 @@ impl Pet {
     pub fn new(st: Persist) -> Pet {
         let now = Instant::now();
         let (level, _, _) = level_progress(st.total_xp);
-        let panel = Panel::with_geometry(st.panel_w, st.panel_h, (st.panel_off_x, st.panel_off_y));
+        let mut panel = Panel::with_geometry(st.panel_w, st.panel_h, (st.panel_off_x, st.panel_off_y));
+        panel.cat_scale = SCALES[st.scale_idx.min(2)];
+        panel.view = st.panel_view.min(1);
         Pet {
             st,
             clips: ClipStore::load(),
@@ -145,6 +154,8 @@ impl Pet {
             last_min_bucket: 0,
             level_changed: false,
             size_changed: false,
+            fit_panel: false,
+            prev_level: 0,
             pending_shift: (0.0, 0.0),
             drag: None,
         }
@@ -241,20 +252,18 @@ impl Pet {
     }
 
     /// Window size in physical pixels for the current scale + panel state.
+    /// When the panel is open the size comes straight from the layout, which
+    /// is already physical (the card is fixed-scale, the cat block scaled).
     pub fn canvas_size(&self) -> (i32, i32) {
-        let s = self.scale();
         if self.panel.open {
             let l = self.panel.layout();
-            (
-                (l.canvas_w * s).round() as i32,
-                (l.canvas_h * s).round() as i32,
-            )
+            (l.canvas_w.round() as i32, l.canvas_h.round() as i32)
         } else {
-            window_size(s)
+            window_size(self.scale())
         }
     }
 
-    /// Top-left of the cat canvas inside the window canvas.
+    /// Top-left of the cat block inside the window canvas, in physical pixels.
     fn origin(&self) -> (f32, f32) {
         if self.panel.open {
             self.panel.layout().cat
@@ -264,11 +273,12 @@ impl Pet {
     }
 
     /// The cat's bottom-center in physical pixels — the screen point every
-    /// layout change keeps fixed (see [`Pet::take_window_shift`]).
+    /// layout change keeps fixed (see [`Pet::take_window_shift`]). The origin
+    /// is already physical; only the cat block itself is scaled.
     fn cat_anchor(&self) -> (f32, f32) {
         let (ox, oy) = self.origin();
         let s = self.scale();
-        ((ox + render::CANVAS_W / 2.0) * s, (oy + render::CANVAS_H) * s)
+        (ox + render::CANVAS_W * s / 2.0, oy + render::CANVAS_H * s)
     }
 
     /// Runs a canvas-layout mutation, accumulating the window shift that
@@ -282,16 +292,99 @@ impl Pet {
         self.size_changed = true;
     }
 
-    /// Maps window-canvas coords to cat-local coords (for click_bounce).
-    pub fn cat_point(&self, cx: f32, cy: f32) -> (f32, f32) {
+    /// The panel card's top-left in physical pixels — the screen point a
+    /// cat-body drag keeps fixed while the panel is open (the mirror of
+    /// [`Pet::cat_anchor`]).
+    fn panel_anchor(&self) -> (f32, f32) {
+        let l = self.panel.layout();
+        (l.card_x, l.card_y)
+    }
+
+    /// Like [`relayout`], but keeps the **panel card** fixed on screen instead
+    /// of the cat — used when dragging the cat body so the card stays put.
+    ///
+    /// [`relayout`]: Pet::relayout
+    fn relayout_panel_anchored(&mut self, f: impl FnOnce(&mut Pet)) {
+        let before = self.panel_anchor();
+        f(self);
+        let after = self.panel_anchor();
+        self.pending_shift.0 += before.0 - after.0;
+        self.pending_shift.1 += before.1 - after.1;
+        self.size_changed = true;
+    }
+
+    /// Drags the cat by a screen-pixel delta while the panel is open: the cat
+    /// moves but the card stays pixel-fixed. We shift the card's offset by
+    /// `-delta` (the cat slides toward/away from the card) under a
+    /// panel-anchored relayout, so the window re-origins to hold the card
+    /// still. Persists the new offset. Returns false (a no-op) when the panel
+    /// is closed — the backend then moves the whole window as usual.
+    pub fn drag_pet(&mut self, dx: f32, dy: f32) -> bool {
+        if !self.panel.open {
+            return false;
+        }
+        self.drag = None;
+        self.relayout_panel_anchored(|p| {
+            p.panel.off.0 = (p.panel.off.0 - dx).clamp(-crate::panel::MAX_OFF, crate::panel::MAX_OFF);
+            p.panel.off.1 = (p.panel.off.1 - dy).clamp(-crate::panel::MAX_OFF, crate::panel::MAX_OFF);
+        });
+        self.panel.refresh(&self.clips);
+        self.st.panel_off_x = self.panel.off.0;
+        self.st.panel_off_y = self.panel.off.1;
+        self.dirty = true;
+        true
+    }
+
+    /// Maps window coords (physical pixels) to cat-local canvas coords (for
+    /// click_bounce). The cat block is scaled, so divide by the cat scale.
+    pub fn cat_point(&self, px: f32, py: f32) -> (f32, f32) {
         let (ox, oy) = self.origin();
-        (cx - ox, cy - oy)
+        let s = self.scale();
+        ((px - ox) / s, (py - oy) / s)
     }
 
     pub fn set_scale_idx(&mut self, idx: usize) {
         if idx != self.st.scale_idx && idx < SCALES.len() {
-            self.relayout(|p| p.st.scale_idx = idx);
+            self.relayout(|p| {
+                p.st.scale_idx = idx;
+                p.panel.cat_scale = SCALES[idx];
+            });
             self.dirty = true;
+        }
+    }
+
+    // ---- window stacking level (0 top / 1 normal / 2 hidden) ----------------
+
+    /// The persisted window level the backend should enforce.
+    pub fn window_level(&self) -> u8 {
+        self.st.window_level
+    }
+
+    /// Sets the window level, remembering the previous visible level so a
+    /// later [`Pet::show_window`] can restore it. The backend applies the
+    /// effect (topmost / normal / hide) on a `MenuOutcome::ApplyWindowLevel`.
+    pub fn set_window_level(&mut self, level: u8) {
+        let level = level.min(2);
+        if level == self.st.window_level {
+            return;
+        }
+        if level == 2 {
+            self.prev_level = self.st.window_level; // a visible level (not 2)
+        }
+        self.st.window_level = level;
+        self.dirty = true;
+    }
+
+    /// Un-hides the window if it was hidden, restoring the level in effect
+    /// before "Hide". Returns true when it changed (the backend then re-applies
+    /// the level). Used by the tray and the global panel hotkey.
+    pub fn show_window(&mut self) -> bool {
+        if self.st.window_level == 2 {
+            self.st.window_level = self.prev_level;
+            self.dirty = true;
+            true
+        } else {
+            false
         }
     }
 
@@ -327,6 +420,46 @@ impl Pet {
     pub fn toggle_panel(&mut self) {
         self.drag = None;
         self.relayout(|p| p.panel.toggle());
+        // ask the backend to fit the card on screen once it's positioned —
+        // a pet near a screen edge would otherwise open the panel offscreen
+        if self.panel.open {
+            self.fit_panel = true;
+        }
+    }
+
+    /// Opens the panel if it isn't already — the global hotkey's "always show"
+    /// (it never closes). A no-op on panel state when already open (the in-flight
+    /// search/filter is preserved); the backend still brings the window to the
+    /// front so an obscured or hidden panel reappears.
+    pub fn open_panel(&mut self) {
+        if !self.panel.open {
+            self.toggle_panel();
+        }
+    }
+
+    /// Returns `true` once after the panel opened, so the backend pulls the
+    /// card on-screen if needed (see [`Pet::shift_panel`]). Only an *open*
+    /// transition sets it, never a drag, so the card can still be parked
+    /// partly off-screen by hand.
+    pub fn take_fit_panel(&mut self) -> bool {
+        std::mem::take(&mut self.fit_panel)
+    }
+
+    /// Slides the open panel card by a delta in canvas units **without moving
+    /// the cat** — it re-origins the canvas and flags the window shift exactly
+    /// like a header drag, then persists the new offset. The backend uses it
+    /// (after [`Pet::take_fit_panel`]) to bring a card that opened off the
+    /// monitor back into view. No-op when the panel is closed or the delta is
+    /// zero.
+    pub fn shift_panel(&mut self, dx: f32, dy: f32) {
+        if !self.panel.open || (dx == 0.0 && dy == 0.0) {
+            return;
+        }
+        self.relayout(|p| p.panel.drag_by(PanelDrag::Move, dx, dy));
+        self.panel.refresh(&self.clips);
+        self.st.panel_off_x = self.panel.off.0;
+        self.st.panel_off_y = self.panel.off.1;
+        self.dirty = true;
     }
 
     // ---- panel card drag (move / resize) -------------------------------------
@@ -439,6 +572,7 @@ impl Pet {
                 self.st.set_lang(lang);
                 self.dirty = true;
             }
+            PanelAction::ToggleView => self.toggle_panel_view(),
             PanelAction::Close => self.toggle_panel(),
         }
         None
@@ -454,6 +588,16 @@ impl Pet {
             Msg::ToastAutoCloseOff
         };
         self.set_toast(t(self.lang(), msg).to_string(), 2.2);
+    }
+
+    /// Switches the clipboard list between the compact list and the roomier
+    /// rounded-box cards. The card size (and thus the window) is unchanged —
+    /// only the per-row height — so the scroll is re-clamped, not relaid out.
+    pub fn toggle_panel_view(&mut self) {
+        self.st.panel_view = if self.st.panel_view == 0 { 1 } else { 0 };
+        self.panel.view = self.st.panel_view;
+        self.panel.refresh(&self.clips);
+        self.dirty = true;
     }
 
     /// A click at window-canvas coords while the panel is open.
@@ -760,7 +904,7 @@ impl Pet {
                 hint: &self.panel_hint,
                 caret: (t * 1.6).fract() < 0.65,
             };
-            render::draw_panel(pm, &view, self.scale());
+            render::draw_panel(pm, &view);
         }
     }
 
@@ -896,6 +1040,17 @@ impl Pet {
             .collect();
         m.push(MenuItem::parent(t(lang, Msg::MenuSound), sound_items));
 
+        // Window stacking submenu (always on top / normal / hide).
+        let levels = [Msg::WinLevelTop, Msg::WinLevelNormal, Msg::WinLevelHide];
+        let level_items = levels
+            .iter()
+            .enumerate()
+            .map(|(i, msg)| {
+                MenuItem::leaf(t(lang, *msg), MenuAction::SetWindowLevel(i as u8), self.st.window_level as usize == i)
+            })
+            .collect();
+        m.push(MenuItem::parent(t(lang, Msg::MenuWindowLevel), level_items));
+
         m.push(MenuItem::leaf(
             t(lang, Msg::MenuLock),
             MenuAction::ToggleLock,
@@ -922,6 +1077,7 @@ impl Pet {
         ));
         m.push(MenuItem::leaf(t(lang, Msg::MenuReset), MenuAction::ResetStats, false));
         m.push(MenuItem::leaf(t(lang, Msg::MenuAbout), MenuAction::About, false));
+        m.push(MenuItem::leaf(t(lang, Msg::MenuGithub), MenuAction::OpenGithub, false));
         m.push(MenuEntry::Separator);
         m.push(MenuItem::leaf(t(lang, Msg::MenuExit), MenuAction::Quit, false));
         m
@@ -953,6 +1109,11 @@ impl Pet {
                 self.st.sound_mode = mode.min(2);
                 self.dirty = true;
             }
+            MenuAction::SetWindowLevel(level) => {
+                self.set_window_level(level);
+                // the actual topmost/normal/hide is OS work — let the backend do it
+                return MenuOutcome::ApplyWindowLevel;
+            }
             MenuAction::ToggleLock => {
                 self.st.locked = !self.st.locked;
                 self.dirty = true;
@@ -970,6 +1131,7 @@ impl Pet {
             MenuAction::InstallUpdate => return MenuOutcome::InstallUpdate,
             MenuAction::ResetStats => return MenuOutcome::ConfirmReset,
             MenuAction::About => return MenuOutcome::ShowAbout,
+            MenuAction::OpenGithub => return MenuOutcome::OpenGithub,
             MenuAction::Quit => return MenuOutcome::Quit,
         }
         MenuOutcome::Handled
@@ -1211,6 +1373,43 @@ mod tests {
     }
 
     #[test]
+    fn menu_has_a_github_link_under_about() {
+        let mut p = pet();
+        let m = p.build_menu("HK", false);
+        // the GitHub item is present and sits directly after About
+        let about = m
+            .iter()
+            .position(|e| matches!(e, MenuEntry::Item(i) if i.action == Some(MenuAction::About)))
+            .unwrap();
+        assert!(
+            matches!(&m[about + 1], MenuEntry::Item(i) if i.action == Some(MenuAction::OpenGithub)),
+            "GitHub should be the item right below About"
+        );
+        // opening it is OS work handed back to the backend
+        assert_eq!(p.apply_menu_action(MenuAction::OpenGithub), MenuOutcome::OpenGithub);
+    }
+
+    #[test]
+    fn window_level_menu_sets_state_and_restores_on_show() {
+        let mut p = pet();
+        // default is always-on-top (0): that radio item is checked
+        assert!(find(&p.build_menu("HK", false), MenuAction::SetWindowLevel(0)).unwrap().checked);
+        // choosing Hide stores the level and asks the backend to apply it
+        assert_eq!(
+            p.apply_menu_action(MenuAction::SetWindowLevel(2)),
+            MenuOutcome::ApplyWindowLevel
+        );
+        assert_eq!(p.window_level(), 2);
+        let m = p.build_menu("HK", false);
+        assert!(find(&m, MenuAction::SetWindowLevel(2)).unwrap().checked);
+        assert!(!find(&m, MenuAction::SetWindowLevel(0)).unwrap().checked);
+        // show_window un-hides, restoring the level in effect before Hide (0)
+        assert!(p.show_window());
+        assert_eq!(p.window_level(), 0);
+        assert!(!p.show_window(), "no-op when already visible");
+    }
+
+    #[test]
     fn fish_queue_is_capped() {
         let mut p = pet();
         for i in 0..10 {
@@ -1285,6 +1484,104 @@ mod tests {
         assert_eq!((cx, cy), (0.0, 0.0));
         // the window shifts so the cat itself never moves on screen
         assert_eq!(p.take_window_shift(), (-(cat.0 as i32), -(cat.1 as i32)));
+    }
+
+    #[test]
+    fn opening_the_panel_requests_a_fit_once() {
+        let mut p = pet();
+        assert!(!p.take_fit_panel(), "closed panel: nothing to fit");
+        p.toggle_panel(); // open
+        assert!(p.take_fit_panel(), "opening asks the backend to fit on screen");
+        assert!(!p.take_fit_panel(), "drained: only fired once");
+        p.toggle_panel(); // close
+        assert!(!p.take_fit_panel(), "closing never requests a fit");
+    }
+
+    #[test]
+    fn open_panel_shows_and_never_closes() {
+        let mut p = pet();
+        assert!(!p.panel_open());
+        p.open_panel(); // closed -> open
+        assert!(p.panel_open());
+        // pressing the hotkey again keeps it open (the hotkey only ever shows)
+        p.open_panel();
+        assert!(p.panel_open());
+        // an in-flight search survives a re-show (not reset like a fresh open)
+        p.panel_char('x');
+        assert_eq!(p.panel.query, "x");
+        p.open_panel();
+        assert_eq!(p.panel.query, "x");
+        assert!(p.panel_open());
+    }
+
+    #[test]
+    fn shift_panel_moves_the_card_without_moving_the_cat() {
+        let mut p = pet();
+        p.toggle_panel();
+        let _ = p.take_size_changed();
+        let _ = p.take_window_shift(); // drain the open transition
+        let off0 = p.panel.off;
+        let anchor0 = p.cat_anchor();
+
+        p.shift_panel(40.0, -30.0);
+        assert_eq!(p.panel.off, (off0.0 + 40.0, off0.1 - 30.0), "card slides by the delta");
+        assert_eq!((p.st.panel_off_x, p.st.panel_off_y), p.panel.off, "offset is persisted");
+        assert!(p.take_size_changed(), "the canvas re-origins around the cat");
+
+        // the window shift exactly cancels the cat's canvas move, so the cat
+        // stays put on screen (anchor + shift is invariant)
+        let (dx, dy) = p.take_window_shift();
+        let anchor1 = p.cat_anchor();
+        assert_eq!((anchor1.0 + dx as f32, anchor1.1 + dy as f32), anchor0);
+
+        // a closed panel ignores the shift
+        p.toggle_panel();
+        let off = p.panel.off;
+        p.shift_panel(10.0, 10.0);
+        assert_eq!(p.panel.off, off);
+    }
+
+    #[test]
+    fn panel_keeps_its_size_when_the_cat_scales() {
+        let mut p = pet();
+        p.toggle_panel();
+        assert_eq!(p.scale(), 1.0, "normal is the default size");
+        let normal = p.panel.layout();
+        // grow the cat to the large size
+        p.set_scale_idx(2);
+        assert!(p.scale() > 1.0);
+        let large = p.panel.layout();
+        // the card itself is byte-identical — the panel never scales
+        assert_eq!(
+            (large.card_x, large.card_y, large.card_w, large.card_h, large.row_w, large.rows),
+            (normal.card_x, normal.card_y, normal.card_w, normal.card_h, normal.row_w, normal.rows),
+        );
+        // ...but the window canvas grows on the cat's side
+        assert!(large.canvas_w >= normal.canvas_w && large.canvas_h >= normal.canvas_h);
+        assert!(large.canvas_w > normal.canvas_w || large.canvas_h > normal.canvas_h);
+    }
+
+    #[test]
+    fn drag_pet_moves_the_cat_keeping_the_panel_fixed() {
+        let mut p = pet();
+        assert!(!p.drag_pet(10.0, 10.0), "closed panel: drag_pet is a no-op");
+        p.toggle_panel();
+        let _ = p.take_size_changed();
+        let _ = p.take_window_shift(); // drain the open transition
+        let off0 = p.panel.off;
+        let anchor0 = p.panel_anchor();
+
+        // dragging the cat shifts the card offset the opposite way
+        assert!(p.drag_pet(-100.0, -320.0));
+        assert_eq!(p.panel.off, (off0.0 + 100.0, off0.1 + 320.0));
+        assert_eq!((p.st.panel_off_x, p.st.panel_off_y), p.panel.off, "offset persisted");
+        assert!(p.take_size_changed());
+
+        // the window shift exactly cancels the card's canvas move, so the card
+        // stays pixel-fixed on screen while the cat slides
+        let (dx, dy) = p.take_window_shift();
+        let anchor1 = p.panel_anchor();
+        assert_eq!((anchor1.0 + dx as f32, anchor1.1 + dy as f32), anchor0);
     }
 
     #[test]

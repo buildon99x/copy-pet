@@ -17,6 +17,16 @@ versions follow [SemVer](https://semver.org/). Maintenance rules:
 ## [Unreleased]
 
 ### Added
+- A **GitHub** entry in the context menu (just below "About ClipCat") opens
+  the project page in your browser.
+- The clipboard panel has a new **Thumbnail view**, toggled by a button in
+  the panel's header: clips become roomy rounded cards that wrap onto two
+  lines, so you see even more of each one. The compact list stays the
+  default; your choice is remembered.
+- New **Window** setting (tray menu on Windows, right-click menu on macOS)
+  with three modes: **Always on top** (the default), **Normal** — the pet can
+  now sit behind other windows like an ordinary one — and **Hide**. A hidden
+  pet comes back from its tray icon or by pressing the clipboard hotkey.
 - The clipboard panel is now yours to arrange: drag its **header** to move
   the panel anywhere — the cat stays put — and drag the **grip in its
   bottom-right corner** to resize it (a taller panel shows more clips).
@@ -30,6 +40,19 @@ versions follow [SemVer](https://semver.org/). Maintenance rules:
   can grab several clips in a row. On by default.
 
 ### Changed
+- The **clipboard hotkey (Win+Shift+V / ⌘+Shift+V) now always brings the panel
+  to the front** instead of toggling it shut. If the pet is set to *Normal* and
+  sitting behind other windows, or *Hidden*, pressing it reveals and focuses the
+  panel every time. (Close the panel with Esc or its ✕ button.)
+- **Each clip row shows more of its content.** Multi-line clips are flattened
+  onto the row (so you see past the first line), the first few characters are
+  bolded for quick scanning, and the text is a touch smaller to fit more in.
+- The **clipboard panel now keeps one fixed (normal) size** no matter which
+  pet size — small, normal or large — you choose. The cat still grows and
+  shrinks; the panel stays comfortably readable.
+- **The pet and the panel now move independently.** Dragging the cat slides
+  only the cat — the open panel stays exactly where it is — just as dragging
+  the panel's header already moved only the panel.
 - The hover **stats bubble now uses your system font** instead of the
   built-in pixel font, matching the panel's typography.
 - **Holding a key no longer farms stats**: key auto-repeat is ignored, so
@@ -39,6 +62,13 @@ versions follow [SemVer](https://semver.org/). Maintenance rules:
 - The built-in 5×7 pixel font and the hand-drawn vector Hangul are gone;
   every text surface renders with fonts read from your OS. (On a system
   with no usable font at all, text shows as placeholder boxes.)
+
+### Fixed
+- The clipboard panel **no longer opens off-screen**. When the cat sits near
+  a screen edge — or its remembered panel position would reach past the
+  monitor — the panel now slides itself fully into view as it opens, with the
+  cat staying exactly where it is. You can still drag the panel partly off the
+  edge yourself; it just won't get stuck there next time you open it.
 
 ## [2.1.0] - 2026-06-12
 
