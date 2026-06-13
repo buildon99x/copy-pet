@@ -113,6 +113,10 @@ struct PortableApp {
     focused: bool,
     /// Live keyboard modifiers (for Ctrl+P / Ctrl+Z / Ctrl+digits in the panel).
     mods: ModifiersState,
+    /// True while an IME preedit is in flight (Hangul mid-composition): the IME
+    /// owns Enter/Backspace, so the panel must not read them as nav until the
+    /// text is committed (panel UI spec, IME handling).
+    ime_composing: bool,
 }
 
 impl PortableApp {
@@ -156,6 +160,7 @@ impl PortableApp {
             last_click: None,
             focused: false,
             mods: ModifiersState::default(),
+            ime_composing: false,
         }
     }
 
@@ -379,6 +384,12 @@ impl PortableApp {
     fn panel_key(&mut self, event: &winit::event::KeyEvent) {
         // Ctrl on Linux/Windows-portable, Cmd on macOS — accept either
         let ctrl = self.mods.control_key() || self.mods.super_key();
+        // While composing Hangul the IME owns Enter (commit) and Backspace
+        // (edit preedit); the committed text arrives via Ime::Commit. Don't let
+        // those keystrokes copy/close or edit the query mid-composition.
+        if self.ime_composing && !ctrl {
+            return;
+        }
         let nav = match event.physical_key {
             PhysicalKey::Code(KeyCode::ArrowUp) => Some(NavKey::Up),
             PhysicalKey::Code(KeyCode::ArrowDown) => Some(NavKey::Down),
@@ -592,13 +603,19 @@ impl ApplicationHandler for PortableApp {
                     input::wheel();
                 }
             }
+            WindowEvent::Ime(Ime::Preedit(s, _)) => {
+                // non-empty preedit = mid-composition; commit/clear ends it
+                self.ime_composing = !s.is_empty();
+            }
             WindowEvent::Ime(Ime::Commit(s)) => {
+                self.ime_composing = false;
                 if self.pet.panel_open() {
                     for c in s.chars() {
                         self.pet.panel_char(c);
                     }
                 }
             }
+            WindowEvent::Ime(Ime::Disabled) => self.ime_composing = false,
             WindowEvent::ModifiersChanged(m) => self.mods = m.state(),
             WindowEvent::KeyboardInput { event, .. } => {
                 if event.state == ElementState::Pressed {

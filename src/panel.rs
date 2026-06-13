@@ -571,6 +571,48 @@ mod tests {
     }
 
     #[test]
+    fn esc_peels_one_layer_per_press_in_spec_order() {
+        // panel UI spec: Esc order is disarm clear -> clear query -> clear
+        // source filter -> close, one layer per press.
+        let mut p = open_panel();
+        let s = store(40);
+        p.cycle_source(&s); // (no sources here, so force one for the test)
+        p.source = Some("Code".into());
+        p.query = "fn".into();
+        p.clear_armed = true;
+
+        // 1. armed clear disarms (and nothing else changes)
+        assert_eq!(p.nav(NavKey::Esc, &s), None);
+        assert!(!p.clear_armed);
+        assert_eq!(p.query, "fn");
+        assert!(p.source.is_some());
+        // 2. clears the query
+        assert_eq!(p.nav(NavKey::Esc, &s), None);
+        assert!(p.query.is_empty());
+        assert!(p.source.is_some());
+        // 3. clears the source filter
+        assert_eq!(p.nav(NavKey::Esc, &s), None);
+        assert!(p.source.is_none());
+        // 4. closes the panel
+        assert_eq!(p.nav(NavKey::Esc, &s), Some(PanelAction::Close));
+    }
+
+    #[test]
+    fn page_and_home_end_navigation() {
+        let mut p = open_panel();
+        let s = store(40);
+        let rows = p.visible_rows();
+        p.nav(NavKey::PageDown, &s);
+        assert_eq!(p.sel, rows, "PageDown jumps one viewport");
+        p.nav(NavKey::Home, &s);
+        assert_eq!(p.sel, 0);
+        p.nav(NavKey::End, &s);
+        assert_eq!(p.sel, p.visible(&s).len() - 1, "End selects the last row");
+        p.nav(NavKey::PageUp, &s);
+        assert_eq!(p.sel, p.visible(&s).len() - 1 - rows, "PageUp jumps back one viewport");
+    }
+
+    #[test]
     fn default_layout_matches_legacy_geometry() {
         // the original fixed panel: any drift here moves every click target
         let l = open_panel().layout();
