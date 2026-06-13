@@ -328,6 +328,18 @@ impl PortableApp {
         }
     }
 
+    /// Brings the (possibly obscured or hidden) window to the front and gives
+    /// it focus — the panel hotkey's "reveal". Un-hides first; `focus_window`
+    /// raises it above other windows (Normal mode) and activates it on macOS.
+    fn reveal(&mut self) {
+        if self.pet.show_window() {
+            self.apply_window_level(); // was hidden -> show
+        }
+        if let Some(window) = &self.window {
+            window.focus_window();
+        }
+    }
+
     /// Puts text on the OS clipboard (a clip picked from the panel).
     fn set_clipboard(&self, text: String) {
         if let Ok(mut guard) = self.suppress.lock() {
@@ -706,11 +718,10 @@ impl ApplicationHandler for PortableApp {
             self.last_frame = now;
             // the global panel hotkey fired on the input thread
             if self.panel_toggle.swap(false, Ordering::Relaxed) {
-                // the hotkey also un-hides a hidden pet
-                if self.pet.show_window() {
-                    self.apply_window_level();
-                }
-                self.pet.toggle_panel();
+                // the hotkey always *shows* the panel (never toggles closed)
+                // and reveals the window so an obscured or hidden panel reappears
+                self.pet.open_panel();
+                self.reveal();
             }
             // the macOS event tap couldn't start (Accessibility not granted)
             if self.perm_needed.swap(false, Ordering::Relaxed) {

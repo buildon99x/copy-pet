@@ -38,6 +38,10 @@ versions follow [SemVer](https://semver.org/). Maintenance rules:
   can grab several clips in a row. On by default.
 
 ### Changed
+- The **clipboard hotkey (Win+Shift+V / ⌘+Shift+V) now always brings the panel
+  to the front** instead of toggling it shut. If the pet is set to *Normal* and
+  sitting behind other windows, or *Hidden*, pressing it reveals and focuses the
+  panel every time. (Close the panel with Esc or its ✕ button.)
 - **Each clip row shows more of its content.** Multi-line clips are flattened
   onto the row (so you see past the first line), the first few characters are
   bolded for quick scanning, and the text is a touch smaller to fit more in.

@@ -357,6 +357,20 @@ impl App {
         }
     }
 
+    /// Brings the (possibly obscured or hidden) window to the front and gives
+    /// it focus — the panel hotkey's "reveal". Un-hides first; in Normal mode
+    /// the window isn't topmost, so raise it above other windows too.
+    unsafe fn reveal(&mut self) {
+        if self.pet.show_window() {
+            self.apply_window_level(); // was hidden -> show at its level
+        } else if self.pet.window_level() == 1 {
+            // Normal: raise above other (non-topmost) windows
+            SetWindowPos(self.hwnd, HWND_TOP, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+        }
+        SetForegroundWindow(self.hwnd);
+        SetFocus(self.hwnd);
+    }
+
     fn update_tray_tip(&self) {
         unsafe {
             let mut nid: NOTIFYICONDATAW = std::mem::zeroed();
@@ -1255,11 +1269,11 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
         WM_HOTKEY => {
             if wp as i32 == HOTKEY_ID {
                 with_app(|a| {
-                    // the panel hotkey also un-hides a hidden pet
-                    if a.pet.show_window() {
-                        a.apply_window_level();
-                    }
-                    a.pet.toggle_panel();
+                    // the hotkey always *shows* the panel (never toggles closed)
+                    // and reveals the window — un-hidden, raised and focused —
+                    // so an obscured (Normal) or hidden panel reappears
+                    a.pet.open_panel();
+                    a.reveal();
                 });
             }
             0

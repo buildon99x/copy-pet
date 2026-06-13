@@ -427,6 +427,16 @@ impl Pet {
         }
     }
 
+    /// Opens the panel if it isn't already — the global hotkey's "always show"
+    /// (it never closes). A no-op on panel state when already open (the in-flight
+    /// search/filter is preserved); the backend still brings the window to the
+    /// front so an obscured or hidden panel reappears.
+    pub fn open_panel(&mut self) {
+        if !self.panel.open {
+            self.toggle_panel();
+        }
+    }
+
     /// Returns `true` once after the panel opened, so the backend pulls the
     /// card on-screen if needed (see [`Pet::shift_panel`]). Only an *open*
     /// transition sets it, never a drag, so the card can still be parked
@@ -1466,6 +1476,23 @@ mod tests {
         assert!(!p.take_fit_panel(), "drained: only fired once");
         p.toggle_panel(); // close
         assert!(!p.take_fit_panel(), "closing never requests a fit");
+    }
+
+    #[test]
+    fn open_panel_shows_and_never_closes() {
+        let mut p = pet();
+        assert!(!p.panel_open());
+        p.open_panel(); // closed -> open
+        assert!(p.panel_open());
+        // pressing the hotkey again keeps it open (the hotkey only ever shows)
+        p.open_panel();
+        assert!(p.panel_open());
+        // an in-flight search survives a re-show (not reset like a fresh open)
+        p.panel_char('x');
+        assert_eq!(p.panel.query, "x");
+        p.open_panel();
+        assert_eq!(p.panel.query, "x");
+        assert!(p.panel_open());
     }
 
     #[test]
