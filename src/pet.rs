@@ -326,7 +326,20 @@ impl Pet {
 
     pub fn toggle_panel(&mut self) {
         self.drag = None;
-        self.relayout(|p| p.panel.toggle());
+        self.relayout(|p| {
+            // Opening the panel for the first time retires the first-run hint.
+            if !p.panel.open && !p.st.onboarded {
+                p.st.onboarded = true;
+                p.dirty = true;
+            }
+            p.panel.toggle();
+        });
+    }
+
+    /// Whether the first-run hotkey hint banner is currently shown: only while
+    /// the panel is closed and the user has not yet opened it once.
+    fn show_hint(&self) -> bool {
+        !self.panel.open && !self.st.onboarded
     }
 
     // ---- panel card drag (move / resize) -------------------------------------
@@ -726,6 +739,12 @@ impl Pet {
             None => 0.0,
         };
 
+        // first-run hint banner: the live panel hotkey, until the panel opens once
+        let hint_text = self.show_hint().then(|| {
+            let chord = crate::hotkey::Hotkey::from_spec(&self.st.hotkey).display();
+            i18n::first_run_hint(self.lang(), &chord)
+        });
+
         let scene = Scene {
             paw_l: ease_press(self.paw_l),
             paw_r: ease_press(self.paw_r),
@@ -743,6 +762,7 @@ impl Pet {
             bubble,
             bubble_alpha: self.bubble_alpha,
             toast: toast_view,
+            hotkey_hint: hint_text.as_deref(),
             lang: self.lang(),
             origin: self.origin(),
         };
@@ -1309,6 +1329,30 @@ mod tests {
         p.notify_update("9.9.10");
         assert_eq!(p.update_available(), Some("9.9.10"));
         assert!(p.toast.is_some());
+    }
+
+    #[test]
+    fn first_panel_open_marks_onboarded() {
+        let mut p = pet();
+        assert!(!p.st.onboarded, "starts un-onboarded (first-run hint shown)");
+        assert!(p.show_hint());
+        p.toggle_panel(); // first open
+        assert!(p.st.onboarded, "opening the panel once retires the hint");
+        assert!(p.dirty, "the onboarding flag is persisted");
+        assert!(!p.show_hint(), "panel open => no under-pet hint");
+        p.toggle_panel(); // close again
+        assert!(!p.show_hint(), "still onboarded after closing");
+    }
+
+    #[test]
+    fn render_first_run_hint_smoke() {
+        let p = pet(); // default => not onboarded
+        assert!(p.show_hint());
+        let (w, h) = p.canvas_size();
+        let mut pm = Pixmap::new(w as u32, h as u32).unwrap();
+        p.render(&mut pm); // draws the hint banner; must not panic
+        p.render_card(&mut pm);
+        assert!(pm.data().chunks_exact(4).any(|px| px[3] > 0));
     }
 
     #[test]

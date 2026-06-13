@@ -17,6 +17,12 @@ versions follow [SemVer](https://semver.org/). Maintenance rules:
 ## [Unreleased]
 
 ### Added
+- **First-run hint**: until you open the clipboard panel for the first time,
+  the cat shows a small banner with the exact hotkey (e.g. "Clipboard:
+  WIN+SHIFT+V"), so the history is discoverable from the very first launch.
+  It disappears for good once you've opened the panel.
+- The **About box** now spells out that clips are pasted back as clean plain
+  text (formatting stripped) — a strength ClipCat always had but never said.
 - The clipboard panel is now yours to arrange: drag its **header** to move
   the panel anywhere — the cat stays put — and drag the **grip in its
   bottom-right corner** to resize it (a taller panel shows more clips).

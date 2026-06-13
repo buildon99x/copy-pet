@@ -28,6 +28,7 @@ fn base_scene(lang: Lang) -> Scene<'static> {
         bubble: None,
         bubble_alpha: 0.0,
         toast: None,
+        hotkey_hint: None,
         lang,
         origin: (0.0, 0.0),
     }
@@ -100,6 +101,18 @@ fn main() {
         let mut pm = Pixmap::new(240, 256).unwrap();
         render::render_card(&mut pm, &sc, 1.0);
         save(&pm, &dir, "2-fish");
+    }
+
+    // 2b. first-run hotkey hint banner (English + Korean)
+    for (lang, hint, name) in [
+        (Lang::En, "Clipboard: WIN+SHIFT+V", "2b-hint-en"),
+        (Lang::Ko, "클립보드: WIN+SHIFT+V", "2b-hint-ko"),
+    ] {
+        let mut sc = base_scene(lang);
+        sc.hotkey_hint = Some(hint);
+        let mut pm = Pixmap::new(240, 256).unwrap();
+        render::render_card(&mut pm, &sc, 1.0);
+        save(&pm, &dir, name);
     }
 
     // 3. stats bubble in Korean and English (system font, requirement check)

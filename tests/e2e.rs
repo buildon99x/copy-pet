@@ -500,6 +500,7 @@ fn stats_bubble_renders_with_system_font() {
         bubble: None,
         bubble_alpha: 0.0,
         toast: None,
+        hotkey_hint: None,
         lang: Lang::Ko,
         origin: (0.0, 0.0),
     };

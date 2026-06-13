@@ -196,6 +196,15 @@ pub fn menu_clipboard(lang: Lang, hotkey: &str) -> String {
     }
 }
 
+/// First-run hint shown by the pet (until the panel is first opened): the live
+/// hotkey chord that opens the clipboard history.
+pub fn first_run_hint(lang: Lang, hotkey: &str) -> String {
+    match lang {
+        Lang::En => format!("Clipboard: {hotkey}"),
+        Lang::Ko => format!("클립보드: {hotkey}"),
+    }
+}
+
 pub fn level_up(lang: Lang, lv: u32) -> String {
     match lang {
         Lang::En => format!("LEVEL UP! LV {lv}"),
@@ -283,7 +292,8 @@ pub fn about_text(
              and grows with your typing.\n\nLevel: LV {lv}\nLifetime keys: {keys}\nStored \
              clips: {clips}\n\n- Copy anywhere: the cat eats a fish and saves the clip\n\
              - {hotkey} or middle-click: clipboard history\n- Click a clip: copy it \
-             back\n- Type/click: the cat taps along and earns XP\n- Double-click: pet the \
+             back as clean plain text (formatting stripped)\n- Type/click: the cat taps \
+             along and earns XP\n- Double-click: pet the \
              cat\n\nEverything stays on this PC; the only network use is an \
              optional daily GitHub check for new versions (toggle in this menu)."
         ),
@@ -291,7 +301,8 @@ pub fn about_text(
             "ClipCat v{version}\n\n클립보드를 관리하고 타이핑과 함께 자라는 데스크탑 \
              고양이.\n\n현재 레벨: LV {lv}\n누적 키 입력: {keys}\n저장된 클립: {clips}개\n\n\
              - 어디서든 복사 → 고양이가 생선을 먹고 클립을 저장\n- {hotkey} 또는 \
-             휠클릭 → 클립보드 히스토리\n- 클립 클릭 → 다시 복사\n- 타이핑/클릭 → \
+             휠클릭 → 클립보드 히스토리\n- 클립 클릭 → 서식 없는 깔끔한 평문으로 다시 \
+             복사\n- 타이핑/클릭 → \
              고양이가 따라 치고 XP 획득\n- 더블클릭 → 쓰다듬기\n\n모든 데이터는 이 PC에만 \
              저장됩니다. 네트워크는 GitHub 새 버전 확인에만 쓰입니다(이 메뉴에서 끌 수 \
              있음)."

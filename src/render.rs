@@ -186,6 +186,9 @@ pub struct Scene<'a> {
     pub bubble: Option<BubbleData>,
     pub bubble_alpha: f32,
     pub toast: Option<(&'a str, f32)>,
+    /// First-run guidance banner (the panel hotkey) shown above the cat until
+    /// the user opens the panel for the first time; `None` afterwards.
+    pub hotkey_hint: Option<&'a str>,
     pub lang: Lang,
     /// Top-left of the cat canvas inside the window canvas (non-zero when
     /// the clipboard panel is open).
@@ -454,6 +457,18 @@ fn draw_scene(pm: &mut Pixmap, sc: &Scene, scale: f32) {
         if let Some(b) = &sc.bubble {
             draw_bubble(&mut cv, b, sc.bubble_alpha, sc.lang);
         }
+    }
+
+    // first-run hotkey hint: a pill in the clear space above the cat's ears.
+    // Only shown while the panel is closed, so `cv` here is scale-only (origin
+    // is (0,0)) and these are window coordinates.
+    if let Some(hint) = sc.hotkey_hint {
+        let w = (sysfont::measure(hint, 1.7) + 22.0).min(CANVAS_W - 8.0);
+        let x = (CANVAS_W - w) / 2.0;
+        let pill = round_rect(x, 6.0, w, 20.0, 9.0);
+        cv.fill(&pill, (255, 233, 168, 255));
+        cv.stroke(&pill, OUTLINE, 2.0);
+        cv.ui_text(hint, x + 11.0, 9.0, 1.7, TEXT);
     }
 }
 
