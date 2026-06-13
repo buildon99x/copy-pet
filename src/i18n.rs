@@ -85,6 +85,8 @@ pub enum Msg {
     BubbleClicks,
     BubbleClips,
     BubbleActive,
+    /// Short "level" prefix on the stats bubble / tooltip.
+    LevelShort,
 }
 
 /// Looks up a fixed string for the language.
@@ -182,6 +184,8 @@ pub fn t(lang: Lang, msg: Msg) -> &'static str {
         (BubbleClips, Lang::Ko) => "복사",
         (BubbleActive, Lang::En) => "ACTIVE",
         (BubbleActive, Lang::Ko) => "활동",
+        (LevelShort, Lang::En) => "LV",
+        (LevelShort, Lang::Ko) => "LV",
     }
 }
 
@@ -324,7 +328,7 @@ mod tests {
             ToastCapturePaused, ToastCaptureOn, ToastAutoCloseOn, ToastAutoCloseOff,
             MenuAutoUpdate, ToastUpdateDownloading,
             ToastUpdateFailed, ToastAccessibility, BubbleKeys, BubbleClicks, BubbleClips,
-            BubbleActive,
+            BubbleActive, LevelShort,
         ];
         for msg in all {
             assert!(!t(Lang::En, msg).is_empty());

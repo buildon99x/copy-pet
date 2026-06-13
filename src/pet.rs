@@ -233,7 +233,7 @@ impl Pet {
     }
 
     pub fn tooltip(&self) -> String {
-        format!("ClipCat — LV {}", self.level)
+        format!("ClipCat — {} {}", t(self.lang(), Msg::LevelShort), self.level)
     }
 
     /// The cat's current discrete mood, derived from the animation scalars and

@@ -938,7 +938,7 @@ fn draw_bubble(cv: &mut Cv, b: &BubbleData, alpha: f32, lang: Lang) {
 
     let tc = fade(tokens::TEXT_PRIMARY, a);
     // row 1: level + xp bar (gold, the design's progression accent)
-    cv.ui_text(&format!("LV {}", b.level), 24.0, 8.0, 2.0, tc);
+    cv.ui_text(&format!("{} {}", t(lang, Msg::LevelShort), b.level), 24.0, 8.0, 2.0, tc);
     let bar_bg = round_rect(82.0, 8.5, 134.0, 12.0, 6.0);
     cv.fill(&bar_bg, fade(tokens::SURFACE_CONTROL, a));
     let w = (134.0 * b.pct.clamp(0.0, 1.0)).max(10.0);
