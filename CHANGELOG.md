@@ -30,6 +30,10 @@ versions follow [SemVer](https://semver.org/). Maintenance rules:
   can grab several clips in a row. On by default.
 
 ### Changed
+- **Smarter panel search**: type several words and only clips matching
+  *every* word are shown (the words can match the text or the source app),
+  and results are ranked by relevance — matches at the start of a word, or
+  where your whole phrase appears together, float to the top.
 - The hover **stats bubble now uses your system font** instead of the
   built-in pixel font, matching the panel's typography.
 - **Holding a key no longer farms stats**: key auto-repeat is ignored, so
