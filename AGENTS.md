@@ -100,8 +100,11 @@ scripts/release.sh     the release path: gates, bump, CHANGELOG rotation, tag,
                        push (scripts/release.cmd = Windows wrapper)
 CHANGELOG.md           user-facing changes only — see policy in its header
 assets/clipcat.ico     the embedded app icon — generated, not hand-edited
-assets/screenshot.png  README screenshot (the only committed image asset)
-docs/specs/            product & technical specs
+assets/screenshot.png  README screenshot
+assets/reference/      design reference board(s) — doc images, never shipped
+docs/specs/            product & technical specs (incl. pet-motion status)
+docs/design/           pet motion & visual design contract (state machine,
+                       motion clips, tokens, QA — the source of truth, ADR-0012)
 .claude/skills/release/  project skill that drives scripts/release.sh
 .context/kb/adr/       architecture decision records (why)
 .context/kb/lnr/       lessons & near-misses (what bit us)

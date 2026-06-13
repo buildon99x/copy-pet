@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "clipcat.runtime_mock.schema.json",
+  "title": "ClipCat Runtime Mock Data",
+  "type": "object",
+  "required": [
+    "meta",
+    "pet",
+    "today",
+    "copyEvent"
+  ],
+  "properties": {
+    "meta": {
+      "type": "object"
+    },
+    "pet": {
+      "type": "object"
+    },
+    "today": {
+      "type": "object"
+    },
+    "copyEvent": {
+      "type": "object"
+    }
+  }
+}

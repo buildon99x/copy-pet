@@ -1,0 +1,110 @@
+meta:
+  name: ClipCat Pet Interaction Behavior
+  version: 1.0.0
+  schema: ./schemas/interaction_behavior.schema.json
+
+inputClassification:
+  slowTyping:
+    keyEventsPerSecond: [1, 4]
+    state: typing_slow
+  fastTyping:
+    keyEventsPerSecond: [5, 9]
+    state: typing_fast
+  extremeTyping:
+    keyEventsPerSecond: [10, 999]
+    state: typing_extreme
+  click:
+    xp: 1
+    state: boop
+  doubleClick:
+    maxGapMs: 320
+    xp: 10
+    state: petting
+  copy:
+    xp: 5
+    state: copy_reaction
+
+copyReaction:
+  queueLimit: 3
+  overflowPolicy: merge_into_sparkle
+  sourceBadge:
+    windows: use_real_exe_icon_if_available
+    macos: use_colored_initial_badge
+    fallback: unknown_question_badge
+  sequence:
+    - fish_spawn
+    - fish_fly_to_mouth
+    - nom
+    - happy_after_nom
+    - xp_popup
+  copyBackSuppression:
+    enabled: true
+    strategy: last_set_text_marker
+
+hoverStatsBubble:
+  showDelayMs: 220
+  hideDelayMs: 120
+  position: above_or_side_of_pet
+  avoidScreenEdges: true
+  content:
+    - pet_name
+    - level
+    - xp_bar
+    - keys_today
+    - clicks_today
+    - copies_today
+    - active_time
+  visual:
+    background: dark_glass_card
+    border: soft
+    yellowAccent: true
+    catPeeking: true
+
+panelOpenClose:
+  trigger:
+    - global_hotkey
+    - middle_click_pet
+    - tray_menu
+    - c_key_when_focused
+  rule: cat_anchor_must_not_move
+  openAnimation: panel_open
+  closeAnimation: panel_close
+  layout:
+    panelGrowsFrom: cat_top_or_side
+    windowCanvas: union_of_cat_and_panel
+    resizeShift: adjust_window_position_to_keep_cat_anchored
+
+accessorySystem:
+  default: red_scarf
+  slots:
+    neck: [red_scarf]
+    eyes: [round_glasses]
+    head: [blue_beanie, headphones, gold_crown, wizard_hat]
+  unlocks:
+    - {level: 2, item: red_scarf}
+    - {level: 3, item: round_glasses}
+    - {level: 5, item: blue_beanie}
+    - {level: 7, item: headphones}
+    - {level: 10, item: gold_crown}
+    - {level: 15, item: wizard_hat}
+  onUnlock:
+    state: new_item
+    toast: NEW ITEM!
+    persist: true
+
+errorHandling:
+  missingPetAsset:
+    behavior: render_simple_vector_cat_fallback
+    userVisible: false
+  animationFrameDrop:
+    behavior: skip_to_current_time_not_frame_count
+    userVisible: false
+  tooManyFishEvents:
+    behavior: queue_first_three_merge_rest_into_xp_popup
+    userVisible: false
+  fontMissing:
+    behavior: system_font_fallback_then_tofu
+    userVisible: true
+  clipboardPermissionDenied:
+    behavior: show_permission_help_toast
+    userVisible: true

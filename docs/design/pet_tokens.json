@@ -1,0 +1,81 @@
+{
+  "meta": {
+    "name": "ClipCat Pet Visual Tokens",
+    "version": "1.0.0",
+    "schema": "./schemas/pet_tokens.schema.json",
+    "unit": "px"
+  },
+  "petCanvas": {
+    "defaultWidth": 160,
+    "defaultHeight": 160,
+    "desktopPetDefaultSize": 128,
+    "panelPreviewSize": 96,
+    "hoverBubblePetSize": 120
+  },
+  "colors": {
+    "furBase": "#FFF4EA",
+    "furShadow": "#E8D1C1",
+    "furHighlight": "#FFFFFF",
+    "eye": "#171717",
+    "nose": "#FFB3B3",
+    "mouth": "#2B1A1A",
+    "tongue": "#FF8FA3",
+    "scarfRed": "#B7352E",
+    "scarfDark": "#7C201D",
+    "sparkle": "#FFC928",
+    "heart": "#FF6FA3",
+    "sleepBlue": "#78A8FF",
+    "fishBase": "#E9D5B3",
+    "fishShadow": "#C9A978"
+  },
+  "anchors": {
+    "body": {
+      "x": 0.5,
+      "y": 0.72
+    },
+    "head": {
+      "x": 0.5,
+      "y": 0.42
+    },
+    "mouth": {
+      "x": 0.5,
+      "y": 0.52
+    },
+    "leftPaw": {
+      "x": 0.36,
+      "y": 0.78
+    },
+    "rightPaw": {
+      "x": 0.64,
+      "y": 0.78
+    },
+    "scarf": {
+      "x": 0.5,
+      "y": 0.62
+    },
+    "fishMouthTarget": {
+      "x": 0.53,
+      "y": 0.58
+    },
+    "hoverBubbleAnchor": {
+      "x": 0.5,
+      "y": 0.02
+    }
+  },
+  "style": {
+    "outline": {
+      "enabled": false,
+      "softEdge": true
+    },
+    "shadow": {
+      "blur": 18,
+      "opacity": 0.32
+    },
+    "highlight": {
+      "enabled": true,
+      "opacity": 0.6
+    },
+    "particleCountDefault": 12,
+    "particleCountLevelUp": 28
+  }
+}

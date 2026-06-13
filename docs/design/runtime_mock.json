@@ -1,0 +1,28 @@
+{
+  "meta": {
+    "name": "ClipCat Pet Runtime Mock Data",
+    "version": "1.0.0",
+    "schema": "./schemas/runtime_mock.schema.json"
+  },
+  "pet": {
+    "state": "idle",
+    "level": 24,
+    "xp": 2450,
+    "xpToNext": 3600,
+    "accessory": "red_scarf",
+    "mood": "happy",
+    "capture": "running"
+  },
+  "today": {
+    "keys": 12430,
+    "clicks": 3210,
+    "copies": 1248,
+    "activeTime": "2h 35m"
+  },
+  "copyEvent": {
+    "source": "VS Code",
+    "badge": "fish_badge_vscode",
+    "xpReward": 5,
+    "textSizeBytes": 58
+  }
+}

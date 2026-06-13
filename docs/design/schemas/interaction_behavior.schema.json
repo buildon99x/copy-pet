@@ -1,0 +1,38 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "clipcat.interaction_behavior.schema.json",
+  "title": "ClipCat Interaction Behavior",
+  "type": "object",
+  "required": [
+    "meta",
+    "inputClassification",
+    "copyReaction",
+    "hoverStatsBubble",
+    "panelOpenClose",
+    "accessorySystem",
+    "errorHandling"
+  ],
+  "properties": {
+    "meta": {
+      "type": "object"
+    },
+    "inputClassification": {
+      "type": "object"
+    },
+    "copyReaction": {
+      "type": "object"
+    },
+    "hoverStatsBubble": {
+      "type": "object"
+    },
+    "panelOpenClose": {
+      "type": "object"
+    },
+    "accessorySystem": {
+      "type": "object"
+    },
+    "errorHandling": {
+      "type": "object"
+    }
+  }
+}

@@ -1,0 +1,22 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "clipcat.motion_spec.schema.json",
+  "title": "ClipCat Motion Spec",
+  "type": "object",
+  "required": [
+    "meta",
+    "easing",
+    "clips"
+  ],
+  "properties": {
+    "meta": {
+      "type": "object"
+    },
+    "easing": {
+      "type": "object"
+    },
+    "clips": {
+      "type": "object"
+    }
+  }
+}

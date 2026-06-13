@@ -1,0 +1,22 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "clipcat.pet_state_machine.schema.json",
+  "title": "ClipCat Pet State Machine",
+  "type": "object",
+  "required": [
+    "meta",
+    "statePriority",
+    "states"
+  ],
+  "properties": {
+    "meta": {
+      "type": "object"
+    },
+    "statePriority": {
+      "type": "object"
+    },
+    "states": {
+      "type": "object"
+    }
+  }
+}

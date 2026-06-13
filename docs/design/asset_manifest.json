@@ -1,0 +1,176 @@
+{
+  "meta": {
+    "name": "ClipCat Pet Asset Manifest",
+    "version": "1.0.0",
+    "schema": "./schemas/asset_manifest.schema.json",
+    "referenceBoard": "../assets/reference/clipcat_pet_motion_reference.png"
+  },
+  "strategy": {
+    "preferred": "layered PNG or SVG parts animated by transforms",
+    "fallback": "single-state PNG frames",
+    "doNot": [
+      "download assets at runtime",
+      "bundle fonts",
+      "use web-only animation"
+    ]
+  },
+  "assets": [
+    {
+      "id": "cat_idle",
+      "type": "pet_state",
+      "required": true,
+      "description": "front-facing seated cat with red scarf"
+    },
+    {
+      "id": "cat_typing_slow",
+      "type": "pet_state",
+      "required": true,
+      "description": "cat on keyboard, light paw motion"
+    },
+    {
+      "id": "cat_typing_fast",
+      "type": "pet_state",
+      "required": true,
+      "description": "cat on keyboard, excited expression"
+    },
+    {
+      "id": "cat_typing_extreme",
+      "type": "pet_state",
+      "required": true,
+      "description": "cat on keyboard with intense excitement FX"
+    },
+    {
+      "id": "cat_sleep",
+      "type": "pet_state",
+      "required": true,
+      "description": "curled sleeping cat"
+    },
+    {
+      "id": "cat_yawn",
+      "type": "pet_state",
+      "required": true,
+      "description": "open-mouth yawn cat"
+    },
+    {
+      "id": "cat_look_around",
+      "type": "pet_state",
+      "required": true,
+      "description": "cat looking to the side"
+    },
+    {
+      "id": "cat_mouth_open",
+      "type": "pet_part",
+      "required": true,
+      "description": "open mouth for fish arrival"
+    },
+    {
+      "id": "fish_base",
+      "type": "fx",
+      "required": true,
+      "description": "small fish used for copy event"
+    },
+    {
+      "id": "fish_badge_vscode",
+      "type": "source_badge",
+      "required": true,
+      "description": "VS Code badge"
+    },
+    {
+      "id": "fish_badge_chrome",
+      "type": "source_badge",
+      "required": true,
+      "description": "Chrome badge"
+    },
+    {
+      "id": "fish_badge_notion",
+      "type": "source_badge",
+      "required": true,
+      "description": "Notion badge"
+    },
+    {
+      "id": "fish_badge_terminal",
+      "type": "source_badge",
+      "required": true,
+      "description": "Terminal badge"
+    },
+    {
+      "id": "fish_badge_unknown",
+      "type": "source_badge",
+      "required": true,
+      "description": "Unknown source badge"
+    },
+    {
+      "id": "heart_fx",
+      "type": "fx",
+      "required": true,
+      "description": "heart particles"
+    },
+    {
+      "id": "sparkle_fx",
+      "type": "fx",
+      "required": true,
+      "description": "yellow sparkle particles"
+    },
+    {
+      "id": "sleep_zzz",
+      "type": "fx",
+      "required": true,
+      "description": "blue Zzz bubble"
+    },
+    {
+      "id": "level_up_text",
+      "type": "fx",
+      "required": true,
+      "description": "LEVEL UP text"
+    },
+    {
+      "id": "xp_popup_plus_5",
+      "type": "fx",
+      "required": true,
+      "description": "+5 XP text"
+    },
+    {
+      "id": "accessory_red_scarf",
+      "type": "accessory",
+      "required": true,
+      "slot": "neck"
+    },
+    {
+      "id": "accessory_round_glasses",
+      "type": "accessory",
+      "required": true,
+      "slot": "eyes"
+    },
+    {
+      "id": "accessory_blue_beanie",
+      "type": "accessory",
+      "required": true,
+      "slot": "head"
+    },
+    {
+      "id": "accessory_headphones",
+      "type": "accessory",
+      "required": true,
+      "slot": "head"
+    },
+    {
+      "id": "accessory_gold_crown",
+      "type": "accessory",
+      "required": true,
+      "slot": "head"
+    },
+    {
+      "id": "accessory_wizard_hat",
+      "type": "accessory",
+      "required": true,
+      "slot": "head"
+    }
+  ],
+  "productionNotes": {
+    "transparentBackground": true,
+    "recommendedExportScale": "2x and 3x",
+    "safePaddingPx": 16,
+    "naming": "snake_case",
+    "qa": "compare against reference board before implementation"
+  }
+}

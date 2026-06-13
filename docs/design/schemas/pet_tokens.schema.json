@@ -1,0 +1,30 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "clipcat.pet_tokens.schema.json",
+  "title": "ClipCat Pet Tokens",
+  "type": "object",
+  "required": [
+    "meta",
+    "petCanvas",
+    "colors",
+    "anchors",
+    "style"
+  ],
+  "properties": {
+    "meta": {
+      "type": "object"
+    },
+    "petCanvas": {
+      "type": "object"
+    },
+    "colors": {
+      "type": "object"
+    },
+    "anchors": {
+      "type": "object"
+    },
+    "style": {
+      "type": "object"
+    }
+  }
+}

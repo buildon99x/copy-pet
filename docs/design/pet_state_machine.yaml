@@ -1,0 +1,169 @@
+meta:
+  name: ClipCat Pet State Machine
+  version: 1.0.0
+  schema: ./schemas/pet_state_machine.schema.json
+  reference: ../assets/reference/clipcat_pet_motion_reference.png
+
+statePriority:
+  highest:
+    - level_up
+    - new_item
+    - copy_reaction
+  medium:
+    - petting
+    - boop
+    - panel_open
+    - typing_extreme
+    - typing_fast
+    - typing_slow
+  low:
+    - hover
+    - yawn
+    - look_around
+    - sleep
+    - idle
+
+states:
+  idle:
+    description: calm cat with red scarf
+    defaultDurationMs: 3200
+    loop: true
+    visual:
+      expression: soft smile
+      bodyPose: seated_front
+      accessory: red_scarf
+    onEnter:
+      - reset_mouth_to_idle
+      - reset_paws
+    transitions:
+      input_slow: typing_slow
+      input_fast: typing_fast
+      input_extreme: typing_extreme
+      copy: copy_reaction
+      hover_start: hover_stats
+      double_click: petting
+      click: boop
+      idle_75s: sleep
+      random_yawn: yawn
+      random_look: look_around
+
+  typing_slow:
+    description: paws tap slowly on keyboard
+    defaultDurationMs: 900
+    loop: true
+    transitions:
+      input_fast: typing_fast
+      input_extreme: typing_extreme
+      input_stop_600ms: idle
+      copy: copy_reaction
+
+  typing_fast:
+    description: faster paw tap with brighter face
+    defaultDurationMs: 700
+    loop: true
+    transitions:
+      input_slow: typing_slow
+      input_extreme: typing_extreme
+      input_stop_700ms: idle
+      copy: copy_reaction
+
+  typing_extreme:
+    description: highly excited cat with sparkle/fire energy
+    defaultDurationMs: 900
+    loop: true
+    maxDurationMs: 2600
+    transitions:
+      input_fast: typing_fast
+      input_stop_900ms: idle
+      copy: copy_reaction
+
+  sleep:
+    description: curled sleeping cat with Zzz bubble
+    defaultDurationMs: 999999
+    loop: true
+    transitions:
+      any_input: idle
+      copy: copy_reaction
+      click: boop
+
+  yawn:
+    description: seated cat with open mouth yawn
+    defaultDurationMs: 1100
+    loop: false
+    transitions:
+      done: idle
+      copy: copy_reaction
+
+  look_around:
+    description: cat looks to side
+    defaultDurationMs: 1400
+    loop: false
+    transitions:
+      done: idle
+      copy: copy_reaction
+
+  copy_reaction:
+    description: fish flies into mouth, nom, happy, XP popup
+    defaultDurationMs: 1650
+    loop: false
+    lockUntilDone: true
+    transitions:
+      done: happy
+      level_threshold_crossed: level_up
+
+  happy:
+    description: smiling cat after copy or pet
+    defaultDurationMs: 700
+    loop: false
+    transitions:
+      done: idle
+
+  petting:
+    description: user double-click pets the cat; hearts and purr
+    defaultDurationMs: 1200
+    loop: false
+    rewardXp: 10
+    transitions:
+      done: happy
+      copy: copy_reaction
+
+  boop:
+    description: user single-clicks or nose-clicks; tiny surprised reaction
+    defaultDurationMs: 650
+    loop: false
+    rewardXp: 1
+    transitions:
+      done: idle
+      copy: copy_reaction
+
+  hover_stats:
+    description: stats bubble visible while mouse hovers
+    defaultDurationMs: 0
+    loop: true
+    transitions:
+      hover_end: idle
+      copy: copy_reaction
+
+  level_up:
+    description: celebratory jump with stars and LEVEL UP text
+    defaultDurationMs: 1800
+    loop: false
+    lockUntilDone: true
+    transitions:
+      accessory_unlocked: new_item
+      done: idle
+
+  new_item:
+    description: new accessory reveal card
+    defaultDurationMs: 2200
+    loop: false
+    lockUntilDone: true
+    transitions:
+      done: idle
+
+  panel_open:
+    description: clipboard panel grows upward beside/above cat while cat remains anchored
+    defaultDurationMs: 260
+    loop: false
+    transitions:
+      done: idle

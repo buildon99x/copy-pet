@@ -1,0 +1,34 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "clipcat.asset_manifest.schema.json",
+  "title": "ClipCat Asset Manifest",
+  "type": "object",
+  "required": [
+    "meta",
+    "strategy",
+    "assets"
+  ],
+  "properties": {
+    "meta": {
+      "type": "object"
+    },
+    "strategy": {
+      "type": "object"
+    },
+    "assets": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "id",
+          "type",
+          "required",
+          "description"
+        ]
+      }
+    },
+    "productionNotes": {
+      "type": "object"
+    }
+  }
+}

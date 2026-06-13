@@ -1,0 +1,184 @@
+meta:
+  name: ClipCat Motion Spec
+  version: 1.0.0
+  schema: ./schemas/motion_spec.schema.json
+  frameRateTarget: 60
+  tickMs: 16.6667
+
+easing:
+  standard: cubicBezier(0.22, 1, 0.36, 1)
+  gentle: cubicBezier(0.16, 1, 0.3, 1)
+  snap: cubicBezier(0.34, 1.56, 0.64, 1)
+  linear: linear
+
+clips:
+  idle_blink:
+    durationMs: 260
+    loop: false
+    trigger: every 3600-6200ms random
+    tracks:
+      - target: eyes
+        property: scaleY
+        keyframes:
+          - {t: 0, value: 1}
+          - {t: 110, value: 0.08}
+          - {t: 260, value: 1}
+        easing: gentle
+
+  idle_breath:
+    durationMs: 2400
+    loop: true
+    tracks:
+      - target: body
+        property: translateY
+        keyframes:
+          - {t: 0, value: 0}
+          - {t: 1200, value: -2}
+          - {t: 2400, value: 0}
+        easing: gentle
+
+  typing_slow:
+    durationMs: 480
+    loop: true
+    tracks:
+      - target: left_paw
+        property: translateY
+        keyframes: [{t: 0, value: 0}, {t: 120, value: 6}, {t: 240, value: 0}, {t: 480, value: 0}]
+        easing: snap
+      - target: right_paw
+        property: translateY
+        keyframes: [{t: 0, value: 0}, {t: 240, value: 0}, {t: 360, value: 6}, {t: 480, value: 0}]
+        easing: snap
+
+  typing_fast:
+    durationMs: 280
+    loop: true
+    tracks:
+      - target: left_paw
+        property: translateY
+        keyframes: [{t: 0, value: 0}, {t: 70, value: 8}, {t: 140, value: 0}]
+        easing: snap
+      - target: right_paw
+        property: translateY
+        keyframes: [{t: 0, value: 0}, {t: 140, value: 0}, {t: 210, value: 8}, {t: 280, value: 0}]
+        easing: snap
+      - target: body
+        property: translateY
+        keyframes: [{t: 0, value: 0}, {t: 140, value: -3}, {t: 280, value: 0}]
+        easing: gentle
+
+  typing_extreme:
+    durationMs: 220
+    loop: true
+    tracks:
+      - target: left_paw
+        property: translateY
+        keyframes: [{t: 0, value: 0}, {t: 55, value: 10}, {t: 110, value: 0}]
+        easing: snap
+      - target: right_paw
+        property: translateY
+        keyframes: [{t: 0, value: 0}, {t: 110, value: 0}, {t: 165, value: 10}, {t: 220, value: 0}]
+        easing: snap
+      - target: excitement_fx
+        property: opacity
+        keyframes: [{t: 0, value: 0.4}, {t: 110, value: 1}, {t: 220, value: 0.4}]
+        easing: linear
+
+  fish_spawn:
+    durationMs: 120
+    loop: false
+    tracks:
+      - target: fish
+        property: scale
+        keyframes: [{t: 0, value: 0}, {t: 120, value: 1}]
+        easing: snap
+      - target: fish
+        property: opacity
+        keyframes: [{t: 0, value: 0}, {t: 120, value: 1}]
+        easing: standard
+
+  fish_fly_to_mouth:
+    durationMs: 850
+    loop: false
+    path:
+      type: quadraticBezier
+      from: {x: 1.0, y: 0.05}
+      control: {x: 0.72, y: 0.28}
+      to: {x: 0.53, y: 0.58}
+      coordinateSpace: petBoundsNormalized
+    tracks:
+      - target: fish
+        property: rotate
+        keyframes: [{t: 0, value: -12}, {t: 500, value: 8}, {t: 850, value: -4}]
+        easing: standard
+      - target: mouth
+        property: openAmount
+        keyframes: [{t: 0, value: 0}, {t: 540, value: 1}, {t: 850, value: 1}]
+        easing: snap
+
+  nom:
+    durationMs: 180
+    loop: false
+    tracks:
+      - target: mouth
+        property: openAmount
+        keyframes: [{t: 0, value: 1}, {t: 120, value: 0}, {t: 180, value: 0}]
+        easing: snap
+      - target: body
+        property: scale
+        keyframes: [{t: 0, value: 1.0}, {t: 80, value: 1.06}, {t: 180, value: 1.0}]
+        easing: snap
+
+  happy_after_nom:
+    durationMs: 520
+    loop: false
+    tracks:
+      - target: body
+        property: translateY
+        keyframes: [{t: 0, value: 0}, {t: 180, value: -12}, {t: 520, value: 0}]
+        easing: snap
+      - target: heart_fx
+        property: opacity
+        keyframes: [{t: 0, value: 0}, {t: 120, value: 1}, {t: 520, value: 0}]
+        easing: gentle
+
+  xp_popup:
+    durationMs: 850
+    loop: false
+    tracks:
+      - target: xp_text
+        property: translateY
+        keyframes: [{t: 0, value: 0}, {t: 850, value: -34}]
+        easing: standard
+      - target: xp_text
+        property: opacity
+        keyframes: [{t: 0, value: 1}, {t: 650, value: 1}, {t: 850, value: 0}]
+        easing: gentle
+
+  panel_open:
+    durationMs: 260
+    loop: false
+    tracks:
+      - target: clipboard_panel
+        property: scaleY
+        keyframes: [{t: 0, value: 0.08}, {t: 260, value: 1}]
+        transformOrigin: bottom
+        easing: standard
+      - target: clipboard_panel
+        property: opacity
+        keyframes: [{t: 0, value: 0}, {t: 160, value: 1}]
+        easing: standard
+
+  panel_close:
+    durationMs: 200
+    loop: false
+    tracks:
+      - target: clipboard_panel
+        property: scaleY
+        keyframes: [{t: 0, value: 1}, {t: 200, value: 0.08}]
+        transformOrigin: bottom
+        easing: gentle
+      - target: clipboard_panel
+        property: opacity
+        keyframes: [{t: 0, value: 1}, {t: 200, value: 0}]
+        easing: standard
