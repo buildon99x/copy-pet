@@ -360,6 +360,12 @@ impl<'a> Cv<'a> {
     fn ui_text(&mut self, s: &str, x: f32, y: f32, px: f32, c: (u8, u8, u8, u8)) {
         sysfont::draw(self.pm, s, x, y, px, c, self.ts);
     }
+    /// Pseudo-bold: the system-font rasterizer is single-weight, so thicken a
+    /// heading by overprinting it with a sub-pixel horizontal offset.
+    fn ui_text_b(&mut self, s: &str, x: f32, y: f32, px: f32, c: (u8, u8, u8, u8)) {
+        sysfont::draw(self.pm, s, x, y, px, c, self.ts);
+        sysfont::draw(self.pm, s, x + 0.45, y, px, c, self.ts);
+    }
     fn line(&mut self, pts: &[(f32, f32)], c: (u8, u8, u8, u8), w: f32) {
         let mut pb = PathBuilder::new();
         for (i, (x, y)) in pts.iter().enumerate() {
@@ -1393,7 +1399,7 @@ fn draw_exp_sidebar(cv: &mut Cv, v: &ExpandedView, el: &pl::ExpandedLayout) {
         cv.fill(&pb.finish(), tokens::ACCENT_GOLD);
         cv.line(&[(lx + 11.0, ly), (lx + 15.0, ly - 3.5), (lx + 15.0, ly + 3.5), (lx + 11.0, ly)], tokens::ACCENT_GOLD_2, 1.5);
     }
-    cv.ui_text("ClipCat", lx + 20.0, ly - 6.5, 1.9, txt);
+    cv.ui_text_b("ClipCat", lx + 20.0, ly - 6.5, 1.9, txt);
     let vw = sysfont::measure(v.version, 1.1);
     cv.ui_text(v.version, sx + sw - 14.0 - vw, ly - 4.0, 1.1, muted);
 
@@ -1407,7 +1413,7 @@ fn draw_exp_sidebar(cv: &mut Cv, v: &ExpandedView, el: &pl::ExpandedLayout) {
     progress_ring(cv, ring_cx, ring_cy, 16.0, pct);
     let lv = format!("Lv. {}", v.level);
     let lw = sysfont::measure(&lv, 1.15);
-    cv.ui_text(&lv, ring_cx - lw / 2.0, ring_cy - 4.0, 1.15, txt);
+    cv.ui_text_b(&lv, ring_cx - lw / 2.0, ring_cy - 4.0, 1.15, txt);
 
     // XP text + bar
     let xpline = format!("{} / {} XP", fmt_thousands(v.xp_into), fmt_thousands(v.xp_need));
@@ -1430,7 +1436,7 @@ fn draw_exp_sidebar(cv: &mut Cv, v: &ExpandedView, el: &pl::ExpandedLayout) {
         fill_round_rect(cv.pm, (bx, by, cw3, 50.0), 10.0, tokens::SURFACE_CARD, cv.ts);
         stat_icon(cv, *label, bx + cw3 / 2.0, by + 13.0, *color);
         let vwi = sysfont::measure(value, 1.4);
-        cv.ui_text(value, bx + (cw3 - vwi) / 2.0, by + 23.0, 1.4, txt);
+        cv.ui_text_b(value, bx + (cw3 - vwi) / 2.0, by + 23.0, 1.4, txt);
         let lab = t(lang, *label);
         let lwi = sysfont::measure(lab, 1.05);
         cv.ui_text(lab, bx + (cw3 - lwi) / 2.0, by + 37.0, 1.05, muted);
@@ -1446,7 +1452,12 @@ fn draw_exp_sidebar(cv: &mut Cv, v: &ExpandedView, el: &pl::ExpandedLayout) {
         }
         let icol = if selected { tokens::ACCENT_GOLD } else { txt2 };
         nav_icon(cv, *nav, sx + 24.0, y + (el.nav_h - 4.0) / 2.0, icol);
-        cv.ui_text(t(lang, nav_msg(*nav)), sx + 38.0, y + (el.nav_h - 4.0) / 2.0 - 5.5, 1.6, if selected { tokens::ACCENT_GOLD } else { txt });
+        let ny = y + (el.nav_h - 4.0) / 2.0 - 5.5;
+        if selected {
+            cv.ui_text_b(t(lang, nav_msg(*nav)), sx + 38.0, ny, 1.6, tokens::ACCENT_GOLD);
+        } else {
+            cv.ui_text(t(lang, nav_msg(*nav)), sx + 38.0, ny, 1.6, txt);
+        }
         if let Some(n) = nav_count(*nav, v.store) {
             let s = n.to_string();
             let bw = sysfont::measure(&s, 1.2) + 12.0;
@@ -1574,8 +1585,8 @@ fn draw_exp_list(cv: &mut Cv, v: &ExpandedView, el: &pl::ExpandedLayout) {
         let right_w = 84.0;
         let tmax = lwc - 16.0 - 40.0 - right_w;
         let mut lines = clip.text.lines();
-        let title = sysfont::truncate_to_width(lines.next().unwrap_or("").trim(), 1.55, tmax);
-        cv.ui_text(&title, tx, ry + 5.0, 1.55, txt);
+        let title = sysfont::truncate_to_width(lines.next().unwrap_or("").trim(), 1.6, tmax);
+        cv.ui_text_b(&title, tx, ry + 5.0, 1.6, txt);
         if let Some(second) = lines.next() {
             let s = sysfont::truncate_to_width(second.trim(), 1.25, tmax);
             cv.ui_text(&s, tx, ry + 20.0, 1.25, muted);
@@ -1650,7 +1661,7 @@ fn draw_detail_pane(cv: &mut Cv, v: &ExpandedView, el: &pl::ExpandedLayout, now:
 
     // title + pin star
     let title = sysfont::truncate_to_width(clip.preview().lines().next().unwrap_or("").trim(), 1.9, pw - 18.0);
-    cv.ui_text(&title, px, dy + 14.0, 1.9, txt);
+    cv.ui_text_b(&title, px, dy + 14.0, 1.9, txt);
     let star = star_path(dx + dw - 16.0, dy + 20.0, 6.5, 0.0);
     if clip.pinned { cv.fill(&star, PIN_GOLD); } else { cv.stroke(&star, fade(muted, 0.7), 1.3); }
 
@@ -1714,7 +1725,7 @@ fn draw_detail_pane(cv: &mut Cv, v: &ExpandedView, el: &pl::ExpandedLayout, now:
         let sw2 = sysfont::measure(s, 1.3);
         let has_hint = !hint.is_empty();
         let ty = if has_hint { r.1 + 6.0 } else { r.1 + (r.3 - 9.1) / 2.0 };
-        cv.ui_text(s, r.0 + (r.2 - sw2) / 2.0, ty, 1.3, fg);
+        cv.ui_text_b(s, r.0 + (r.2 - sw2) / 2.0, ty, 1.3, fg);
         if has_hint {
             let hw = sysfont::measure(hint, 1.0);
             cv.ui_text(hint, r.0 + (r.2 - hw) / 2.0, r.1 + r.3 - 11.0, 1.0, tokens::TEXT_MUTED);
@@ -1745,7 +1756,7 @@ fn draw_detail_pane(cv: &mut Cv, v: &ExpandedView, el: &pl::ExpandedLayout, now:
     let tip_h = 40.0;
     let tip_y = dy + dh - tip_h - 12.0;
     fill_round_rect(cv.pm, (px, tip_y, pw, tip_h), 10.0, fade(tokens::ACCENT_GOLD, 0.10), cv.ts);
-    cv.ui_text("Tip", px + 10.0, tip_y + 7.0, 1.2, tokens::ACCENT_GOLD);
+    cv.ui_text_b("Tip", px + 10.0, tip_y + 7.0, 1.2, tokens::ACCENT_GOLD);
     let tip = t(lang, Msg::ExpTip);
     // wrap the tip across two lines within the box
     let max = pw - 20.0;
