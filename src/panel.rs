@@ -33,7 +33,10 @@ pub const DEFAULT_OFF: (f32, f32) = (-56.0, -282.0);
 pub const MAX_OFF: f32 = 4096.0;
 
 pub const BTN: f32 = 18.0;
+/// Per-clip row height in the compact list view (the default).
 pub const ROW_H: f32 = 34.0;
+/// Per-clip row height in the roomier rounded-box "thumbnail" view.
+pub const ROW_H_THUMB: f32 = 52.0;
 /// Row x-zones: pin toggle | clip body | delete.
 pub const PIN_ZONE: f32 = 34.0; // x < row_x + PIN_ZONE
 pub const DEL_ZONE: f32 = 28.0; // x > row_x + row_w - DEL_ZONE
@@ -130,6 +133,8 @@ pub struct Layout {
     pub rows_y: f32,
     pub row_x: f32,
     pub row_w: f32,
+    /// Per-row height (depends on the list/thumbnail view).
+    pub row_h: f32,
     /// Clip rows that fit between the header and the footer.
     pub rows: usize,
     pub footer_y: f32,
@@ -213,6 +218,9 @@ pub struct Panel {
     ///
     /// [`layout`]: Panel::layout
     pub cat_scale: f32,
+    /// List style mirrored from `st.panel_view`: 0 = compact list, 1 = roomier
+    /// rounded-box cards. Drives the per-row height (see [`Panel::row_h`]).
+    pub view: u8,
     /// Cached filtered row order (the panel is redrawn every tick while
     /// open; without this the query would re-scan every clip text per frame).
     cache: RefCell<ViewCache>,
@@ -232,6 +240,7 @@ impl Default for Panel {
             h: DEFAULT_H,
             off: DEFAULT_OFF,
             cat_scale: 1.0,
+            view: 0,
             cache: RefCell::new(ViewCache::default()),
         }
     }
@@ -255,6 +264,15 @@ impl Panel {
             h,
             off: (ox, oy),
             ..Default::default()
+        }
+    }
+
+    /// Per-clip row height for the active view (compact list vs. roomy cards).
+    pub fn row_h(&self) -> f32 {
+        if self.view == 1 {
+            ROW_H_THUMB
+        } else {
+            ROW_H
         }
     }
 
@@ -299,7 +317,8 @@ impl Panel {
             rows_y: card_y + HEADER_H,
             row_x: card_x + 8.0,
             row_w: w - 20.0,
-            rows: (((h - HEADER_H - FOOTER_H) / ROW_H) as usize).max(1),
+            row_h: self.row_h(),
+            rows: (((h - HEADER_H - FOOTER_H) / self.row_h()) as usize).max(1),
             footer_y: card_y + h - FOOTER_H,
         }
     }
@@ -435,10 +454,10 @@ impl Panel {
     /// Row index (into the filtered list) under the y coordinate, if any.
     pub fn row_at(&self, y: f32, total: usize) -> Option<usize> {
         let l = self.layout();
-        if y < l.rows_y || y >= l.rows_y + ROW_H * l.rows as f32 {
+        if y < l.rows_y || y >= l.rows_y + l.row_h * l.rows as f32 {
             return None;
         }
-        let i = self.scroll + ((y - l.rows_y) / ROW_H) as usize;
+        let i = self.scroll + ((y - l.rows_y) / l.row_h) as usize;
         (i < total).then_some(i)
     }
 
@@ -776,6 +795,24 @@ mod tests {
         // height exceeds vis: align the card top to vis top (header stays on
         // screen), x already fits
         assert_eq!(fit_delta(card, vis), (0.0, -80.0));
+    }
+
+    #[test]
+    fn thumbnail_view_uses_taller_rows_and_hit_tests_them() {
+        let s = store(6);
+        let mut p = open_panel();
+        let list = p.layout();
+        assert_eq!(list.row_h, ROW_H);
+        p.view = 1;
+        let cards = p.layout();
+        assert_eq!(cards.row_h, ROW_H_THUMB);
+        assert!(cards.rows < list.rows, "taller cards => fewer fit on screen");
+        // row_at honors the active (taller) row height
+        let y = cards.rows_y + ROW_H_THUMB * 1.5;
+        assert_eq!(p.row_at(y, 6), Some(1));
+        // a click in that card's body still copies it
+        let act = p.click(cards.row_x + 60.0, y, &s);
+        assert!(matches!(act, Some(PanelAction::Copy(_))));
     }
 
     #[test]

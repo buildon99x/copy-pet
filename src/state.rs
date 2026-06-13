@@ -44,6 +44,9 @@ pub struct Persist {
     pub panel_off_y: f32,
     /// When true (default), picking a clip closes the panel for pasting.
     pub panel_autoclose: bool,
+    /// Panel list style: 0 = compact list (default), 1 = roomier rounded-box
+    /// "thumbnail" cards that show more of each clip.
+    pub panel_view: u8,
     // lifetime
     pub total_keys: u64,
     pub total_clicks: u64,
@@ -78,6 +81,7 @@ impl Default for Persist {
             panel_off_x: crate::panel::DEFAULT_OFF.0,
             panel_off_y: crate::panel::DEFAULT_OFF.1,
             panel_autoclose: true,
+            panel_view: 0,
             total_keys: 0,
             total_clicks: 0,
             total_copies: 0,

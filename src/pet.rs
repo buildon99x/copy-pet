@@ -118,6 +118,7 @@ impl Pet {
         let (level, _, _) = level_progress(st.total_xp);
         let mut panel = Panel::with_geometry(st.panel_w, st.panel_h, (st.panel_off_x, st.panel_off_y));
         panel.cat_scale = SCALES[st.scale_idx.min(2)];
+        panel.view = st.panel_view.min(1);
         Pet {
             st,
             clips: ClipStore::load(),
@@ -578,6 +579,16 @@ impl Pet {
         self.set_toast(t(self.lang(), msg).to_string(), 2.2);
     }
 
+    /// Switches the clipboard list between the compact list and the roomier
+    /// rounded-box cards. The card size (and thus the window) is unchanged —
+    /// only the per-row height — so the scroll is re-clamped, not relaid out.
+    pub fn toggle_panel_view(&mut self) {
+        self.st.panel_view = if self.st.panel_view == 0 { 1 } else { 0 };
+        self.panel.view = self.st.panel_view;
+        self.panel.refresh(&self.clips);
+        self.dirty = true;
+    }
+
     /// A click at window-canvas coords while the panel is open.
     pub fn panel_click(&mut self, cx: f32, cy: f32) -> Option<String> {
         let action = self.panel.click(cx, cy, &self.clips)?;
@@ -966,6 +977,11 @@ impl Pet {
             MenuAction::TogglePanelAutoClose,
             self.st.panel_autoclose,
         ));
+        m.push(MenuItem::leaf(
+            t(lang, Msg::MenuThumbnailView),
+            MenuAction::TogglePanelView,
+            self.st.panel_view == 1,
+        ));
         m.push(MenuEntry::Separator);
 
         m.push(MenuItem::leaf(
@@ -1070,6 +1086,7 @@ impl Pet {
                 self.run_action(PanelAction::ToggleCapture);
             }
             MenuAction::TogglePanelAutoClose => self.toggle_panel_autoclose(),
+            MenuAction::TogglePanelView => self.toggle_panel_view(),
             MenuAction::ToggleStats => {
                 self.st.bubble_pinned = !self.st.bubble_pinned;
                 self.dirty = true;

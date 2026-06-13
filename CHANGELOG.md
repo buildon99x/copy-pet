@@ -17,6 +17,10 @@ versions follow [SemVer](https://semver.org/). Maintenance rules:
 ## [Unreleased]
 
 ### Added
+- The clipboard panel has a new **Thumbnail view** (tray/right-click menu, or
+  the `V` key on Linux/macOS): clips become roomy rounded cards that wrap onto
+  two lines, so you see even more of each one. The compact list stays the
+  default; your choice is remembered.
 - New **Window** setting (tray menu on Windows, right-click menu on macOS)
   with three modes: **Always on top** (the default), **Normal** — the pet can
   now sit behind other windows like an ordinary one — and **Hide**. A hidden

@@ -16,7 +16,7 @@
 //! Settings have no system tray here; when the window is focused
 //! these keys apply: S size · A accessory · M sound · B stats bubble ·
 //! L lock · G language · C clipboard panel · O auto-close after copy ·
-//! U update download page · Q/Esc quit. While the panel is open the
+//! V list/thumbnail view · U update download page · Q/Esc quit. While the panel is open the
 //! keyboard drives it instead (type to search, arrows/Home/End + Enter,
 //! Ctrl+0..9 quick-copies the badged top rows, Del deletes, Ctrl+Z undoes,
 //! Ctrl+P pins — Cmd works too on macOS — Tab cycles the source-app
@@ -430,6 +430,7 @@ impl PortableApp {
             }
             KeyCode::KeyC => self.pet.toggle_panel(),
             KeyCode::KeyO => self.pet.toggle_panel_autoclose(),
+            KeyCode::KeyV => self.pet.toggle_panel_view(),
             KeyCode::KeyU => {
                 // only meaningful once the update toast announced a version
                 if self.pet.update_available().is_some() {
