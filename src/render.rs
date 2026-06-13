@@ -317,7 +317,9 @@ pub fn source_badge(pm: &mut Pixmap, cx: f32, cy: f32, size: f32, badge: &Badge,
     } else {
         let (r8, g8, b8) = badge.color;
         fill_round_rect(pm, (cx - size / 2.0, cy - size / 2.0, size, size), r, (r8, g8, b8, 255), ts);
-        let px = size * 0.58;
+        // sysfont's `px` is a multiplier whose cell height is ~7*px, so a letter
+        // filling ~70% of the chip needs px ≈ size * 0.1.
+        let px = size * 0.1;
         let label = badge.letter.to_string();
         let lw = sysfont::measure(&label, px);
         sysfont::draw(pm, &label, cx - lw / 2.0, cy - 3.5 * px, px, tokens::TEXT_PRIMARY, ts);
@@ -1111,12 +1113,11 @@ pub fn draw_panel(pm: &mut Pixmap, v: &PanelView, scale: f32) {
         let Some(clip) = visible.get(idx) else { break };
         let ry = lt.rows_y + i as f32 * pl::ROW_H;
 
-        let row_bg = if idx == v.panel.sel {
-            Some(ROW_SEL)
-        } else if hover_row == Some(idx) {
-            Some(ROW_HOVER)
-        } else {
-            None
+        let row_bg = match (idx == v.panel.sel, hover_row == Some(idx)) {
+            (true, true) => Some(tokens::SURFACE_CONTROL_ACTIVE), // selected-hover
+            (true, false) => Some(ROW_SEL),
+            (false, true) => Some(ROW_HOVER),
+            (false, false) => None,
         };
         if let Some(bg) = row_bg {
             let rrect = (lt.row_x, ry + 1.0, lt.row_w, pl::ROW_H - 2.0);
@@ -1151,9 +1152,10 @@ pub fn draw_panel(pm: &mut Pixmap, v: &PanelView, scale: f32) {
         }
         let mut mx = tx;
         if let Some(src) = &clip.source {
-            let dot = source_color(src);
-            cv.fill(&oval(mx + 2.6, ry + 24.8, 2.6, 2.6), (dot.0, dot.1, dot.2, 255));
-            mx += 9.0;
+            // the same colored-initial identity badge the fish wears, so an app
+            // reads as one color across the fish and its rows
+            source_badge(cv.pm, mx + 4.5, ry + 25.0, 9.0, &Badge::from_source(Some(src)), cv.ts);
+            mx += 13.0;
             meta = format!("{src} - {meta}");
         }
         let meta = sysfont::truncate_to_width(&meta, 1.35, tmax - (mx - tx));
