@@ -5,6 +5,7 @@
 //! `state.json`. Everything stays local — there is no network code.
 
 use serde::{Deserialize, Serialize};
+use std::collections::VecDeque;
 use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -33,25 +34,14 @@ pub struct Clip {
 impl Clip {
     /// Single-line preview: first non-empty line, whitespace collapsed.
     pub fn preview(&self) -> String {
-        let line = self
+        let chars = self
             .text
             .lines()
             .find(|l| !l.trim().is_empty())
-            .unwrap_or("");
-        let mut out = String::new();
-        let mut last_space = false;
-        for c in line.trim().chars().take(120) {
-            if c.is_whitespace() {
-                if !last_space {
-                    out.push(' ');
-                }
-                last_space = true;
-            } else {
-                out.push(c);
-                last_space = false;
-            }
-        }
-        out
+            .unwrap_or("")
+            .trim()
+            .chars();
+        collapse_ws(chars, 120)
     }
 
     /// One-line view of the **whole** clip for the panel list: every line is
@@ -60,27 +50,33 @@ impl Clip {
     /// see more of what a clip actually holds. Capped generously; the row
     /// truncates it to the available width.
     pub fn flattened(&self) -> String {
-        let mut out = String::new();
-        let mut last_space = false;
-        let mut n = 0usize;
-        for c in self.text.trim().chars() {
-            if n >= 200 {
-                break;
-            }
-            if c.is_whitespace() {
-                if !last_space {
-                    out.push(' ');
-                    n += 1;
-                }
-                last_space = true;
-            } else {
-                out.push(c);
-                n += 1;
-                last_space = false;
-            }
-        }
-        out
+        collapse_ws(self.text.trim().chars(), 200)
     }
+}
+
+/// Collapses any run of whitespace characters to a single space, stopping
+/// once `cap` output characters have been collected.
+fn collapse_ws(chars: impl Iterator<Item = char>, cap: usize) -> String {
+    let mut out = String::new();
+    let mut last_space = false;
+    let mut n = 0usize;
+    for c in chars {
+        if n >= cap {
+            break;
+        }
+        if c.is_whitespace() {
+            if !last_space {
+                out.push(' ');
+                n += 1;
+            }
+            last_space = true;
+        } else {
+            out.push(c);
+            n += 1;
+            last_space = false;
+        }
+    }
+    out
 }
 
 pub fn now_ts() -> u64 {
@@ -96,9 +92,9 @@ pub struct ClipStore {
     items: Vec<Clip>,
     next_id: u64,
     pub dirty: bool,
-    /// Recently deleted clips, one entry per delete/clear operation, newest
-    /// last. Session-only: lets the panel undo an accidental delete.
-    undo: Vec<Vec<Clip>>,
+    /// Recently deleted clips, one entry per delete/clear operation, oldest
+    /// first. Session-only: lets the panel undo an accidental delete.
+    undo: VecDeque<Vec<Clip>>,
     /// Monotonic mutation counter; bumps whenever the list could look
     /// different, so the panel's cached filtered view knows to recompute.
     version: u64,
@@ -169,7 +165,7 @@ impl ClipStore {
             items,
             next_id,
             dirty: false,
-            undo: Vec::new(),
+            undo: VecDeque::new(),
             version: 0,
         }
     }
@@ -284,15 +280,15 @@ impl ClipStore {
 
     fn push_undo(&mut self, batch: Vec<Clip>) {
         if self.undo.len() >= MAX_UNDO {
-            self.undo.remove(0);
+            self.undo.pop_front();
         }
-        self.undo.push(batch);
+        self.undo.push_back(batch);
     }
 
     /// Restores the most recent delete/clear operation. Returns the id of one
     /// restored clip (for the panel to re-select), or None if nothing to undo.
     pub fn undo_delete(&mut self) -> Option<u64> {
-        let batch = self.undo.pop()?;
+        let batch = self.undo.pop_back()?;
         let first = batch.first().map(|c| c.id);
         for clip in batch {
             // re-insert at the ts-sorted spot (items are newest first)

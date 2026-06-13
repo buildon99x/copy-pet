@@ -258,6 +258,11 @@ impl<'a> Cv<'a> {
                 .stroke_path(p, &paint(c), &stroke, t.post_concat(self.ts), None);
         }
     }
+    /// Fill then stroke the same path — the common outlined-shape pattern.
+    fn filled(&mut self, p: &Option<Path>, fill: (u8, u8, u8, u8), outline: (u8, u8, u8, u8), w: f32, t: Transform) {
+        self.fill_t(p, fill, t);
+        self.stroke_t(p, outline, w, t);
+    }
     /// Text via the system font (tofu-box fallback; see [`crate::sysfont`]).
     fn ui_text(&mut self, s: &str, x: f32, y: f32, px: f32, c: (u8, u8, u8, u8)) {
         sysfont::draw(self.pm, s, x, y, px, c, self.ts);
@@ -575,22 +580,16 @@ fn draw_fish(cv: &mut Cv, f: &FishView) {
         pb.line_to(x + 24.0, y - 9.0);
         pb.quad_to(x + 20.0, y, x + 24.0, y + 9.0);
         pb.close();
-        let tail = pb.finish();
-        cv.fill_t(&tail, dark_c, t);
-        cv.stroke_t(&tail, OUTLINE, 2.4, t);
+        cv.filled(&pb.finish(), dark_c, OUTLINE, 2.4, t);
     }
     // body
-    let body = oval(x, y, 16.0, 10.0);
-    cv.fill_t(&body, body_c, t);
-    cv.stroke_t(&body, OUTLINE, 2.6, t);
+    cv.filled(&oval(x, y, 16.0, 10.0), body_c, OUTLINE, 2.6, t);
     // top fin
     {
         let mut pb = PathBuilder::new();
         pb.move_to(x - 4.0, y - 9.0);
         pb.quad_to(x + 1.0, y - 15.0, x + 7.0, y - 8.5);
-        let fin = pb.finish();
-        cv.fill_t(&fin, dark_c, t);
-        cv.stroke_t(&fin, OUTLINE, 2.2, t);
+        cv.filled(&pb.finish(), dark_c, OUTLINE, 2.2, t);
     }
     // eye
     cv.fill_t(&oval(x - 10.0, y - 2.5, 1.9, 1.9), OUTLINE, t);
@@ -599,8 +598,7 @@ fn draw_fish(cv: &mut Cv, f: &FishView) {
     if let Some(icon) = &f.badge.icon {
         let size = 13.0;
         let chip = round_rect(x - size / 2.0 - 1.5, y - size / 2.0 - 1.5, size + 3.0, size + 3.0, 4.0);
-        cv.fill_t(&chip, (255, 255, 255, 235), t);
-        cv.stroke_t(&chip, fade(OUTLINE, 0.7), 1.6, t);
+        cv.filled(&chip, (255, 255, 255, 235), fade(OUTLINE, 0.7), 1.6, t);
         let k = size / icon.width() as f32;
         let it = t
             .post_concat(cv.ts)
@@ -613,8 +611,7 @@ fn draw_fish(cv: &mut Cv, f: &FishView) {
         cv.pm.draw_pixmap(0, 0, icon.as_ref(), &pp, it, None);
     } else {
         let chip = oval(x + 1.0, y + 0.5, 7.0, 7.0);
-        cv.fill_t(&chip, (255, 255, 255, 235), t);
-        cv.stroke_t(&chip, fade(OUTLINE, 0.7), 1.6, t);
+        cv.filled(&chip, (255, 255, 255, 235), fade(OUTLINE, 0.7), 1.6, t);
         // the letter stays upright inside the round chip while the fish
         // rotates (sysfont rasterizes under scale+translate transforms only)
         let px = 1.6 * f.scale;
@@ -633,18 +630,12 @@ fn draw_accessory(cv: &mut Cv, acc: Accessory, t: Transform) {
     match acc {
         Accessory::None => {}
         Accessory::Scarf => {
-            let band = round_rect(76.0, 168.0, 88.0, 16.0, 8.0);
-            cv.fill_t(&band, (217, 79, 79, 255), t);
-            cv.stroke_t(&band, OUTLINE, 2.5, t);
-            let knot = round_rect(140.0, 180.0, 14.0, 22.0, 6.0);
-            cv.fill_t(&knot, (185, 61, 61, 255), t);
-            cv.stroke_t(&knot, OUTLINE, 2.5, t);
+            cv.filled(&round_rect(76.0, 168.0, 88.0, 16.0, 8.0), (217, 79, 79, 255), OUTLINE, 2.5, t);
+            cv.filled(&round_rect(140.0, 180.0, 14.0, 22.0, 6.0), (185, 61, 61, 255), OUTLINE, 2.5, t);
         }
         Accessory::Glasses => {
             for ex in [92.0f32, 148.0] {
-                let ring = oval(ex, 122.0, 13.0, 13.0);
-                cv.fill_t(&ring, (130, 180, 230, 50), t);
-                cv.stroke_t(&ring, (63, 63, 63, 255), 3.0, t);
+                cv.filled(&oval(ex, 122.0, 13.0, 13.0), (130, 180, 230, 50), (63, 63, 63, 255), 3.0, t);
             }
             let mut pb = PathBuilder::new();
             pb.move_to(105.0, 120.0);
@@ -656,15 +647,9 @@ fn draw_accessory(cv: &mut Cv, acc: Accessory, t: Transform) {
             pb.move_to(64.0, 92.0);
             pb.quad_to(120.0, 30.0, 176.0, 92.0);
             pb.close();
-            let hat = pb.finish();
-            cv.fill_t(&hat, (91, 141, 217, 255), t);
-            cv.stroke_t(&hat, OUTLINE, 3.0, t);
-            let brim = round_rect(62.0, 86.0, 116.0, 13.0, 6.0);
-            cv.fill_t(&brim, (74, 118, 184, 255), t);
-            cv.stroke_t(&brim, OUTLINE, 2.5, t);
-            let pom = oval(120.0, 38.0, 9.0, 9.0);
-            cv.fill_t(&pom, (240, 240, 240, 255), t);
-            cv.stroke_t(&pom, OUTLINE, 2.5, t);
+            cv.filled(&pb.finish(), (91, 141, 217, 255), OUTLINE, 3.0, t);
+            cv.filled(&round_rect(62.0, 86.0, 116.0, 13.0, 6.0), (74, 118, 184, 255), OUTLINE, 2.5, t);
+            cv.filled(&oval(120.0, 38.0, 9.0, 9.0), (240, 240, 240, 255), OUTLINE, 2.5, t);
         }
         Accessory::Headphones => {
             let mut pb = PathBuilder::new();
@@ -672,9 +657,7 @@ fn draw_accessory(cv: &mut Cv, acc: Accessory, t: Transform) {
             pb.quad_to(120.0, 44.0, 178.0, 110.0);
             cv.stroke_t(&pb.finish(), (61, 61, 61, 255), 7.0, t);
             for ex in [62.0f32, 178.0] {
-                let cup = oval(ex, 120.0, 11.0, 15.0);
-                cv.fill_t(&cup, (85, 85, 85, 255), t);
-                cv.stroke_t(&cup, (45, 45, 45, 255), 2.5, t);
+                cv.filled(&oval(ex, 120.0, 11.0, 15.0), (85, 85, 85, 255), (45, 45, 45, 255), 2.5, t);
                 cv.fill_t(&oval(ex, 120.0, 6.0, 9.5), (255, 122, 122, 255), t);
             }
         }
@@ -688,9 +671,7 @@ fn draw_accessory(cv: &mut Cv, acc: Accessory, t: Transform) {
             pb.line_to(144.0, 56.0);
             pb.line_to(148.0, 84.0);
             pb.close();
-            let crown = pb.finish();
-            cv.fill_t(&crown, (242, 201, 76, 255), t);
-            cv.stroke_t(&crown, (180, 140, 30, 255), 3.0, t);
+            cv.filled(&pb.finish(), (242, 201, 76, 255), (180, 140, 30, 255), 3.0, t);
             cv.fill_t(&oval(120.0, 76.0, 4.0, 4.0), (217, 79, 79, 255), t);
             cv.fill_t(&oval(102.0, 78.0, 3.0, 3.0), (79, 130, 217, 255), t);
             cv.fill_t(&oval(138.0, 78.0, 3.0, 3.0), (79, 130, 217, 255), t);
@@ -701,12 +682,8 @@ fn draw_accessory(cv: &mut Cv, acc: Accessory, t: Transform) {
             pb.line_to(120.0, 14.0);
             pb.line_to(170.0, 88.0);
             pb.close();
-            let cone = pb.finish();
-            cv.fill_t(&cone, (107, 91, 217, 255), t);
-            cv.stroke_t(&cone, OUTLINE, 3.0, t);
-            let brim = round_rect(56.0, 84.0, 128.0, 12.0, 6.0);
-            cv.fill_t(&brim, (88, 73, 184, 255), t);
-            cv.stroke_t(&brim, OUTLINE, 2.5, t);
+            cv.filled(&pb.finish(), (107, 91, 217, 255), OUTLINE, 3.0, t);
+            cv.filled(&round_rect(56.0, 84.0, 128.0, 12.0, 6.0), (88, 73, 184, 255), OUTLINE, 2.5, t);
             star_at(cv, 120.0, 56.0, 9.0, 0.0, (250, 220, 90, 255), t);
             star_at(cv, 102.0, 74.0, 4.5, 0.6, (250, 220, 90, 220), t);
             star_at(cv, 140.0, 70.0, 4.5, 1.2, (250, 220, 90, 220), t);

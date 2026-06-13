@@ -379,8 +379,7 @@ impl Panel {
     /// (delete, clear, undo) or the card was resized.
     pub fn refresh(&mut self, store: &ClipStore) {
         let total = self.visible(store).len();
-        self.clamp_scroll(total);
-        self.keep_sel_visible();
+        self.clamp_all(total);
     }
 
     /// Moves the keyboard selection to the clip with `id` (after a pin
@@ -390,9 +389,7 @@ impl Panel {
         if let Some(i) = visible.iter().position(|c| c.id == id) {
             self.sel = i;
         }
-        let total = visible.len();
-        self.keep_sel_visible();
-        self.clamp_scroll(total);
+        self.clamp_all(visible.len());
     }
 
     /// The clip list the panel currently shows (query + source filter).
@@ -441,18 +438,21 @@ impl Panel {
     }
 
     fn clamp_scroll(&mut self, total: usize) {
-        let max = total.saturating_sub(self.visible_rows());
-        self.scroll = self.scroll.min(max);
+        let rows = self.visible_rows();
+        self.scroll = self.scroll.min(total.saturating_sub(rows));
         self.sel = self.sel.min(total.saturating_sub(1));
     }
 
-    fn keep_sel_visible(&mut self) {
-        let rows = self.visible_rows();
+    /// Clamps both selection and scroll in one pass (one layout call).
+    fn clamp_all(&mut self, total: usize) {
+        let rows = self.layout().rows;
+        self.sel = self.sel.min(total.saturating_sub(1));
         if self.sel < self.scroll {
             self.scroll = self.sel;
         } else if self.sel >= self.scroll + rows {
             self.scroll = self.sel + 1 - rows;
         }
+        self.scroll = self.scroll.min(total.saturating_sub(rows));
     }
 
     /// Row index (into the filtered list) under the y coordinate, if any.
@@ -552,29 +552,23 @@ impl Panel {
         match key {
             NavKey::Up => {
                 self.sel = self.sel.saturating_sub(1);
-                self.keep_sel_visible();
             }
             NavKey::Down => {
                 if self.sel + 1 < total {
                     self.sel += 1;
                 }
-                self.keep_sel_visible();
             }
             NavKey::PageUp => {
                 self.sel = self.sel.saturating_sub(rows);
-                self.keep_sel_visible();
             }
             NavKey::PageDown => {
                 self.sel = (self.sel + rows).min(total.saturating_sub(1));
-                self.keep_sel_visible();
             }
             NavKey::Home => {
                 self.sel = 0;
-                self.keep_sel_visible();
             }
             NavKey::End => {
                 self.sel = total.saturating_sub(1);
-                self.keep_sel_visible();
             }
             NavKey::Enter => {
                 let visible = self.visible(store);
@@ -628,7 +622,7 @@ impl Panel {
                 self.sel = 0;
             }
         }
-        self.clamp_scroll(total);
+        self.clamp_all(total);
         None
     }
 }
