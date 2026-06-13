@@ -338,4 +338,37 @@ fn main() {
         render::draw_expanded_panel(&mut pm, &view, s);
         save(&pm, &dir, name);
     }
+
+    // frame_15: the expanded window in the LIGHT color tone (settings → Theme).
+    {
+        clipcat::tokens::set_theme(clipcat::tokens::Theme::Light);
+        let store = demo_store();
+        let mut panel = Panel::default();
+        panel.toggle();
+        panel.toggle_expanded();
+        panel.sel = 1;
+        let lt = panel.layout();
+        let s = 1.5f32;
+        let mut pm = Pixmap::new((lt.canvas_w * s) as u32, (lt.canvas_h * s) as u32).unwrap();
+        let bg = clipcat::tokens::surface_window();
+        pm.fill(tiny_skia::Color::from_rgba8(bg.0, bg.1, bg.2, 255));
+        let view = render::ExpandedView {
+            panel: &panel,
+            store: &store,
+            lang: Lang::En,
+            version: "v2.1.0",
+            capture: true,
+            caret: true,
+            level: 24,
+            xp_into: 2_450,
+            xp_need: 3_600,
+            keys: 12_430,
+            clicks: 3_210,
+            copies: 1_248,
+            autoclose: true,
+        };
+        render::draw_expanded_panel(&mut pm, &view, s);
+        save(&pm, &dir, "frame_15_expanded_light");
+        clipcat::tokens::set_theme(clipcat::tokens::Theme::Dark);
+    }
 }

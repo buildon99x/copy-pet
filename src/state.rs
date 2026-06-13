@@ -7,6 +7,7 @@ use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
 use crate::i18n::Lang;
+use crate::tokens;
 
 #[derive(Serialize, Deserialize, Clone)]
 #[serde(default)]
@@ -23,6 +24,9 @@ pub struct Persist {
     pub locked: bool,
     /// "en" / "ko"; empty means "not chosen yet" -> detected from the OS.
     pub lang: String,
+    /// Color tone: "dark" (default) or "light"; unknown values fall back to
+    /// dark on load (see [`crate::tokens::Theme`]).
+    pub theme: String,
     /// When false, copy events are ignored (privacy pause).
     pub clip_capture: bool,
     /// Global panel hotkey spec, e.g. "win+shift+v" (see [`crate::hotkey`]).
@@ -65,6 +69,7 @@ impl Default for Persist {
             bubble_pinned: false,
             locked: false,
             lang: String::new(),
+            theme: tokens::Theme::Dark.code().to_string(),
             clip_capture: true,
             hotkey: crate::hotkey::DEFAULT.to_string(),
             auto_update: true,
@@ -190,6 +195,14 @@ impl Persist {
 
     pub fn set_lang(&mut self, lang: Lang) {
         self.lang = lang.code().to_string();
+    }
+
+    pub fn theme(&self) -> tokens::Theme {
+        tokens::Theme::from_code(&self.theme)
+    }
+
+    pub fn set_theme(&mut self, theme: tokens::Theme) {
+        self.theme = theme.code().to_string();
     }
 
     /// Resets daily counters if the local date rolled over.

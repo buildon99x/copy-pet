@@ -85,3 +85,124 @@ pub const TYPE_HERO: f32 = 28.0;
 pub const fn with_alpha(c: Rgba, a: u8) -> Rgba {
     (c.0, c.1, c.2, a)
 }
+
+// ---- runtime light/dark theme ----------------------------------------------
+//
+// The surface/border/text tokens are the only ones that flip between a dark
+// and a light tone; accents and the mascot keep their hue on both (gold/green/
+// red/blue/purple read on either background). The renderer reads these via the
+// accessor fns below instead of the raw consts, so a single global switch
+// re-tones the whole UI. The switch is a plain atomic — no OS, no files, no
+// network — set once per frame from the user's persisted choice
+// (`Persist::theme`). The dark `Palette` is built from the consts above so the
+// premium dark tone stays the single source of truth.
+
+use std::sync::atomic::{AtomicU8, Ordering};
+
+/// The two color tones the user can pick (settings menu).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Theme {
+    Dark,
+    Light,
+}
+
+impl Theme {
+    /// Stable code persisted in `state.json` (parity with `Lang::code`).
+    pub fn code(self) -> &'static str {
+        match self {
+            Theme::Dark => "dark",
+            Theme::Light => "light",
+        }
+    }
+    /// Parse a persisted code; unknown/empty falls back to the default (dark).
+    pub fn from_code(s: &str) -> Theme {
+        match s {
+            "light" => Theme::Light,
+            _ => Theme::Dark,
+        }
+    }
+}
+
+/// The themed half of the palette — every token whose tone flips with the
+/// theme. Accents/mascot/radii/spacing stay as the consts above.
+pub struct Palette {
+    pub surface_window: Rgba,
+    pub surface_panel: Rgba,
+    pub surface_card: Rgba,
+    pub surface_control: Rgba,
+    pub surface_control_hover: Rgba,
+    pub surface_control_active: Rgba,
+    pub border_subtle: Rgba,
+    pub border_strong: Rgba,
+    pub text_primary: Rgba,
+    pub text_secondary: Rgba,
+    pub text_muted: Rgba,
+}
+
+/// Dark-premium tone (default) — assembled from the source-of-truth consts.
+pub const DARK: Palette = Palette {
+    surface_window: SURFACE_WINDOW,
+    surface_panel: SURFACE_PANEL,
+    surface_card: SURFACE_CARD,
+    surface_control: SURFACE_CONTROL,
+    surface_control_hover: SURFACE_CONTROL_HOVER,
+    surface_control_active: SURFACE_CONTROL_ACTIVE,
+    border_subtle: BORDER_SUBTLE,
+    border_strong: BORDER_STRONG,
+    text_primary: TEXT_PRIMARY,
+    text_secondary: TEXT_SECONDARY,
+    text_muted: TEXT_MUTED,
+};
+
+/// Light tone: soft off-white page, white elevated cards, near-black text and
+/// black-tinted hairline borders (the dark theme's white borders inverted).
+pub const LIGHT: Palette = Palette {
+    surface_window: (0xE9, 0xEC, 0xF1, 0xFF),
+    surface_panel: (0xFF, 0xFF, 0xFF, 0xFF),
+    surface_card: (0xF1, 0xF3, 0xF7, 0xFF),
+    surface_control: (0xEC, 0xEF, 0xF3, 0xFF),
+    surface_control_hover: (0xE2, 0xE6, 0xED, 0xFF),
+    surface_control_active: (0xD4, 0xDB, 0xE5, 0xFF),
+    border_subtle: (0x10, 0x16, 0x20, 0x18), // black @ ~9%
+    border_strong: (0x10, 0x16, 0x20, 0x2B), // black @ ~17%
+    text_primary: (0x16, 0x1B, 0x24, 0xFF),
+    text_secondary: (0x44, 0x4F, 0x5E, 0xFF),
+    text_muted: (0x83, 0x8D, 0x9C, 0xFF),
+};
+
+static THEME: AtomicU8 = AtomicU8::new(0); // 0 = dark, 1 = light
+
+/// Select the active tone (called once per frame from the persisted choice).
+pub fn set_theme(t: Theme) {
+    THEME.store(matches!(t, Theme::Light) as u8, Ordering::Relaxed);
+}
+
+/// The currently selected tone.
+pub fn theme() -> Theme {
+    if THEME.load(Ordering::Relaxed) == 1 {
+        Theme::Light
+    } else {
+        Theme::Dark
+    }
+}
+
+/// The active palette.
+pub fn palette() -> &'static Palette {
+    match theme() {
+        Theme::Dark => &DARK,
+        Theme::Light => &LIGHT,
+    }
+}
+
+// Per-token accessors the renderer uses in place of the raw themed consts.
+pub fn surface_window() -> Rgba { palette().surface_window }
+pub fn surface_panel() -> Rgba { palette().surface_panel }
+pub fn surface_card() -> Rgba { palette().surface_card }
+pub fn surface_control() -> Rgba { palette().surface_control }
+pub fn surface_control_hover() -> Rgba { palette().surface_control_hover }
+pub fn surface_control_active() -> Rgba { palette().surface_control_active }
+pub fn border_subtle() -> Rgba { palette().border_subtle }
+pub fn border_strong() -> Rgba { palette().border_strong }
+pub fn text_primary() -> Rgba { palette().text_primary }
+pub fn text_secondary() -> Rgba { palette().text_secondary }
+pub fn text_muted() -> Rgba { palette().text_muted }

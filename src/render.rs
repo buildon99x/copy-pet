@@ -32,8 +32,8 @@ const TEXT: (u8, u8, u8, u8) = (84, 72, 58, 255);
 const FISH_BLUE: (u8, u8, u8) = (108, 160, 220);
 // panel surfaces (dark-premium tokens): selected row is a raised card with a
 // gold border (drawn separately); hover is a lifted control surface.
-const ROW_SEL: (u8, u8, u8, u8) = tokens::SURFACE_CARD;
-const ROW_HOVER: (u8, u8, u8, u8) = tokens::SURFACE_CONTROL_HOVER;
+fn row_sel() -> (u8, u8, u8, u8) { tokens::surface_card() }
+fn row_hover() -> (u8, u8, u8, u8) { tokens::surface_control_hover() }
 const PIN_GOLD: (u8, u8, u8, u8) = tokens::ACCENT_GOLD;
 
 #[derive(Clone, Copy, PartialEq)]
@@ -322,7 +322,7 @@ pub fn source_badge(pm: &mut Pixmap, cx: f32, cy: f32, size: f32, badge: &Badge,
         let px = size * 0.1;
         let label = badge.letter.to_string();
         let lw = sysfont::measure(&label, px);
-        sysfont::draw(pm, &label, cx - lw / 2.0, cy - 3.5 * px, px, tokens::TEXT_PRIMARY, ts);
+        sysfont::draw(pm, &label, cx - lw / 2.0, cy - 3.5 * px, px, tokens::text_primary(), ts);
     }
 }
 
@@ -388,7 +388,7 @@ fn lerp(a: f32, b: f32, t: f32) -> f32 {
 /// Dark-premium background colour for the portable backend's opaque "card"
 /// (tokens surface.window) — the cat floats on a dark surface like the
 /// references, since softbuffer can't carry the desktop through (ADR-0003).
-pub const CARD_BG: (u8, u8, u8, u8) = tokens::SURFACE_WINDOW;
+pub fn card_bg() -> (u8, u8, u8, u8) { tokens::surface_window() }
 
 /// Render onto a fully transparent canvas — the native layered-window backend,
 /// where transparent pixels let the desktop show through and are click-through.
@@ -400,9 +400,8 @@ pub fn render(pm: &mut Pixmap, sc: &Scene, scale: f32) {
 /// Render onto an opaque rounded "card" — used by the portable backend, whose
 /// pixel buffer (softbuffer) cannot carry per-pixel alpha to the compositor.
 pub fn render_card(pm: &mut Pixmap, sc: &Scene, scale: f32) {
-    pm.fill(tiny_skia::Color::from_rgba8(
-        CARD_BG.0, CARD_BG.1, CARD_BG.2, CARD_BG.3,
-    ));
+    let cb = card_bg();
+    pm.fill(tiny_skia::Color::from_rgba8(cb.0, cb.1, cb.2, cb.3));
     let w = pm.width() as f32;
     let h = pm.height() as f32;
     {
@@ -412,7 +411,7 @@ pub fn render_card(pm: &mut Pixmap, sc: &Scene, scale: f32) {
         };
         // subtle inset frame so the window reads as a tidy little widget
         let frame = round_rect(3.0, 3.0, w - 6.0, h - 6.0, 14.0);
-        cv.stroke(&frame, tokens::BORDER_SUBTLE, 1.5);
+        cv.stroke(&frame, tokens::border_subtle(), 1.5);
     }
     draw_scene(pm, sc, scale);
 }
@@ -512,13 +511,13 @@ fn draw_scene(pm: &mut Pixmap, sc: &Scene, scale: f32) {
     cv.fill(&round_rect(16.0, 222.0, 208.0, 20.0, 6.0), DESK_FRONT);
     let top = round_rect(12.0, 212.0, 216.0, 14.0, 7.0);
     cv.fill(&top, DESK_TOP);
-    cv.stroke(&top, tokens::BORDER_SUBTLE, 1.5);
+    cv.stroke(&top, tokens::border_subtle(), 1.5);
 
     // keyboard
     {
         let base = round_rect(74.0, 200.0, 92.0, 18.0, 5.0);
         cv.fill(&base, KEY_BASE);
-        cv.stroke(&base, tokens::BORDER_STRONG, 1.5);
+        cv.stroke(&base, tokens::border_strong(), 1.5);
         for row in 0..2 {
             let y = 203.5 + row as f32 * 7.0;
             let n = 7 - row; // 7 keys then 6
@@ -922,10 +921,10 @@ fn fmt_thousands(n: u64) -> String {
 
 fn draw_bubble(cv: &mut Cv, b: &BubbleData, alpha: f32, lang: Lang) {
     let a = alpha;
-    let glass = fade(tokens::SURFACE_PANEL, a);
+    let glass = fade(tokens::surface_panel(), a);
     let rect = round_rect(14.0, 2.0, 212.0, 84.0, 14.0);
     cv.fill(&rect, glass);
-    cv.stroke(&rect, fade(tokens::BORDER_STRONG, a), 1.5);
+    cv.stroke(&rect, fade(tokens::border_strong(), a), 1.5);
     // tail pointing to the cat
     {
         let mut pb = PathBuilder::new();
@@ -935,22 +934,22 @@ fn draw_bubble(cv: &mut Cv, b: &BubbleData, alpha: f32, lang: Lang) {
         pb.close();
         let tail = pb.finish();
         cv.fill(&tail, glass);
-        cv.stroke(&tail, fade(tokens::BORDER_STRONG, a), 1.5);
+        cv.stroke(&tail, fade(tokens::border_strong(), a), 1.5);
         // cover the seam
         if let Some(r) = Rect::from_xywh(113.5, 82.5, 13.0, 4.0) {
             cv.pm.fill_rect(r, &paint(glass), cv.ts, None);
         }
     }
 
-    let tc = fade(tokens::TEXT_PRIMARY, a);
+    let tc = fade(tokens::text_primary(), a);
     // row 1: level + xp bar (gold, the design's progression accent)
     cv.ui_text(&format!("{} {}", t(lang, Msg::LevelShort), b.level), 24.0, 8.0, 2.0, tc);
     let bar_bg = round_rect(82.0, 8.5, 134.0, 12.0, 6.0);
-    cv.fill(&bar_bg, fade(tokens::SURFACE_CONTROL, a));
+    cv.fill(&bar_bg, fade(tokens::surface_control(), a));
     let w = (134.0 * b.pct.clamp(0.0, 1.0)).max(10.0);
     let bar_fg = round_rect(82.0, 8.5, w, 12.0, 6.0);
     cv.fill(&bar_fg, fade(tokens::ACCENT_GOLD, a));
-    cv.stroke(&bar_bg, fade(tokens::BORDER_SUBTLE, a), 1.5);
+    cv.stroke(&bar_bg, fade(tokens::border_subtle(), a), 1.5);
 
     // rows 2-5: today's keys / clicks / copies / active time
     let px = 1.7;
@@ -965,7 +964,7 @@ fn draw_bubble(cv: &mut Cv, b: &BubbleData, alpha: f32, lang: Lang) {
     ];
     for (i, (label, value)) in rows.iter().enumerate() {
         let y = 27.0 + i as f32 * 14.0;
-        cv.ui_text(t(lang, *label), 24.0, y, px, fade(tokens::TEXT_MUTED, a));
+        cv.ui_text(t(lang, *label), 24.0, y, px, fade(tokens::text_muted(), a));
         cv.ui_text(value, 96.0, y, px, tc);
     }
 }
@@ -993,9 +992,9 @@ pub fn draw_panel(pm: &mut Pixmap, v: &PanelView, scale: f32) {
     let lt = v.panel.layout();
 
     // dark-premium text roles, reused throughout the panel
-    let txt = tokens::TEXT_PRIMARY;
-    let txt2 = tokens::TEXT_SECONDARY;
-    let muted = tokens::TEXT_MUTED;
+    let txt = tokens::text_primary();
+    let txt2 = tokens::text_secondary();
+    let muted = tokens::text_muted();
 
     // soft drop shadow + dark glass card
     cv.fill(
@@ -1003,8 +1002,8 @@ pub fn draw_panel(pm: &mut Pixmap, v: &PanelView, scale: f32) {
         (5, 7, 12, 70),
     );
     let card = round_rect(lt.card_x, lt.card_y, lt.card_w, lt.card_h, 18.0);
-    cv.fill(&card, tokens::SURFACE_PANEL);
-    cv.stroke(&card, tokens::BORDER_STRONG, 1.5);
+    cv.fill(&card, tokens::surface_panel());
+    cv.stroke(&card, tokens::border_strong(), 1.5);
 
     // header: fish mark + title, vertically centered on the button row
     // (the header strip doubles as the card's move-drag handle)
@@ -1049,8 +1048,8 @@ pub fn draw_panel(pm: &mut Pixmap, v: &PanelView, scale: f32) {
     // search box
     let (sx, sy, sw, sh) = (lt.search_x, lt.search_y, lt.search_w, lt.search_h);
     let sb = round_rect(sx, sy, sw, sh, 9.0);
-    cv.fill(&sb, tokens::SURFACE_CONTROL);
-    cv.stroke(&sb, tokens::BORDER_SUBTLE, 1.5);
+    cv.fill(&sb, tokens::surface_control());
+    cv.stroke(&sb, tokens::border_subtle(), 1.5);
     // magnifier
     let scy = sy + sh / 2.0;
     cv.stroke(&oval(sx + 10.0, scy - 1.5, 3.6, 3.6), muted, 1.8);
@@ -1062,8 +1061,8 @@ pub fn draw_panel(pm: &mut Pixmap, v: &PanelView, scale: f32) {
         let label = sysfont::truncate_to_width(src, 1.4, 90.0);
         let cw = sysfont::measure(&label, 1.4) + 18.0;
         let chip = round_rect(qx - 2.0, sy + 3.0, cw, sh - 6.0, 7.0);
-        cv.fill(&chip, tokens::SURFACE_CARD);
-        cv.stroke(&chip, tokens::BORDER_STRONG, 1.0);
+        cv.fill(&chip, tokens::surface_card());
+        cv.stroke(&chip, tokens::border_strong(), 1.0);
         cv.fill(&oval(qx + 4.5, scy, 2.6, 2.6), (dot.0, dot.1, dot.2, 255));
         cv.ui_text(&label, qx + 10.0, sy + 5.0, 1.4, txt2);
         qx += cw + 4.0;
@@ -1120,9 +1119,9 @@ pub fn draw_panel(pm: &mut Pixmap, v: &PanelView, scale: f32) {
         let ry = lt.rows_y + i as f32 * pl::ROW_H;
 
         let row_bg = match (idx == v.panel.sel, hover_row == Some(idx)) {
-            (true, true) => Some(tokens::SURFACE_CONTROL_ACTIVE), // selected-hover
-            (true, false) => Some(ROW_SEL),
-            (false, true) => Some(ROW_HOVER),
+            (true, true) => Some(tokens::surface_control_active()), // selected-hover
+            (true, false) => Some(row_sel()),
+            (false, true) => Some(row_hover()),
             (false, false) => None,
         };
         if let Some(bg) = row_bg {
@@ -1174,7 +1173,7 @@ pub fn draw_panel(pm: &mut Pixmap, v: &PanelView, scale: f32) {
             cv.fill(&oval(qx + 6.5, ry + pl::ROW_H / 2.0, 7.0, 7.0), tokens::ACCENT_PURPLE);
             let d = char::from(b'0' + idx as u8).to_string();
             let dw = sysfont::measure(&d, 1.3);
-            cv.ui_text(&d, qx + 6.5 - dw / 2.0, ry + pl::ROW_H / 2.0 - 4.6, 1.3, tokens::TEXT_PRIMARY);
+            cv.ui_text(&d, qx + 6.5 - dw / 2.0, ry + pl::ROW_H / 2.0 - 4.6, 1.3, tokens::text_primary());
         }
 
         // delete x (red halo while hovered, so a destructive click is obvious)
@@ -1195,7 +1194,7 @@ pub fn draw_panel(pm: &mut Pixmap, v: &PanelView, scale: f32) {
         if i + 1 < lt.rows {
             cv.line(
                 &[(lt.row_x + 4.0, ry + pl::ROW_H), (lt.row_x + lt.row_w - 4.0, ry + pl::ROW_H)],
-                tokens::BORDER_SUBTLE,
+                tokens::border_subtle(),
                 1.0,
             );
         }
@@ -1205,7 +1204,7 @@ pub fn draw_panel(pm: &mut Pixmap, v: &PanelView, scale: f32) {
     if total > lt.rows {
         let track_h = pl::ROW_H * lt.rows as f32 - 4.0;
         let tx = lt.card_x + lt.card_w - 7.0;
-        cv.fill(&round_rect(tx, lt.rows_y + 2.0, 3.5, track_h, 1.7), tokens::BORDER_SUBTLE);
+        cv.fill(&round_rect(tx, lt.rows_y + 2.0, 3.5, track_h, 1.7), tokens::border_subtle());
         let th = (track_h * lt.rows as f32 / total as f32).max(16.0);
         let ty = lt.rows_y + 2.0
             + (track_h - th) * v.panel.scroll as f32 / (total - lt.rows) as f32;
@@ -1215,7 +1214,7 @@ pub fn draw_panel(pm: &mut Pixmap, v: &PanelView, scale: f32) {
     // footer: count + hotkey hint, then a keyboard-shortcut help line
     cv.line(
         &[(lt.row_x, lt.footer_y - 1.0), (lt.row_x + lt.row_w, lt.footer_y - 1.0)],
-        tokens::BORDER_SUBTLE,
+        tokens::border_subtle(),
         1.0,
     );
     let count = i18n::clip_count(lang, v.store.len(), v.store.pinned_count());
@@ -1269,9 +1268,9 @@ fn draw_btn(cv: &mut Cv, bx: f32, by: f32, icon: BtnIcon) {
         cv.stroke(&bg, tokens::ACCENT_BLUE, 1.5);
         icon_c = tokens::ACCENT_BLUE;
     } else {
-        cv.fill(&bg, tokens::SURFACE_CONTROL);
-        cv.stroke(&bg, tokens::BORDER_SUBTLE, 1.5);
-        icon_c = tokens::TEXT_SECONDARY;
+        cv.fill(&bg, tokens::surface_control());
+        cv.stroke(&bg, tokens::border_subtle(), 1.5);
+        icon_c = tokens::text_secondary();
     }
     let (cx, cy) = (bx + b / 2.0, by + b / 2.0);
     match icon {
@@ -1363,8 +1362,8 @@ pub fn draw_expanded_panel(pm: &mut Pixmap, v: &ExpandedView, scale: f32) {
 
     // shadow + dark glass card
     cv.fill(&round_rect(cx - 2.0, cy + 3.0, cw + 4.0, ch + 4.0, 22.0), (5, 7, 12, 80));
-    cv.fill(&round_rect(cx, cy, cw, ch, 20.0), tokens::SURFACE_PANEL);
-    cv.stroke(&round_rect(cx, cy, cw, ch, 20.0), tokens::BORDER_STRONG, 1.5);
+    cv.fill(&round_rect(cx, cy, cw, ch, 20.0), tokens::surface_panel());
+    cv.stroke(&round_rect(cx, cy, cw, ch, 20.0), tokens::border_strong(), 1.5);
 
     draw_exp_sidebar(&mut cv, v, &el);
     draw_exp_list(&mut cv, v, &el);
@@ -1372,21 +1371,21 @@ pub fn draw_expanded_panel(pm: &mut Pixmap, v: &ExpandedView, scale: f32) {
 
     // collapse button (top-right): inward chevrons
     let (bx, by, bw, bh) = el.collapse;
-    fill_round_rect(cv.pm, (bx, by, bw, bh), 6.0, tokens::SURFACE_CONTROL, cv.ts);
-    stroke_round_rect(cv.pm, (bx, by, bw, bh), 6.0, tokens::BORDER_SUBTLE, 1.5, cv.ts);
+    fill_round_rect(cv.pm, (bx, by, bw, bh), 6.0, tokens::surface_control(), cv.ts);
+    stroke_round_rect(cv.pm, (bx, by, bw, bh), 6.0, tokens::border_subtle(), 1.5, cv.ts);
     let (mx, my) = (bx + bw / 2.0, by + bh / 2.0);
-    cv.line(&[(mx - 4.5, my - 4.0), (mx - 1.0, my), (mx - 4.5, my + 4.0)], tokens::TEXT_SECONDARY, 1.7);
-    cv.line(&[(mx + 4.5, my - 4.0), (mx + 1.0, my), (mx + 4.5, my + 4.0)], tokens::TEXT_SECONDARY, 1.7);
+    cv.line(&[(mx - 4.5, my - 4.0), (mx - 1.0, my), (mx - 4.5, my + 4.0)], tokens::text_secondary(), 1.7);
+    cv.line(&[(mx + 4.5, my - 4.0), (mx + 1.0, my), (mx + 4.5, my + 4.0)], tokens::text_secondary(), 1.7);
     let _ = v.caret;
 }
 
 fn draw_exp_sidebar(cv: &mut Cv, v: &ExpandedView, el: &pl::ExpandedLayout) {
     let lang = v.lang;
-    let (txt, txt2, muted) = (tokens::TEXT_PRIMARY, tokens::TEXT_SECONDARY, tokens::TEXT_MUTED);
+    let (txt, txt2, muted) = (tokens::text_primary(), tokens::text_secondary(), tokens::text_muted());
     let (sx, sy, sw, sh) = el.sidebar;
-    cv.fill(&round_rect(sx, sy, sw, sh, 18.0), tokens::SURFACE_WINDOW);
-    cv.fill(&round_rect(sx + sw - 18.0, sy, 18.0, sh, 0.0), tokens::SURFACE_WINDOW);
-    cv.line(&[(sx + sw, sy + 6.0), (sx + sw, sy + sh - 6.0)], tokens::BORDER_SUBTLE, 1.0);
+    cv.fill(&round_rect(sx, sy, sw, sh, 18.0), tokens::surface_window());
+    cv.fill(&round_rect(sx + sw - 18.0, sy, 18.0, sh, 0.0), tokens::surface_window());
+    cv.line(&[(sx + sw, sy + 6.0), (sx + sw, sy + sh - 6.0)], tokens::border_subtle(), 1.0);
 
     // logo row: gold fish mark + ClipCat + version
     let (lx, ly) = (sx + 16.0, sy + 18.0);
@@ -1405,7 +1404,7 @@ fn draw_exp_sidebar(cv: &mut Cv, v: &ExpandedView, el: &pl::ExpandedLayout) {
 
     // avatar card: mini cat on the left, level ring on the right
     let av = (sx + 14.0, sy + 34.0, sw - 28.0, 60.0);
-    fill_round_rect(cv.pm, av, 14.0, tokens::SURFACE_CARD, cv.ts);
+    fill_round_rect(cv.pm, av, 14.0, tokens::surface_card(), cv.ts);
     mini_cat(cv, av.0 + 34.0, av.1 + 30.0);
     let ring_cx = av.0 + av.2 - 26.0;
     let ring_cy = av.1 + 30.0;
@@ -1419,7 +1418,7 @@ fn draw_exp_sidebar(cv: &mut Cv, v: &ExpandedView, el: &pl::ExpandedLayout) {
     let xpline = format!("{} / {} XP", fmt_thousands(v.xp_into), fmt_thousands(v.xp_need));
     cv.ui_text(&xpline, sx + 16.0, sy + 100.0, 1.3, txt2);
     let xpb = (sx + 16.0, sy + 116.0, sw - 32.0, 7.0);
-    fill_round_rect(cv.pm, xpb, 3.5, tokens::SURFACE_CONTROL, cv.ts);
+    fill_round_rect(cv.pm, xpb, 3.5, tokens::surface_control(), cv.ts);
     fill_round_rect(cv.pm, (xpb.0, xpb.1, (xpb.2 * pct.clamp(0.0, 1.0)).max(4.0), xpb.3), 3.5, tokens::ACCENT_GOLD, cv.ts);
 
     // three stat cards (keys / clicks / copies) with colored icons
@@ -1433,7 +1432,7 @@ fn draw_exp_sidebar(cv: &mut Cv, v: &ExpandedView, el: &pl::ExpandedLayout) {
     for (i, (value, label, color)) in stats.iter().enumerate() {
         let bx = sx + 16.0 + i as f32 * (cw3 + gap);
         let by = sy + 132.0;
-        fill_round_rect(cv.pm, (bx, by, cw3, 50.0), 10.0, tokens::SURFACE_CARD, cv.ts);
+        fill_round_rect(cv.pm, (bx, by, cw3, 50.0), 10.0, tokens::surface_card(), cv.ts);
         stat_icon(cv, *label, bx + cw3 / 2.0, by + 13.0, *color);
         let vwi = sysfont::measure(value, 1.4);
         cv.ui_text_b(value, bx + (cw3 - vwi) / 2.0, by + 23.0, 1.4, txt);
@@ -1462,7 +1461,7 @@ fn draw_exp_sidebar(cv: &mut Cv, v: &ExpandedView, el: &pl::ExpandedLayout) {
             let s = n.to_string();
             let bw = sysfont::measure(&s, 1.2) + 12.0;
             let chip = (sx + sw - 16.0 - bw, y + (el.nav_h - 4.0) / 2.0 - 7.0, bw, 14.0);
-            let cc = if selected { fade(tokens::ACCENT_GOLD, 0.22) } else { tokens::SURFACE_CONTROL };
+            let cc = if selected { fade(tokens::ACCENT_GOLD, 0.22) } else { tokens::surface_control() };
             fill_round_rect(cv.pm, chip, 7.0, cc, cv.ts);
             cv.ui_text(&s, chip.0 + 6.0, chip.1 + 1.0, 1.2, if selected { tokens::ACCENT_GOLD } else { muted });
         }
@@ -1470,14 +1469,14 @@ fn draw_exp_sidebar(cv: &mut Cv, v: &ExpandedView, el: &pl::ExpandedLayout) {
 
     // auto-close panel toggle card
     let ac = (sx + 14.0, sy + sh - 104.0, sw - 28.0, 36.0);
-    fill_round_rect(cv.pm, ac, 10.0, tokens::SURFACE_CARD, cv.ts);
+    fill_round_rect(cv.pm, ac, 10.0, tokens::surface_card(), cv.ts);
     cv.ui_text(t(lang, Msg::MenuAutoClose), ac.0 + 12.0, ac.1 + 8.0, 1.3, txt);
     cv.ui_text(t(lang, Msg::ExpAfterCopy), ac.0 + 12.0, ac.1 + 22.0, 1.05, muted);
     toggle_switch(cv, el.autoclose_toggle, v.autoclose);
 
     // capture status card + pause/resume button
     let cc = (sx + 14.0, sy + sh - 60.0, sw - 28.0, 36.0);
-    fill_round_rect(cv.pm, cc, 10.0, tokens::SURFACE_CARD, cv.ts);
+    fill_round_rect(cv.pm, cc, 10.0, tokens::surface_card(), cv.ts);
     let (dot, msg) = if v.capture {
         (tokens::ACCENT_GREEN, Msg::CaptureRunning)
     } else {
@@ -1487,7 +1486,7 @@ fn draw_exp_sidebar(cv: &mut Cv, v: &ExpandedView, el: &pl::ExpandedLayout) {
     cv.ui_text(t(lang, Msg::MenuCapture), cc.0 + 24.0, cc.1 + 8.0, 1.3, txt);
     cv.ui_text(t(lang, msg), cc.0 + 24.0, cc.1 + 22.0, 1.05, if v.capture { tokens::ACCENT_GREEN } else { tokens::ACCENT_RED });
     let cb = el.capture_btn;
-    fill_round_rect(cv.pm, cb, 7.0, tokens::SURFACE_CONTROL, cv.ts);
+    fill_round_rect(cv.pm, cb, 7.0, tokens::surface_control(), cv.ts);
     let (bcx, bcy) = (cb.0 + cb.2 / 2.0, cb.1 + cb.3 / 2.0);
     if v.capture {
         cv.fill(&round_rect(bcx - 3.5, bcy - 4.0, 2.6, 8.0, 1.0), txt2);
@@ -1507,15 +1506,15 @@ fn draw_exp_sidebar(cv: &mut Cv, v: &ExpandedView, el: &pl::ExpandedLayout) {
 
 fn draw_exp_list(cv: &mut Cv, v: &ExpandedView, el: &pl::ExpandedLayout) {
     let lang = v.lang;
-    let (txt, txt2, muted) = (tokens::TEXT_PRIMARY, tokens::TEXT_SECONDARY, tokens::TEXT_MUTED);
+    let (txt, txt2, muted) = (tokens::text_primary(), tokens::text_secondary(), tokens::text_muted());
     let rows = v.panel.expanded_visible(v.store);
     let (lxc, lyc, lwc, _) = el.list;
     let now = crate::clipboard::now_ts();
 
     // toolbar: source-filter chip + clear-unpinned + clip count
     let tf = el.toolbar_filter;
-    fill_round_rect(cv.pm, tf, 8.0, tokens::SURFACE_CONTROL, cv.ts);
-    stroke_round_rect(cv.pm, tf, 8.0, tokens::BORDER_SUBTLE, 1.2, cv.ts);
+    fill_round_rect(cv.pm, tf, 8.0, tokens::surface_control(), cv.ts);
+    stroke_round_rect(cv.pm, tf, 8.0, tokens::border_subtle(), 1.2, cv.ts);
     let flabel = match &v.panel.source {
         Some(s) => sysfont::truncate_to_width(s, 1.3, tf.2 - 24.0),
         None => sysfont::truncate_to_width(t(lang, Msg::AllSources), 1.3, tf.2 - 24.0),
@@ -1527,8 +1526,8 @@ fn draw_exp_list(cv: &mut Cv, v: &ExpandedView, el: &pl::ExpandedLayout) {
     // clear-unpinned (trash) — turns red when armed
     let tc = el.toolbar_clear;
     let armed = v.panel.clear_armed;
-    fill_round_rect(cv.pm, tc, 8.0, if armed { fade(tokens::ACCENT_RED, 0.18) } else { tokens::SURFACE_CONTROL }, cv.ts);
-    stroke_round_rect(cv.pm, tc, 8.0, if armed { tokens::ACCENT_RED } else { tokens::BORDER_SUBTLE }, 1.2, cv.ts);
+    fill_round_rect(cv.pm, tc, 8.0, if armed { fade(tokens::ACCENT_RED, 0.18) } else { tokens::surface_control() }, cv.ts);
+    stroke_round_rect(cv.pm, tc, 8.0, if armed { tokens::ACCENT_RED } else { tokens::border_subtle() }, 1.2, cv.ts);
     trash_icon(cv, tc.0 + tc.2 / 2.0, tc.1 + tc.3 / 2.0, if armed { tokens::ACCENT_RED } else { txt2 });
     // count, right-aligned
     let count = i18n::clip_count(lang, v.store.len(), v.store.pinned_count());
@@ -1537,8 +1536,8 @@ fn draw_exp_list(cv: &mut Cv, v: &ExpandedView, el: &pl::ExpandedLayout) {
 
     // search/filter input
     let (qx, qy, qw, qh) = el.search;
-    fill_round_rect(cv.pm, (qx, qy, qw, qh), 9.0, tokens::SURFACE_CONTROL, cv.ts);
-    stroke_round_rect(cv.pm, (qx, qy, qw, qh), 9.0, tokens::BORDER_SUBTLE, 1.5, cv.ts);
+    fill_round_rect(cv.pm, (qx, qy, qw, qh), 9.0, tokens::surface_control(), cv.ts);
+    stroke_round_rect(cv.pm, (qx, qy, qw, qh), 9.0, tokens::border_subtle(), 1.5, cv.ts);
     cv.stroke(&oval(qx + 11.0, qy + qh / 2.0 - 1.5, 3.4, 3.4), muted, 1.7);
     cv.line(&[(qx + 14.0, qy + qh / 2.0 + 1.5), (qx + 17.0, qy + qh / 2.0 + 4.5)], muted, 1.7);
     if v.panel.query.is_empty() {
@@ -1561,10 +1560,10 @@ fn draw_exp_list(cv: &mut Cv, v: &ExpandedView, el: &pl::ExpandedLayout) {
         let ry = el.rows_y + i as f32 * pl::ROW_H;
         let rrect = (lxc + 8.0, ry + 1.0, lwc - 16.0, pl::ROW_H - 3.0);
         if idx == v.panel.sel {
-            fill_round_rect(cv.pm, rrect, 8.0, tokens::SURFACE_CARD, cv.ts);
+            fill_round_rect(cv.pm, rrect, 8.0, tokens::surface_card(), cv.ts);
             focus_border(cv.pm, rrect, 8.0, cv.ts);
         } else if hover_row == Some(idx) {
-            fill_round_rect(cv.pm, rrect, 8.0, tokens::SURFACE_CONTROL_HOVER, cv.ts);
+            fill_round_rect(cv.pm, rrect, 8.0, tokens::surface_control_hover(), cv.ts);
         }
         // left index badge (purple, top 10) else a pin star
         let cyr = ry + pl::ROW_H / 2.0;
@@ -1572,7 +1571,7 @@ fn draw_exp_list(cv: &mut Cv, v: &ExpandedView, el: &pl::ExpandedLayout) {
             cv.fill(&oval(lxc + 24.0, cyr, 8.0, 8.0), tokens::ACCENT_PURPLE);
             let d = char::from(b'0' + idx as u8).to_string();
             let dw = sysfont::measure(&d, 1.35);
-            cv.ui_text(&d, lxc + 24.0 - dw / 2.0, cyr - 4.7, 1.35, tokens::TEXT_PRIMARY);
+            cv.ui_text(&d, lxc + 24.0 - dw / 2.0, cyr - 4.7, 1.35, tokens::text_primary());
         } else {
             let star = star_path(lxc + 24.0, cyr, 6.0, 0.0);
             if clip.pinned { cv.fill(&star, PIN_GOLD); } else { cv.stroke(&star, fade(muted, 0.6), 1.3); }
@@ -1613,7 +1612,7 @@ fn draw_exp_list(cv: &mut Cv, v: &ExpandedView, el: &pl::ExpandedLayout) {
 
 /// Pagination row centered in the list footer.
 fn draw_pagination(cv: &mut Cv, lx: f32, y: f32, lw: f32, pages: usize, cur: usize) {
-    let (txt2, muted) = (tokens::TEXT_SECONDARY, tokens::TEXT_MUTED);
+    let (txt2, muted) = (tokens::text_secondary(), tokens::text_muted());
     let mut labels: Vec<String> = Vec::new();
     labels.push("‹".into());
     let show: Vec<usize> = if pages <= 4 {
@@ -1646,8 +1645,8 @@ fn draw_pagination(cv: &mut Cv, lx: f32, y: f32, lw: f32, pages: usize, cur: usi
 fn draw_detail_pane(cv: &mut Cv, v: &ExpandedView, el: &pl::ExpandedLayout, now: u64) {
     let lang = v.lang;
     let (dx, dy, dw, dh) = el.detail;
-    let (txt, txt2, muted) = (tokens::TEXT_PRIMARY, tokens::TEXT_SECONDARY, tokens::TEXT_MUTED);
-    cv.line(&[(dx, dy + 6.0), (dx, dy + dh - 6.0)], tokens::BORDER_SUBTLE, 1.0);
+    let (txt, txt2, muted) = (tokens::text_primary(), tokens::text_secondary(), tokens::text_muted());
+    cv.line(&[(dx, dy + 6.0), (dx, dy + dh - 6.0)], tokens::border_subtle(), 1.0);
     let px = dx + 14.0;
     let pw = dw - 28.0;
     let rows = v.panel.expanded_visible(v.store);
@@ -1678,8 +1677,8 @@ fn draw_detail_pane(cv: &mut Cv, v: &ExpandedView, el: &pl::ExpandedLayout, now:
     // code/preview box
     let box_y = dy + 50.0;
     let box_h = 96.0;
-    fill_round_rect(cv.pm, (px, box_y, pw, box_h), 10.0, tokens::SURFACE_WINDOW, cv.ts);
-    stroke_round_rect(cv.pm, (px, box_y, pw, box_h), 10.0, tokens::BORDER_SUBTLE, 1.0, cv.ts);
+    fill_round_rect(cv.pm, (px, box_y, pw, box_h), 10.0, tokens::surface_window(), cv.ts);
+    stroke_round_rect(cv.pm, (px, box_y, pw, box_h), 10.0, tokens::border_subtle(), 1.0, cv.ts);
     for (i, line) in clip.text.lines().take(5).enumerate() {
         let l = sysfont::truncate_to_width(line, 1.4, pw - 16.0);
         // first line bright, rest tinted like console output
@@ -1706,19 +1705,19 @@ fn draw_detail_pane(cv: &mut Cv, v: &ExpandedView, el: &pl::ExpandedLayout, now:
                 (30, 24, 12, 255)
             }
             ExpKind::Danger => {
-                fill_round_rect(cv.pm, r, 8.0, tokens::SURFACE_CONTROL, cv.ts);
+                fill_round_rect(cv.pm, r, 8.0, tokens::surface_control(), cv.ts);
                 stroke_round_rect(cv.pm, r, 8.0, fade(tokens::ACCENT_RED, 0.6), 1.4, cv.ts);
                 tokens::ACCENT_RED
             }
             ExpKind::Muted => {
-                fill_round_rect(cv.pm, r, 8.0, tokens::SURFACE_CONTROL, cv.ts);
-                stroke_round_rect(cv.pm, r, 8.0, tokens::BORDER_SUBTLE, 1.2, cv.ts);
-                tokens::TEXT_MUTED
+                fill_round_rect(cv.pm, r, 8.0, tokens::surface_control(), cv.ts);
+                stroke_round_rect(cv.pm, r, 8.0, tokens::border_subtle(), 1.2, cv.ts);
+                tokens::text_muted()
             }
             ExpKind::Normal => {
-                fill_round_rect(cv.pm, r, 8.0, tokens::SURFACE_CONTROL, cv.ts);
-                stroke_round_rect(cv.pm, r, 8.0, tokens::BORDER_SUBTLE, 1.2, cv.ts);
-                tokens::TEXT_SECONDARY
+                fill_round_rect(cv.pm, r, 8.0, tokens::surface_control(), cv.ts);
+                stroke_round_rect(cv.pm, r, 8.0, tokens::border_subtle(), 1.2, cv.ts);
+                tokens::text_secondary()
             }
         };
         let s = t(lang, *label);
@@ -1728,7 +1727,7 @@ fn draw_detail_pane(cv: &mut Cv, v: &ExpandedView, el: &pl::ExpandedLayout, now:
         cv.ui_text_b(s, r.0 + (r.2 - sw2) / 2.0, ty, 1.3, fg);
         if has_hint {
             let hw = sysfont::measure(hint, 1.0);
-            cv.ui_text(hint, r.0 + (r.2 - hw) / 2.0, r.1 + r.3 - 11.0, 1.0, tokens::TEXT_MUTED);
+            cv.ui_text(hint, r.0 + (r.2 - hw) / 2.0, r.1 + r.3 - 11.0, 1.0, tokens::text_muted());
         }
     }
 
@@ -1805,7 +1804,7 @@ fn wrap_two(s: &str, px: f32, max: f32) -> (String, String) {
 
 /// Gold progress ring (track + arc from 12 o'clock) for the level badge.
 fn progress_ring(cv: &mut Cv, cx: f32, cy: f32, r: f32, pct: f32) {
-    cv.stroke(&oval(cx, cy, r, r), tokens::SURFACE_CONTROL, 3.0);
+    cv.stroke(&oval(cx, cy, r, r), tokens::surface_control(), 3.0);
     let n = 48usize;
     let steps = (pct.clamp(0.0, 1.0) * n as f32).round() as usize;
     if steps == 0 {
@@ -1821,7 +1820,7 @@ fn progress_ring(cv: &mut Cv, cx: f32, cy: f32, r: f32, pct: f32) {
 
 /// A pill toggle switch (gold when on).
 fn toggle_switch(cv: &mut Cv, r: (f32, f32, f32, f32), on: bool) {
-    let track = if on { tokens::ACCENT_GOLD } else { tokens::SURFACE_CONTROL_ACTIVE };
+    let track = if on { tokens::ACCENT_GOLD } else { tokens::surface_control_active() };
     fill_round_rect(cv.pm, r, r.3 / 2.0, track, cv.ts);
     let knob_r = r.3 / 2.0 - 2.0;
     let kx = if on { r.0 + r.2 - knob_r - 2.0 } else { r.0 + knob_r + 2.0 };

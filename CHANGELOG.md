@@ -17,6 +17,9 @@ versions follow [SemVer](https://semver.org/). Maintenance rules:
 ## [Unreleased]
 
 ### Added
+- **Light / dark color tone** (tray/right-click menu → "Theme"): pick a
+  bright or dark look for the whole UI. Dark is the default; your choice is
+  remembered across restarts.
 - **Expanded view** (tray/right-click menu, "Expanded view"): a roomy
   three-pane screen with a sidebar (level, XP, today's activity, Clipboard /
   Pinned nav), the full clip list, and a detail pane that previews the selected

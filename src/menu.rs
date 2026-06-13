@@ -24,6 +24,8 @@ pub enum MenuAction {
     TogglePanelAutoClose,
     ToggleStats,
     SetSize(usize),
+    /// Pick the color tone (light/dark).
+    SetTheme(crate::tokens::Theme),
     SetAccessory(usize),
     SetSound(u8),
     ToggleLock,

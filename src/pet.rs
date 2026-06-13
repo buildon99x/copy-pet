@@ -962,15 +962,16 @@ impl Pet {
 
     /// Builds the scene and rasterizes it with the chosen background.
     fn draw(&self, pm: &mut Pixmap, card: bool) {
+        // Re-tone the whole palette to the user's pick before any color is read.
+        crate::tokens::set_theme(self.st.theme());
         let t = self.now_t();
 
         // Expanded screen is a pet-less, landscape full window: skip the cat
         // scene entirely and let the three-pane card fill the window.
         if self.panel.expanded {
             if card {
-                pm.fill(tiny_skia::Color::from_rgba8(
-                    render::CARD_BG.0, render::CARD_BG.1, render::CARD_BG.2, 255,
-                ));
+                let cb = render::card_bg();
+                pm.fill(tiny_skia::Color::from_rgba8(cb.0, cb.1, cb.2, 255));
             } else {
                 pm.fill(tiny_skia::Color::TRANSPARENT);
             }
@@ -1192,6 +1193,22 @@ impl Pet {
             .collect();
         m.push(MenuItem::parent(t(lang, Msg::MenuSize), size_items));
 
+        // Theme submenu: dark (default) / light color tone.
+        let cur_theme = self.st.theme();
+        let theme_items = vec![
+            MenuItem::leaf(
+                t(lang, Msg::ThemeDark),
+                MenuAction::SetTheme(crate::tokens::Theme::Dark),
+                cur_theme == crate::tokens::Theme::Dark,
+            ),
+            MenuItem::leaf(
+                t(lang, Msg::ThemeLight),
+                MenuAction::SetTheme(crate::tokens::Theme::Light),
+                cur_theme == crate::tokens::Theme::Light,
+            ),
+        ];
+        m.push(MenuItem::parent(t(lang, Msg::MenuTheme), theme_items));
+
         // Accessory submenu: None + each accessory, locked ones greyed.
         let mut acc_items = vec![MenuItem::leaf(
             t(lang, Msg::AccNone),
@@ -1274,6 +1291,11 @@ impl Pet {
                 self.dirty = true;
             }
             MenuAction::SetSize(i) => self.set_scale_idx(i),
+            MenuAction::SetTheme(theme) => {
+                self.st.set_theme(theme);
+                crate::tokens::set_theme(theme);
+                self.dirty = true;
+            }
             MenuAction::SetAccessory(id) => {
                 // ignore a still-locked accessory (the menu greys it, but guard anyway)
                 if id == 0 || self.level() >= ACCESSORIES[id - 1].level {
@@ -1497,6 +1519,22 @@ mod tests {
         let m = p.build_menu("HK", false);
         assert!(find(&m, MenuAction::SetSize(other)).unwrap().checked);
         assert!(!find(&m, MenuAction::SetSize(cur)).unwrap().checked);
+    }
+
+    #[test]
+    fn menu_theme_pick_persists_and_checks() {
+        use crate::tokens::Theme;
+        let mut p = pet();
+        // defaults to dark, with the dark item checked
+        assert_eq!(p.st.theme(), Theme::Dark);
+        assert!(find(&p.build_menu("HK", false), MenuAction::SetTheme(Theme::Dark)).unwrap().checked);
+
+        assert_eq!(p.apply_menu_action(MenuAction::SetTheme(Theme::Light)), MenuOutcome::Handled);
+        assert_eq!(p.st.theme(), Theme::Light);
+        assert_eq!(p.st.theme, "light", "persisted as a stable code");
+        let m = p.build_menu("HK", false);
+        assert!(find(&m, MenuAction::SetTheme(Theme::Light)).unwrap().checked);
+        assert!(!find(&m, MenuAction::SetTheme(Theme::Dark)).unwrap().checked);
     }
 
     #[test]
