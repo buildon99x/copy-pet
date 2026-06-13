@@ -30,6 +30,12 @@ versions follow [SemVer](https://semver.org/). Maintenance rules:
   can grab several clips in a row. On by default.
 
 ### Changed
+- The **clipboard panel now keeps one fixed (normal) size** no matter which
+  pet size — small, normal or large — you choose. The cat still grows and
+  shrinks; the panel stays comfortably readable.
+- **The pet and the panel now move independently.** Dragging the cat slides
+  only the cat — the open panel stays exactly where it is — just as dragging
+  the panel's header already moved only the panel.
 - The hover **stats bubble now uses your system font** instead of the
   built-in pixel font, matching the panel's typography.
 - **Holding a key no longer farms stats**: key auto-repeat is ignored, so

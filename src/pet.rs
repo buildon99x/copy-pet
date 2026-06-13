@@ -113,7 +113,8 @@ impl Pet {
     pub fn new(st: Persist) -> Pet {
         let now = Instant::now();
         let (level, _, _) = level_progress(st.total_xp);
-        let panel = Panel::with_geometry(st.panel_w, st.panel_h, (st.panel_off_x, st.panel_off_y));
+        let mut panel = Panel::with_geometry(st.panel_w, st.panel_h, (st.panel_off_x, st.panel_off_y));
+        panel.cat_scale = SCALES[st.scale_idx.min(2)];
         Pet {
             st,
             clips: ClipStore::load(),
@@ -246,20 +247,18 @@ impl Pet {
     }
 
     /// Window size in physical pixels for the current scale + panel state.
+    /// When the panel is open the size comes straight from the layout, which
+    /// is already physical (the card is fixed-scale, the cat block scaled).
     pub fn canvas_size(&self) -> (i32, i32) {
-        let s = self.scale();
         if self.panel.open {
             let l = self.panel.layout();
-            (
-                (l.canvas_w * s).round() as i32,
-                (l.canvas_h * s).round() as i32,
-            )
+            (l.canvas_w.round() as i32, l.canvas_h.round() as i32)
         } else {
-            window_size(s)
+            window_size(self.scale())
         }
     }
 
-    /// Top-left of the cat canvas inside the window canvas.
+    /// Top-left of the cat block inside the window canvas, in physical pixels.
     fn origin(&self) -> (f32, f32) {
         if self.panel.open {
             self.panel.layout().cat
@@ -269,11 +268,12 @@ impl Pet {
     }
 
     /// The cat's bottom-center in physical pixels — the screen point every
-    /// layout change keeps fixed (see [`Pet::take_window_shift`]).
+    /// layout change keeps fixed (see [`Pet::take_window_shift`]). The origin
+    /// is already physical; only the cat block itself is scaled.
     fn cat_anchor(&self) -> (f32, f32) {
         let (ox, oy) = self.origin();
         let s = self.scale();
-        ((ox + render::CANVAS_W / 2.0) * s, (oy + render::CANVAS_H) * s)
+        (ox + render::CANVAS_W * s / 2.0, oy + render::CANVAS_H * s)
     }
 
     /// Runs a canvas-layout mutation, accumulating the window shift that
@@ -287,15 +287,63 @@ impl Pet {
         self.size_changed = true;
     }
 
-    /// Maps window-canvas coords to cat-local coords (for click_bounce).
-    pub fn cat_point(&self, cx: f32, cy: f32) -> (f32, f32) {
+    /// The panel card's top-left in physical pixels — the screen point a
+    /// cat-body drag keeps fixed while the panel is open (the mirror of
+    /// [`Pet::cat_anchor`]).
+    fn panel_anchor(&self) -> (f32, f32) {
+        let l = self.panel.layout();
+        (l.card_x, l.card_y)
+    }
+
+    /// Like [`relayout`], but keeps the **panel card** fixed on screen instead
+    /// of the cat — used when dragging the cat body so the card stays put.
+    ///
+    /// [`relayout`]: Pet::relayout
+    fn relayout_panel_anchored(&mut self, f: impl FnOnce(&mut Pet)) {
+        let before = self.panel_anchor();
+        f(self);
+        let after = self.panel_anchor();
+        self.pending_shift.0 += before.0 - after.0;
+        self.pending_shift.1 += before.1 - after.1;
+        self.size_changed = true;
+    }
+
+    /// Drags the cat by a screen-pixel delta while the panel is open: the cat
+    /// moves but the card stays pixel-fixed. We shift the card's offset by
+    /// `-delta` (the cat slides toward/away from the card) under a
+    /// panel-anchored relayout, so the window re-origins to hold the card
+    /// still. Persists the new offset. Returns false (a no-op) when the panel
+    /// is closed — the backend then moves the whole window as usual.
+    pub fn drag_pet(&mut self, dx: f32, dy: f32) -> bool {
+        if !self.panel.open {
+            return false;
+        }
+        self.drag = None;
+        self.relayout_panel_anchored(|p| {
+            p.panel.off.0 = (p.panel.off.0 - dx).clamp(-crate::panel::MAX_OFF, crate::panel::MAX_OFF);
+            p.panel.off.1 = (p.panel.off.1 - dy).clamp(-crate::panel::MAX_OFF, crate::panel::MAX_OFF);
+        });
+        self.panel.refresh(&self.clips);
+        self.st.panel_off_x = self.panel.off.0;
+        self.st.panel_off_y = self.panel.off.1;
+        self.dirty = true;
+        true
+    }
+
+    /// Maps window coords (physical pixels) to cat-local canvas coords (for
+    /// click_bounce). The cat block is scaled, so divide by the cat scale.
+    pub fn cat_point(&self, px: f32, py: f32) -> (f32, f32) {
         let (ox, oy) = self.origin();
-        (cx - ox, cy - oy)
+        let s = self.scale();
+        ((px - ox) / s, (py - oy) / s)
     }
 
     pub fn set_scale_idx(&mut self, idx: usize) {
         if idx != self.st.scale_idx && idx < SCALES.len() {
-            self.relayout(|p| p.st.scale_idx = idx);
+            self.relayout(|p| {
+                p.st.scale_idx = idx;
+                p.panel.cat_scale = SCALES[idx];
+            });
             self.dirty = true;
         }
     }
@@ -795,7 +843,7 @@ impl Pet {
                 hint: &self.panel_hint,
                 caret: (t * 1.6).fract() < 0.65,
             };
-            render::draw_panel(pm, &view, self.scale());
+            render::draw_panel(pm, &view);
         }
     }
 
@@ -1358,6 +1406,49 @@ mod tests {
         let off = p.panel.off;
         p.shift_panel(10.0, 10.0);
         assert_eq!(p.panel.off, off);
+    }
+
+    #[test]
+    fn panel_keeps_its_size_when_the_cat_scales() {
+        let mut p = pet();
+        p.toggle_panel();
+        assert_eq!(p.scale(), 1.0, "normal is the default size");
+        let normal = p.panel.layout();
+        // grow the cat to the large size
+        p.set_scale_idx(2);
+        assert!(p.scale() > 1.0);
+        let large = p.panel.layout();
+        // the card itself is byte-identical — the panel never scales
+        assert_eq!(
+            (large.card_x, large.card_y, large.card_w, large.card_h, large.row_w, large.rows),
+            (normal.card_x, normal.card_y, normal.card_w, normal.card_h, normal.row_w, normal.rows),
+        );
+        // ...but the window canvas grows on the cat's side
+        assert!(large.canvas_w >= normal.canvas_w && large.canvas_h >= normal.canvas_h);
+        assert!(large.canvas_w > normal.canvas_w || large.canvas_h > normal.canvas_h);
+    }
+
+    #[test]
+    fn drag_pet_moves_the_cat_keeping_the_panel_fixed() {
+        let mut p = pet();
+        assert!(!p.drag_pet(10.0, 10.0), "closed panel: drag_pet is a no-op");
+        p.toggle_panel();
+        let _ = p.take_size_changed();
+        let _ = p.take_window_shift(); // drain the open transition
+        let off0 = p.panel.off;
+        let anchor0 = p.panel_anchor();
+
+        // dragging the cat shifts the card offset the opposite way
+        assert!(p.drag_pet(-100.0, -320.0));
+        assert_eq!(p.panel.off, (off0.0 + 100.0, off0.1 + 320.0));
+        assert_eq!((p.st.panel_off_x, p.st.panel_off_y), p.panel.off, "offset persisted");
+        assert!(p.take_size_changed());
+
+        // the window shift exactly cancels the card's canvas move, so the card
+        // stays pixel-fixed on screen while the cat slides
+        let (dx, dy) = p.take_window_shift();
+        let anchor1 = p.panel_anchor();
+        assert_eq!((anchor1.0 + dx as f32, anchor1.1 + dy as f32), anchor0);
     }
 
     #[test]

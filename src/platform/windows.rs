@@ -146,11 +146,12 @@ impl App {
         (rc.left, rc.top)
     }
 
-    /// Client coords (from an lParam) to window-canvas coords.
-    fn canvas_xy(&self, lp: LPARAM) -> (f32, f32) {
-        let scale = self.pet.scale();
-        let cx = (lp & 0xFFFF) as i16 as f32 / scale;
-        let cy = ((lp >> 16) & 0xFFFF) as i16 as f32 / scale;
+    /// Client coords (from an lParam) in physical pixels. The panel is
+    /// hit-tested at scale 1.0 (its coords are physical) and `Pet::cat_point`
+    /// divides by the cat scale itself, so neither needs pre-division.
+    fn client_xy(&self, lp: LPARAM) -> (f32, f32) {
+        let cx = (lp & 0xFFFF) as i16 as f32;
+        let cy = ((lp >> 16) & 0xFFFF) as i16 as f32;
         (cx, cy)
     }
 
@@ -319,20 +320,20 @@ impl App {
         }
     }
 
-    /// Canvas-unit shift that brings the open panel card fully onto the work
-    /// area of the monitor it sits on, or None when it already fits. `(nx,
-    /// ny)` is the window's top-left in screen pixels.
+    /// Shift (physical pixels) that brings the open panel card fully onto the
+    /// work area of the monitor it sits on, or None when it already fits.
+    /// `(nx, ny)` is the window's top-left in screen pixels. The card geometry
+    /// is already physical (it renders at scale 1.0), so no scale conversion.
     unsafe fn panel_fit_shift(&self, nx: i32, ny: i32) -> Option<(f32, f32)> {
-        let s = self.pet.scale();
         let l = self.pet.panel.layout();
         let card = Rect {
-            x: nx as f32 + l.card_x * s,
-            y: ny as f32 + l.card_y * s,
-            w: l.card_w * s,
-            h: l.card_h * s,
+            x: nx as f32 + l.card_x,
+            y: ny as f32 + l.card_y,
+            w: l.card_w,
+            h: l.card_h,
         };
         let (dx, dy) = fit_delta(card, monitor_work_rect(self.hwnd)?);
-        (dx.abs() >= 0.5 || dy.abs() >= 0.5).then_some((dx / s, dy / s))
+        (dx.abs() >= 0.5 || dy.abs() >= 0.5).then_some((dx, dy))
     }
 
     fn update_tray_tip(&self) {
@@ -1210,7 +1211,7 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
         }
         WM_LBUTTONDOWN => {
             with_app(|a| {
-                let (cx, cy) = a.canvas_xy(lp);
+                let (cx, cy) = a.client_xy(lp);
                 // header strip / resize grip start a card drag (the grip
                 // pokes slightly past the card edge, hence the extra check)
                 if a.pet.panel_drag_start(cx, cy) {
@@ -1240,7 +1241,7 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
         }
         WM_MOUSEMOVE => {
             with_app(|a| {
-                let (cx, cy) = a.canvas_xy(lp);
+                let (cx, cy) = a.client_xy(lp);
                 a.pet.set_cursor(cx, cy);
                 if !a.hover_tracking {
                     a.hover_tracking = true;
@@ -1254,14 +1255,13 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
                     TrackMouseEvent(&mut tme);
                 }
                 if a.panel_drag {
-                    // card drag: feed screen-pixel deltas as canvas units;
+                    // card drag: feed screen-pixel deltas as panel units (1.0);
                     // the tick applies the new layout (resize + shift)
                     let mut pt = POINT { x: 0, y: 0 };
                     GetCursorPos(&mut pt);
-                    let s = a.pet.scale();
                     let (dx, dy) = (pt.x - a.drag_cursor.x, pt.y - a.drag_cursor.y);
                     if dx != 0 || dy != 0 {
-                        a.pet.panel_drag_update(dx as f32 / s, dy as f32 / s);
+                        a.pet.panel_drag_update(dx as f32, dy as f32);
                         a.drag_cursor = pt;
                     }
                 } else if a.mouse_down && !a.pet.st.locked {
@@ -1271,15 +1271,24 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
                     let dy = pt.y - a.drag_cursor.y;
                     if a.drag_moved || dx.abs() > 3 || dy.abs() > 3 {
                         a.drag_moved = true;
-                        SetWindowPos(
-                            hwnd,
-                            null_mut(),
-                            a.drag_win.0 + dx,
-                            a.drag_win.1 + dy,
-                            0,
-                            0,
-                            SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE,
-                        );
+                        if a.pet.panel_open() {
+                            // cat-body drag with the panel open: slide the cat,
+                            // keep the card fixed (incremental, re-base each step;
+                            // the tick applies the window shift). Don't move the
+                            // whole window — that would drag the card along.
+                            a.pet.drag_pet(dx as f32, dy as f32);
+                            a.drag_cursor = pt;
+                        } else {
+                            SetWindowPos(
+                                hwnd,
+                                null_mut(),
+                                a.drag_win.0 + dx,
+                                a.drag_win.1 + dy,
+                                0,
+                                0,
+                                SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE,
+                            );
+                        }
                     }
                 }
             });
@@ -1305,10 +1314,15 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
                     a.mouse_down = false;
                     ReleaseCapture();
                     if a.drag_moved {
-                        let (x, y) = a.window_pos();
-                        a.pet.save_pos(x, y);
+                        // a panel-open cat drag lives in the card offset (already
+                        // persisted by drag_pet); only a plain window move needs
+                        // its new screen position saved
+                        if !a.pet.panel_open() {
+                            let (x, y) = a.window_pos();
+                            a.pet.save_pos(x, y);
+                        }
                     } else {
-                        let (cx, cy) = a.canvas_xy(lp);
+                        let (cx, cy) = a.client_xy(lp);
                         let (lx, ly) = a.pet.cat_point(cx, cy);
                         a.pet.click_bounce(lx, ly);
                     }
@@ -1319,7 +1333,7 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
         WM_LBUTTONDBLCLK => {
             with_app(|a| {
                 a.mouse_down = false;
-                let (cx, cy) = a.canvas_xy(lp);
+                let (cx, cy) = a.client_xy(lp);
                 // a fast second header/grip drag arrives as a double-click
                 if a.pet.panel_drag_start(cx, cy) {
                     a.panel_drag = true;

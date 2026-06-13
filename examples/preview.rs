@@ -155,7 +155,7 @@ fn main() {
                 hint: "WIN+SHIFT+V",
                 caret: true,
             };
-            render::draw_panel(&mut pm, &view, 1.0);
+            render::draw_panel(&mut pm, &view);
             save(&pm, &dir, name);
         }
     }

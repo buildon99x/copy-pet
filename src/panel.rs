@@ -99,14 +99,18 @@ fn axis_fit(pos: f32, len: f32, vmin: f32, vlen: f32) -> f32 {
     }
 }
 
-/// Computed panel geometry for the current card size/offset, all in canvas
-/// units. The canvas is the union of the cat's 240x256 canvas and the card
-/// (plus a margin); `cat` is where the cat canvas sits inside it.
+/// Computed panel geometry for the current card size/offset, in **physical
+/// pixels**. The canvas is the union of the cat block (240x256 scaled by the
+/// cat's size) and the fixed-scale card (plus a margin); `cat` is where the
+/// cat block sits inside it. Card-relative fields (`card_*`, `btn_*`,
+/// `search_*`, `rows_*`, `row_*`, `footer_y`) are also physical pixels but,
+/// since the card always renders at scale 1.0, they equal the card's own
+/// canvas units.
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub struct Layout {
     pub canvas_w: f32,
     pub canvas_h: f32,
-    /// Top-left of the cat canvas inside the window canvas.
+    /// Top-left of the cat block inside the window canvas (physical pixels).
     pub cat: (f32, f32),
     pub card_x: f32,
     pub card_y: f32,
@@ -200,7 +204,15 @@ pub struct Panel {
     pub w: f32,
     pub h: f32,
     /// Card top-left relative to the cat's top-left (user-movable, persisted).
+    /// In panel units, i.e. physical pixels — the card always renders at scale
+    /// 1.0 regardless of the cat's size (see [`Layout`]).
     pub off: (f32, f32),
+    /// The cat's current size multiplier, mirrored from the Pet so [`layout`]
+    /// can place the (fixed-scale) card next to the (scaled) cat. The card
+    /// itself never uses this. Kept in sync by `Pet::set_scale_idx`.
+    ///
+    /// [`layout`]: Panel::layout
+    pub cat_scale: f32,
     /// Cached filtered row order (the panel is redrawn every tick while
     /// open; without this the query would re-scan every clip text per frame).
     cache: RefCell<ViewCache>,
@@ -219,6 +231,7 @@ impl Default for Panel {
             w: DEFAULT_W,
             h: DEFAULT_H,
             off: DEFAULT_OFF,
+            cat_scale: 1.0,
             cache: RefCell::new(ViewCache::default()),
         }
     }
@@ -245,15 +258,22 @@ impl Panel {
         }
     }
 
-    /// The full geometry for the current card size/offset.
+    /// The full geometry for the current card size/offset, in **physical
+    /// pixels**. The card always renders at scale 1.0 (panel units == physical
+    /// pixels), while the cat block is sized by `cat_scale`; the canvas is the
+    /// union of the two, so a larger cat grows the window only on the cat's
+    /// side and the card keeps its fixed size and its `off` from the cat.
     pub fn layout(&self) -> Layout {
         let (w, h) = (self.w, self.h);
         let (off_x, off_y) = self.off;
-        // canvas = union of the cat canvas and the margin-padded card
+        // physical size of the cat block (the card block is already 1.0)
+        let cat_w = crate::render::CANVAS_W * self.cat_scale;
+        let cat_h = crate::render::CANVAS_H * self.cat_scale;
+        // canvas = union of the cat block and the margin-padded card
         let left = (off_x - MARGIN).min(0.0);
         let top = (off_y - MARGIN).min(0.0);
-        let right = (off_x + w + MARGIN).max(crate::render::CANVAS_W);
-        let bottom = (off_y + h + MARGIN).max(crate::render::CANVAS_H);
+        let right = (off_x + w + MARGIN).max(cat_w);
+        let bottom = (off_y + h + MARGIN).max(cat_h);
         let cat = (-left, -top);
         let card_x = cat.0 + off_x;
         let card_y = cat.1 + off_y;
@@ -756,6 +776,21 @@ mod tests {
         // height exceeds vis: align the card top to vis top (header stays on
         // screen), x already fits
         assert_eq!(fit_delta(card, vis), (0.0, -80.0));
+    }
+
+    #[test]
+    fn layout_scales_only_the_cat_block() {
+        let mut p = open_panel();
+        let base = p.layout();
+        p.cat_scale = 1.3; // grow the cat
+        let big = p.layout();
+        // the card never scales: its placement and size are invariant
+        assert_eq!(
+            (big.card_x, big.card_y, big.card_w, big.card_h),
+            (base.card_x, base.card_y, base.card_w, base.card_h),
+        );
+        // the union grows only because the cat block grew
+        assert!(big.canvas_w >= base.canvas_w && big.canvas_h >= base.canvas_h);
     }
 
     #[test]

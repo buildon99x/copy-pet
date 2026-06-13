@@ -315,7 +315,9 @@ pub fn render_card(pm: &mut Pixmap, sc: &Scene, scale: f32) {
 fn draw_scene(pm: &mut Pixmap, sc: &Scene, scale: f32) {
     let mut cv = Cv {
         pm,
-        ts: Transform::from_scale(scale, scale).pre_translate(sc.origin.0, sc.origin.1),
+        // origin is in physical pixels (the cat block's top-left in the union
+        // canvas); translate after the scale so only the cat is scaled.
+        ts: Transform::from_scale(scale, scale).post_translate(sc.origin.0, sc.origin.1),
     };
 
     let breath_dy = -sc.breath * 1.6;
@@ -850,10 +852,13 @@ pub struct PanelView<'a> {
 }
 
 /// Draws the clipboard panel card (geometry from [`crate::panel::Layout`]).
-pub fn draw_panel(pm: &mut Pixmap, v: &PanelView, scale: f32) {
+/// The card always renders at scale 1.0 (panel units == physical pixels), so
+/// the layout is used verbatim with no scale transform — the cat's size never
+/// affects the panel.
+pub fn draw_panel(pm: &mut Pixmap, v: &PanelView) {
     let mut cv = Cv {
         pm,
-        ts: Transform::from_scale(scale, scale),
+        ts: Transform::identity(),
     };
     let lang = v.lang;
     let lt = v.panel.layout();
