@@ -1,0 +1,19 @@
+{
+  "font_policy": "Use OS UI font with Hangul fallback. Never bundle fonts.",
+  "windows": "Segoe UI + Malgun Gothic",
+  "macos": "SF/Helvetica + Apple SD Gothic Neo",
+  "scale": {
+    "caption": 11,
+    "body": 13,
+    "bodyStrong": 14,
+    "title": 16,
+    "hero": 28
+  },
+  "weights": {
+    "regular": 400,
+    "medium": 500,
+    "semibold": 600,
+    "bold": 700,
+    "black": 800
+  }
+}

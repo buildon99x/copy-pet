@@ -1,0 +1,77 @@
+{
+  "tick_ms": 33,
+  "states": {
+    "idle": {
+      "blink_ms_range": [
+        2500,
+        5000
+      ],
+      "tail_sway_px": 3
+    },
+    "curious": {
+      "after_idle_ms": 30000,
+      "random_gesture_ms_range": [
+        12000,
+        18000
+      ]
+    },
+    "sleeping": {
+      "after_idle_ms": 75000,
+      "breath_period_ms": 2600,
+      "zzz_spawn_ms": 1400
+    },
+    "typing_slow": {
+      "kps": [
+        1,
+        4
+      ],
+      "paw_period_ms": 180,
+      "body_bob_px": 1
+    },
+    "typing_fast": {
+      "kps": [
+        5,
+        9
+      ],
+      "paw_period_ms": 90,
+      "body_bob_px": 2
+    },
+    "typing_extreme": {
+      "kps_min": 10,
+      "paw_period_ms": 55,
+      "body_bob_px": 4,
+      "sparks": true
+    },
+    "fish_flight": {
+      "duration_ms": 900,
+      "easing": "ease_in_out_cubic",
+      "mouth_open_at": 0.72,
+      "max_queue": 3,
+      "queue_overflow": "merge_latest_with_count"
+    },
+    "nom": {
+      "duration_ms": 280,
+      "spark_count": 12,
+      "heart_count": 1,
+      "xp_popup": "+5 XP"
+    },
+    "petting": {
+      "duration_ms": 1100,
+      "heart_count": 5,
+      "xp_popup": "+10 XP"
+    },
+    "levelup": {
+      "duration_ms": 1400,
+      "screen_shake_px": 2,
+      "star_count": 24
+    }
+  },
+  "priorities": [
+    "levelup",
+    "copy_fish",
+    "petting",
+    "typing",
+    "sleeping",
+    "idle"
+  ]
+}
