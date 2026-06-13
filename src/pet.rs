@@ -26,6 +26,54 @@ const FISH_SECS: f32 = 0.9;
 /// At most this many fish queue up during copy bursts.
 const FISH_QUEUE_MAX: usize = 3;
 
+// ---- mood timing (docs/design/docs/03_pet_behavior_spec.md +
+//      docs/design/motion/pet_motion_spec.json) -------------------------------
+/// Idle seconds before the cat turns Curious, and before it falls asleep.
+const CURIOUS_AFTER: f32 = 30.0;
+const SLEEP_AFTER: f32 = 75.0;
+/// Post-event mood windows (seconds): nom crunch → happy tail; petting; levelup.
+const NOM_SECS: f32 = 0.28;
+const HAPPY_SECS: f32 = 0.60;
+const PETTING_SECS: f32 = 1.1;
+const LEVELUP_SECS: f32 = 1.4;
+/// Fish flight fraction at which the mouth opens to catch it.
+const MOUTH_OPEN_AT: f32 = 0.72;
+/// `sleep` scalar above which the cat reads as asleep.
+const SLEEP_MOOD_AT: f32 = 0.6;
+/// keys/sec thresholds for the typing mood tiers (keys only; auto-repeat is
+/// already collapsed upstream — we count, never read, key events).
+const KPS_SLOW: f32 = 1.0;
+const KPS_FAST: f32 = 5.0;
+const KPS_EXTREME: f32 = 10.0;
+/// A `pet()` within this many seconds of a `click_bounce` is the same
+/// double-click: refund the bounce's +1 XP so a double-click nets exactly +10,
+/// not +11/+12 (pet behavior spec, "Petting/boop").
+const DBLCLICK_REFUND: f32 = 0.35;
+
+/// Discrete pet mood — the design package's `PetMood` state machine
+/// (`docs/design/docs/03_pet_behavior_spec.md`). It is *derived* each frame
+/// from the continuous animation scalars and event timers by [`Pet::mood`];
+/// rendering still reads the scalars directly, so this is a queryable, testable
+/// view of "what the cat is doing", not a second source of animation truth.
+/// `Boop` from a single click is folded into the squash bounce within
+/// `Idle`/typing; `Happy` is the short tail after `Nom`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PetMood {
+    Idle,
+    Curious,
+    TypingSlow,
+    TypingFast,
+    TypingExtreme,
+    CopyIncoming,
+    MouthOpen,
+    Nom,
+    Happy,
+    Petting,
+    LevelUp,
+    Sleeping,
+    PanelOpen,
+}
+
 /// Logical window size in physical pixels for a given scale (cat only).
 pub fn window_size(scale: f32) -> (i32, i32) {
     (
@@ -77,8 +125,17 @@ pub struct Pet {
     sleep: f32,
     squash: f32,
     rate: f32,
+    /// Keys/sec over a ~1s window — drives the typing mood tiers only.
+    kps: f32,
     tail_phase: f32,
     last_event: Instant,
+    // mood event timers (seconds on the `now_t` clock)
+    nom_until: f32,
+    happy_until: f32,
+    petting_until: f32,
+    levelup_until: f32,
+    /// `(time, xp)` of the last single-click bounce, for double-click refund.
+    last_bounce: Option<(f32, u64)>,
     particles: Vec<Particle>,
     zzz_next: f32,
     toast: Option<(String, f32)>, // text, expires_at (seconds since start)
@@ -127,8 +184,14 @@ impl Pet {
             sleep: 0.0,
             squash: 0.0,
             rate: 0.0,
+            kps: 0.0,
             tail_phase: 0.0,
             last_event: now,
+            nom_until: 0.0,
+            happy_until: 0.0,
+            petting_until: 0.0,
+            levelup_until: 0.0,
+            last_bounce: None,
             particles: Vec::new(),
             zzz_next: 0.0,
             toast: None,
@@ -164,6 +227,52 @@ impl Pet {
 
     pub fn tooltip(&self) -> String {
         format!("ClipCat — LV {}", self.level)
+    }
+
+    /// The cat's current discrete mood, derived from the animation scalars and
+    /// event timers. Priority follows the motion spec (levelup > copy fish >
+    /// petting > typing > panel > sleeping > curious > idle). Queryable view
+    /// for the visual states and for tests; it never *drives* animation.
+    pub fn mood(&self) -> PetMood {
+        let t = self.now_t();
+        if t < self.levelup_until {
+            return PetMood::LevelUp;
+        }
+        if let Some((_, ft)) = &self.fish {
+            return if *ft >= MOUTH_OPEN_AT {
+                PetMood::MouthOpen
+            } else {
+                PetMood::CopyIncoming
+            };
+        }
+        if t < self.nom_until {
+            return PetMood::Nom;
+        }
+        if t < self.happy_until {
+            return PetMood::Happy;
+        }
+        if t < self.petting_until {
+            return PetMood::Petting;
+        }
+        if self.kps >= KPS_EXTREME {
+            return PetMood::TypingExtreme;
+        }
+        if self.kps >= KPS_FAST {
+            return PetMood::TypingFast;
+        }
+        if self.kps >= KPS_SLOW {
+            return PetMood::TypingSlow;
+        }
+        if self.panel.open {
+            return PetMood::PanelOpen;
+        }
+        if self.sleep > SLEEP_MOOD_AT {
+            return PetMood::Sleeping;
+        }
+        if (Instant::now() - self.last_event).as_secs_f32() > CURIOUS_AFTER {
+            return PetMood::Curious;
+        }
+        PetMood::Idle
     }
 
     pub fn set_hover(&mut self, hover: bool) {
@@ -534,9 +643,12 @@ impl Pet {
 
         let inst_rate = (k + c) as f32 / dt;
         self.rate += (inst_rate - self.rate) * (dt * 2.5).min(1.0);
+        // keys/sec over a ~1s window (decaying accumulator, time-constant 1s):
+        // each tick adds the key count and decays, so it settles at the rate.
+        self.kps = self.kps * (-dt).exp() + k as f32;
 
         let idle_secs = (now - self.last_event).as_secs_f32();
-        let sleep_target = if idle_secs > 75.0 { 1.0 } else { 0.0 };
+        let sleep_target = if idle_secs > SLEEP_AFTER { 1.0 } else { 0.0 };
         self.sleep += (sleep_target - self.sleep) * (dt * 1.5).min(1.0);
         self.sleep = self.sleep.clamp(0.0, 1.0);
 
@@ -632,6 +744,9 @@ impl Pet {
     fn nom(&mut self) {
         self.happy = (self.happy + 0.5).min(1.0);
         self.squash = 0.6;
+        let t = self.now_t();
+        self.nom_until = t + NOM_SECS;
+        self.happy_until = t + HAPPY_SECS;
         self.spawn_sparkles(4, 120.0, 130.0);
         let r = rand_f(&mut self.rng);
         self.particles.push(Particle {
@@ -769,6 +884,14 @@ impl Pet {
     /// Double-click / explicit pet: a burst of hearts and bonus XP.
     pub fn pet(&mut self) {
         self.happy = 1.0;
+        self.petting_until = self.now_t() + PETTING_SECS;
+        // A double-click arrives as click(+1) then this pet(): refund that
+        // bounce so the gesture nets exactly +10 XP, not +11/+12.
+        if let Some((bt, amt)) = self.last_bounce.take() {
+            if self.now_t() - bt < DBLCLICK_REFUND {
+                self.st.total_xp = self.st.total_xp.saturating_sub(amt);
+            }
+        }
         self.st.total_xp += 10;
         self.dirty = true;
         for _ in 0..6 {
@@ -796,6 +919,7 @@ impl Pet {
     pub fn click_bounce(&mut self, cx: f32, cy: f32) {
         self.squash = 1.0;
         self.st.total_xp += 1;
+        self.last_bounce = Some((self.now_t(), 1));
         self.dirty = true;
         let r = rand_f(&mut self.rng);
         self.particles.push(Particle {
@@ -1001,6 +1125,7 @@ impl Pet {
     fn level_up(&mut self, lv: u32, t: f32) {
         self.level = lv;
         self.level_changed = true;
+        self.levelup_until = t + LEVELUP_SECS;
         self.happy = 1.0;
         self.spawn_stars(12);
         let mut text = i18n::level_up(self.lang(), lv);

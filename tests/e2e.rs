@@ -254,6 +254,71 @@ fn dark_premium_primitives_render() {
     assert_ne!(before, pm.data(), "source badge draws pixels");
 }
 
+/// M2 pet state machine: the derived `PetMood` follows the spec's priority
+/// (levelup > copy fish > petting > typing tiers > panel > idle) and the
+/// key-rate thresholds pick the typing tier.
+#[test]
+fn pet_mood_transitions() {
+    use clipcat::pet::PetMood;
+
+    // fresh and quiet → Idle.
+    let mut p = pet();
+    p.advance(0, 0, 0);
+    assert_eq!(p.mood(), PetMood::Idle);
+
+    // typing tiers by keys/sec (1–4 slow, 5–9 fast, 10+ extreme).
+    let mut slow = pet();
+    slow.advance(1, 0, 0);
+    assert_eq!(slow.mood(), PetMood::TypingSlow);
+    let mut fast = pet();
+    fast.advance(6, 0, 0);
+    assert_eq!(fast.mood(), PetMood::TypingFast);
+    let mut extreme = pet();
+    extreme.advance(12, 0, 0);
+    assert_eq!(extreme.mood(), PetMood::TypingExtreme);
+
+    // a copy puts a fish in flight → CopyIncoming (before it reaches the mouth).
+    let mut c = pet();
+    copy(&mut c, "hi", Some("Code"));
+    c.advance(0, 0, 0);
+    assert_eq!(c.mood(), PetMood::CopyIncoming);
+
+    // open panel → PanelOpen (no fish/typing in flight).
+    let mut pan = pet();
+    pan.toggle_panel();
+    pan.advance(0, 0, 0);
+    assert_eq!(pan.mood(), PetMood::PanelOpen);
+
+    // double-click pet → Petting window.
+    let mut pt = pet();
+    pt.pet();
+    assert_eq!(pt.mood(), PetMood::Petting);
+
+    // crossing a level threshold → LevelUp takes priority over petting.
+    let mut lv = pet_at_xp(279); // level 1; +10 from pet() crosses to level 2 (280).
+    lv.pet();
+    assert_eq!(lv.level(), 2);
+    assert_eq!(lv.mood(), PetMood::LevelUp);
+}
+
+/// M2 XP routing: copy +5, single click +1, and a double-click nets exactly
+/// +10 (the click bounce is refunded so it is not +11/+12).
+#[test]
+fn xp_routing_click_copy_doubleclick() {
+    let mut cp = pet();
+    copy(&mut cp, "x", Some("Code"));
+    assert_eq!(cp.st.total_xp, 5, "copy grants +5");
+
+    let mut single = pet();
+    single.click_bounce(120.0, 120.0);
+    assert_eq!(single.st.total_xp, 1, "single click grants +1");
+
+    let mut dbl = pet();
+    dbl.click_bounce(120.0, 120.0); // first click of the pair: +1
+    dbl.pet(); // second click: refund the +1, then +10
+    assert_eq!(dbl.st.total_xp, 10, "double-click nets exactly +10, not +11");
+}
+
 /// Hotkey configuration e2e: default spec, persistence round-trip, custom
 /// values and the reset of hand-edited garbage.
 #[test]
