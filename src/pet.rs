@@ -8,7 +8,9 @@ use crate::clipboard::ClipStore;
 use crate::i18n::{self, t, Lang, Msg};
 use crate::menu::{MenuAction, MenuEntry, MenuItem, MenuOutcome};
 use crate::panel::{NavKey, Panel, PanelAction, PanelDrag};
-use crate::render::{self, Accessory, Badge, BubbleData, FishView, Particle, ParticleKind, Scene};
+use crate::render::{
+    self, Accessory, Badge, BubbleData, FishView, Particle, ParticleKind, Scene, XpPop,
+};
 use crate::sound;
 use crate::state::{level_progress, Persist, ACCESSORIES};
 use std::collections::VecDeque;
@@ -137,6 +139,7 @@ pub struct Pet {
     /// `(time, xp)` of the last single-click bounce, for double-click refund.
     last_bounce: Option<(f32, u64)>,
     particles: Vec<Particle>,
+    xp_pops: Vec<XpPop>,
     zzz_next: f32,
     /// Next time a typing-extreme spark may emit (motion spec `sparks: true`).
     spark_next: f32,
@@ -195,6 +198,7 @@ impl Pet {
             levelup_until: 0.0,
             last_bounce: None,
             particles: Vec::new(),
+            xp_pops: Vec::new(),
             zzz_next: 0.0,
             spark_next: 0.0,
             toast: None,
@@ -420,10 +424,18 @@ impl Pet {
         if !self.clips.add_copy(text, source) {
             return;
         }
+        // Queue overflow merges into the latest fish (motion spec
+        // queue_overflow: merge_latest_with_count): keep the newest source but
+        // carry a running +N count instead of dropping older copies.
         if self.fish_queue.len() >= FISH_QUEUE_MAX {
-            self.fish_queue.pop_front();
+            if let Some(last) = self.fish_queue.back_mut() {
+                let mut badge = badge;
+                badge.count = last.count + 1;
+                *last = badge;
+            }
+        } else {
+            self.fish_queue.push_back(badge);
         }
-        self.fish_queue.push_back(badge);
         self.st.copies_today += 1;
         self.st.total_copies += 1;
         self.st.total_xp += XP_PER_COPY;
@@ -730,6 +742,13 @@ impl Pet {
         }
         self.particles.retain(|p| p.life > 0.0);
 
+        // XP popups drift up and fade
+        for xp in self.xp_pops.iter_mut() {
+            xp.y -= 22.0 * dt;
+            xp.life -= dt / 1.2;
+        }
+        self.xp_pops.retain(|xp| xp.life > 0.0);
+
         // bubble fade (hidden while the panel is open)
         let bubble_target = if !self.panel.open && (self.st.bubble_pinned || self.hover) {
             1.0
@@ -767,6 +786,7 @@ impl Pet {
         let t = self.now_t();
         self.nom_until = t + NOM_SECS;
         self.happy_until = t + HAPPY_SECS;
+        self.spawn_xp_pop(XP_PER_COPY as u32, 120.0, 108.0);
         self.spawn_sparkles(4, 120.0, 130.0);
         let r = rand_f(&mut self.rng);
         self.particles.push(Particle {
@@ -855,9 +875,10 @@ impl Pet {
         };
 
         let fish = self.fish.as_ref().map(|(b, ft)| Self::fish_view(b, *ft));
-        // mouth opens as the fish closes in
+        // mouth opens as the fish closes in, fully open by the catch fraction
+        // (motion spec mouth_open_at = 0.72)
         let mouth_open = match &self.fish {
-            Some((_, ft)) => ((ft - 0.45) / 0.4).clamp(0.0, 1.0),
+            Some((_, ft)) => ((ft - 0.58) / 0.16).clamp(0.0, 1.0),
             None => 0.0,
         };
 
@@ -885,6 +906,7 @@ impl Pet {
             look,
             accessory: Accessory::from_id(self.st.accessory),
             particles: &self.particles,
+            xp_pops: &self.xp_pops,
             fish,
             bubble,
             bubble_alpha: self.bubble_alpha,
@@ -924,6 +946,7 @@ impl Pet {
             }
         }
         self.st.total_xp += 10;
+        self.spawn_xp_pop(10, 120.0, 100.0);
         self.dirty = true;
         for _ in 0..6 {
             let r1 = rand_f(&mut self.rng);
@@ -1179,6 +1202,11 @@ impl Pet {
         self.toast = Some((text, t + secs));
     }
 
+    /// Float a "+N XP" popup up from (x, y).
+    fn spawn_xp_pop(&mut self, amount: u32, x: f32, y: f32) {
+        self.xp_pops.push(XpPop { x, y, life: 1.0, amount });
+    }
+
     fn spawn_stars(&mut self, n: usize) {
         for i in 0..n {
             let a = i as f32 / n as f32 * std::f32::consts::TAU;
@@ -1263,6 +1291,19 @@ mod tests {
         assert_eq!(p.st.copies_today, 1);
         assert_eq!(p.fish_queue.len(), 1);
         assert_eq!(p.fish_queue[0].letter, 'C');
+    }
+
+    #[test]
+    fn fish_queue_overflow_merges_with_count() {
+        let mut p = pet();
+        for i in 0..(FISH_QUEUE_MAX + 2) {
+            p.on_copy(format!("clip {i}"), Some("Code".into()), None);
+        }
+        // queue stays capped, but no copy is lost from the store...
+        assert_eq!(p.fish_queue.len(), FISH_QUEUE_MAX);
+        assert_eq!(p.clips.len(), FISH_QUEUE_MAX + 2);
+        // ...the two overflow copies merge into the latest fish as a +N count.
+        assert_eq!(p.fish_queue.back().unwrap().count, 3);
     }
 
     #[test]

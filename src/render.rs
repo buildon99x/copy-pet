@@ -80,6 +80,15 @@ pub struct Particle {
     pub spin: f32,
 }
 
+/// A floating "+N XP" popup that drifts up and fades after an XP award
+/// (nom +5, petting +10). `life` runs 1 → 0.
+pub struct XpPop {
+    pub x: f32,
+    pub y: f32,
+    pub life: f32,
+    pub amount: u32,
+}
+
 pub struct BubbleData {
     pub level: u32,
     pub pct: f32,
@@ -98,6 +107,9 @@ pub struct Badge {
     pub letter: char,
     pub color: (u8, u8, u8),
     pub icon: Option<Pixmap>,
+    /// How many copies this fish represents. >1 when copies merged into it
+    /// because the flight queue was full (drawn as a `+N` count badge).
+    pub count: u32,
 }
 
 const BADGE_PALETTE: [(u8, u8, u8); 8] = [
@@ -129,6 +141,7 @@ impl Badge {
                 letter: '*',
                 color: FISH_BLUE,
                 icon: None,
+                count: 1,
             };
         };
         let letter = name
@@ -140,6 +153,7 @@ impl Badge {
             letter,
             color: source_color(name),
             icon: None,
+            count: 1,
         }
     }
 
@@ -189,6 +203,7 @@ pub struct Scene<'a> {
     pub look: f32,
     pub accessory: Accessory,
     pub particles: &'a [Particle],
+    pub xp_pops: &'a [XpPop],
     pub fish: Option<FishView<'a>>,
     pub bubble: Option<BubbleData>,
     pub bubble_alpha: f32,
@@ -522,6 +537,18 @@ fn draw_scene(pm: &mut Pixmap, sc: &Scene, scale: f32) {
         draw_particle(&mut cv, p);
     }
 
+    // floating "+N XP" popups (gold with a dark halo, drifting up)
+    for xp in sc.xp_pops {
+        if xp.life > 0.01 {
+            let a = xp.life.min(1.0);
+            let label = format!("+{} XP", xp.amount);
+            let pxs = 2.2;
+            let w = sysfont::measure(&label, pxs);
+            cv.ui_text(&label, xp.x - w / 2.0 + 0.5, xp.y + 0.5, pxs, fade((40, 30, 20, 255), a));
+            cv.ui_text(&label, xp.x - w / 2.0, xp.y, pxs, fade(tokens::ACCENT_GOLD, a));
+        }
+    }
+
     // toast pill
     if let Some((text, a)) = sc.toast {
         if a > 0.01 {
@@ -704,6 +731,20 @@ fn draw_fish(cv: &mut Cv, f: &FishView) {
         let ts = Transform::from_scale(s, s)
             .post_translate(center[0].x - lw * s / 2.0, center[0].y - 3.5 * px * s);
         sysfont::draw(cv.pm, &label, 0.0, 0.0, px, TEXT, ts);
+    }
+
+    // merged-copy count: "+N" floating above a fish that swallowed a burst.
+    if f.badge.count > 1 {
+        let label = format!("+{}", f.badge.count - 1);
+        let px = 1.5 * f.scale;
+        let s = cv.ts.sx;
+        let lw = sysfont::measure(&label, px);
+        let mut anchor = [tiny_skia::Point::from_xy(x, y - 13.0)];
+        t.post_concat(cv.ts).map_points(&mut anchor);
+        let base = Transform::from_scale(s, s)
+            .post_translate(anchor[0].x - lw * s / 2.0, anchor[0].y - 3.5 * px * s);
+        sysfont::draw(cv.pm, &label, 0.0, 0.0, px, (40, 30, 20, 210), base.post_translate(0.6, 0.6));
+        sysfont::draw(cv.pm, &label, 0.0, 0.0, px, tokens::ACCENT_GOLD, base);
     }
 }
 

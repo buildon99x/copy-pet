@@ -598,6 +598,7 @@ fn stats_bubble_renders_with_system_font() {
         look: 0.0,
         accessory: Accessory::None,
         particles: &[],
+        xp_pops: &[],
         fish: None,
         bubble: None,
         bubble_alpha: 0.0,

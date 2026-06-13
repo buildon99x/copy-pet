@@ -7,7 +7,7 @@
 use clipcat::clipboard::ClipStore;
 use clipcat::i18n::Lang;
 use clipcat::panel::Panel;
-use clipcat::render::{self, Accessory, Badge, BubbleData, FishView, PanelView, Scene};
+use clipcat::render::{self, Accessory, Badge, BubbleData, FishView, PanelView, Scene, XpPop};
 use tiny_skia::Pixmap;
 
 fn base_scene(lang: Lang) -> Scene<'static> {
@@ -26,6 +26,7 @@ fn base_scene(lang: Lang) -> Scene<'static> {
         look: 0.0,
         accessory: Accessory::Scarf,
         particles: &[],
+        xp_pops: &[],
         fish: None,
         bubble: None,
         bubble_alpha: 0.0,
@@ -86,12 +87,16 @@ fn main() {
         save(&pm, &dir, "1-text");
     }
 
-    // 2. cat with fish mid-flight (letter badge), mouth opening
+    // 2. cat with fish mid-flight (letter badge + merged +N count), mouth
+    //    opening, and a floating +5 XP popup
     {
-        let badge = Badge::from_source(Some("Code"));
+        let mut badge = Badge::from_source(Some("Code"));
+        badge.count = 4; // shows a "+3" merged-copy count badge on the fish
+        let pops = [XpPop { x: 120.0, y: 98.0, life: 1.0, amount: 5 }];
         let mut sc = base_scene(Lang::Ko);
         sc.toast = Some(("복사됨! COPIED!", 1.0));
         sc.mouth_open = 0.7;
+        sc.xp_pops = &pops;
         sc.fish = Some(FishView {
             x: 165.0,
             y: 80.0,
