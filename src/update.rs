@@ -106,13 +106,28 @@ pub fn spawn_checker() {
 /// Opens the releases page in the default browser — how the portable
 /// backend "applies" an update (the user downloads the right build).
 pub fn open_releases_page() {
-    let url = format!("{REPO_URL}/releases/latest");
+    open_url(&format!("{REPO_URL}/releases/latest"));
+}
+
+/// The project's GitHub page, linked from the context menu. Placeholder for
+/// now (the real org/repo isn't published yet).
+pub const GITHUB_URL: &str = "https://github.com/clipcat";
+
+/// Opens the GitHub page (the context-menu "GitHub" item).
+pub fn open_github() {
+    open_url(GITHUB_URL);
+}
+
+/// Opens `url` in the user's default browser. This launches the OS browser
+/// (open / xdg-open / `start`); the app itself transmits nothing, so it is not
+/// a network use in the ADR-0009 sense.
+pub fn open_url(url: &str) {
     #[cfg(target_os = "macos")]
-    let _ = command("open").arg(&url).spawn();
+    let _ = command("open").arg(url).spawn();
     #[cfg(all(unix, not(target_os = "macos")))]
-    let _ = command("xdg-open").arg(&url).spawn();
+    let _ = command("xdg-open").arg(url).spawn();
     #[cfg(windows)]
-    let _ = command("cmd").args(["/c", "start", "", &url]).spawn();
+    let _ = command("cmd").args(["/c", "start", "", url]).spawn();
 }
 
 // ---- version check ----------------------------------------------------------

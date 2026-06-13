@@ -34,6 +34,8 @@ pub enum MenuAction {
     InstallUpdate,
     ResetStats,
     About,
+    /// Open the project's GitHub page in the browser.
+    OpenGithub,
     Quit,
 }
 
@@ -97,6 +99,8 @@ pub enum MenuOutcome {
     ApplyWindowLevel,
     /// Open the releases page / start the update.
     InstallUpdate,
+    /// Open the project's GitHub page in the browser.
+    OpenGithub,
     /// Save and exit.
     Quit,
 }

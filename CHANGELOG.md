@@ -17,6 +17,8 @@ versions follow [SemVer](https://semver.org/). Maintenance rules:
 ## [Unreleased]
 
 ### Added
+- A **GitHub** entry in the context menu (just below "About ClipCat") opens
+  the project page in your browser.
 - The clipboard panel has a new **Thumbnail view**, toggled by a button in
   the panel's header: clips become roomy rounded cards that wrap onto two
   lines, so you see even more of each one. The compact list stays the

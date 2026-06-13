@@ -399,6 +399,7 @@ impl PortableApp {
                 super::mac_autostart::set(!autostart);
             }
             MenuOutcome::ApplyWindowLevel => self.apply_window_level(),
+            MenuOutcome::OpenGithub => crate::update::open_github(),
             MenuOutcome::InstallUpdate => crate::update::open_releases_page(),
         }
     }

@@ -71,6 +71,7 @@ const CMD_CAPTURE: usize = 17;
 const CMD_UPDATE: usize = 18;
 const CMD_AUTOUPDATE: usize = 19;
 const CMD_AUTOCLOSE: usize = 23;
+const CMD_GITHUB: usize = 24;
 const CMD_SIZE0: usize = 20; // ..=22
 const CMD_SOUND0: usize = 30; // ..=32
 const CMD_ACC0: usize = 40; // 40 = none, 41..=46 accessories
@@ -1058,6 +1059,12 @@ unsafe fn show_menu(hwnd: HWND, ms: &MenuSnapshot) -> usize {
         CMD_ABOUT,
         wz(t(lang, Msg::MenuAbout)).as_ptr(),
     );
+    AppendMenuW(
+        menu,
+        MF_STRING,
+        CMD_GITHUB,
+        wz(t(lang, Msg::MenuGithub)).as_ptr(),
+    );
     AppendMenuW(menu, MF_SEPARATOR, 0, null());
     AppendMenuW(
         menu,
@@ -1130,6 +1137,7 @@ unsafe fn open_menu(hwnd: HWND) {
                     MB_OK | MB_ICONINFORMATION,
                 );
             }
+            CMD_GITHUB => crate::update::open_github(),
             CMD_RESET => {
                 let answer = MessageBoxW(
                     hwnd,

@@ -1077,6 +1077,7 @@ impl Pet {
         ));
         m.push(MenuItem::leaf(t(lang, Msg::MenuReset), MenuAction::ResetStats, false));
         m.push(MenuItem::leaf(t(lang, Msg::MenuAbout), MenuAction::About, false));
+        m.push(MenuItem::leaf(t(lang, Msg::MenuGithub), MenuAction::OpenGithub, false));
         m.push(MenuEntry::Separator);
         m.push(MenuItem::leaf(t(lang, Msg::MenuExit), MenuAction::Quit, false));
         m
@@ -1130,6 +1131,7 @@ impl Pet {
             MenuAction::InstallUpdate => return MenuOutcome::InstallUpdate,
             MenuAction::ResetStats => return MenuOutcome::ConfirmReset,
             MenuAction::About => return MenuOutcome::ShowAbout,
+            MenuAction::OpenGithub => return MenuOutcome::OpenGithub,
             MenuAction::Quit => return MenuOutcome::Quit,
         }
         MenuOutcome::Handled
@@ -1368,6 +1370,23 @@ mod tests {
         let mut p = pet();
         assert_eq!(p.apply_menu_action(MenuAction::About), MenuOutcome::ShowAbout);
         assert_eq!(p.apply_menu_action(MenuAction::Quit), MenuOutcome::Quit);
+    }
+
+    #[test]
+    fn menu_has_a_github_link_under_about() {
+        let mut p = pet();
+        let m = p.build_menu("HK", false);
+        // the GitHub item is present and sits directly after About
+        let about = m
+            .iter()
+            .position(|e| matches!(e, MenuEntry::Item(i) if i.action == Some(MenuAction::About)))
+            .unwrap();
+        assert!(
+            matches!(&m[about + 1], MenuEntry::Item(i) if i.action == Some(MenuAction::OpenGithub)),
+            "GitHub should be the item right below About"
+        );
+        // opening it is OS work handed back to the backend
+        assert_eq!(p.apply_menu_action(MenuAction::OpenGithub), MenuOutcome::OpenGithub);
     }
 
     #[test]
