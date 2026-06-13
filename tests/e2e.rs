@@ -319,6 +319,43 @@ fn xp_routing_click_copy_doubleclick() {
     assert_eq!(dbl.st.total_xp, 10, "double-click nets exactly +10, not +11");
 }
 
+/// Expanded three-pane screen (ADR-0012): opens via the menu to the wide
+/// canvas, list rows select into the detail pane, the detail Copy hands back
+/// text without closing, sidebar nav switches view, and it collapses back.
+#[test]
+fn expanded_screen_opens_navigates_and_copies() {
+    let mut p = pet();
+    copy(&mut p, "alpha", Some("Code"));
+    copy(&mut p, "beta", Some("Chrome"));
+
+    assert_eq!(p.apply_menu_action(MenuAction::ToggleExpanded), MenuOutcome::Handled);
+    assert!(p.panel_open() && p.panel_expanded());
+    let (w, _) = p.canvas_size();
+    assert!(w >= 760, "expanded canvas is the wide three-pane size ({w})");
+
+    // click the second list row -> selects it (no copy, screen stays open)
+    let el = p.panel.expanded_layout();
+    let row1_y = el.rows_y + panel::ROW_H * 1.5;
+    assert_eq!(p.panel_click(el.list.0 + 40.0, row1_y), None);
+    assert_eq!(p.panel.sel, 1);
+    assert!(p.panel_expanded());
+
+    // the detail Copy button returns the selected clip's text, keeps it open
+    let copy_y = el.action_y0 + el.action_h / 2.0;
+    let copied = p.panel_click(el.detail.0 + 24.0, copy_y);
+    assert_eq!(copied.as_deref(), Some("alpha"));
+    assert!(p.panel_expanded(), "expanded screen never auto-closes on copy");
+
+    // sidebar nav -> Pinned
+    let nav_y = el.nav_y0 + el.nav_h + el.nav_h / 2.0;
+    p.panel_click(el.sidebar.0 + 30.0, nav_y);
+    assert_eq!(p.panel.nav, panel::NavView::Pinned);
+
+    // collapse back to the compact panel
+    p.apply_menu_action(MenuAction::ToggleExpanded);
+    assert!(p.panel_open() && !p.panel_expanded());
+}
+
 /// Hotkey configuration e2e: default spec, persistence round-trip, custom
 /// values and the reset of hand-edited garbage.
 #[test]

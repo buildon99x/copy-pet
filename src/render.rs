@@ -1327,6 +1327,308 @@ fn draw_btn(cv: &mut Cv, bx: f32, by: f32, icon: BtnIcon) {
     }
 }
 
+// ---- expanded three-pane screen (ADR-0012) ---------------------------------
+
+/// Everything the expanded "full screen" needs to draw one frame: the panel
+/// state + store (shared with the compact panel) plus the sidebar's live
+/// progression/activity figures.
+pub struct ExpandedView<'a> {
+    pub panel: &'a Panel,
+    pub store: &'a ClipStore,
+    pub lang: Lang,
+    pub capture: bool,
+    pub caret: bool,
+    pub level: u32,
+    pub xp_pct: f32,
+    pub keys: u64,
+    pub clicks: u64,
+    pub copies: u64,
+    pub autoclose: bool,
+}
+
+/// Draws the expanded three-pane screen (sidebar | clip list | detail).
+pub fn draw_expanded_panel(pm: &mut Pixmap, v: &ExpandedView, scale: f32) {
+    let mut cv = Cv { pm, ts: Transform::from_scale(scale, scale) };
+    let lang = v.lang;
+    let txt = tokens::TEXT_PRIMARY;
+    let txt2 = tokens::TEXT_SECONDARY;
+    let muted = tokens::TEXT_MUTED;
+    let el = v.panel.expanded_layout();
+    let (cx, cy, cw, ch) = el.card;
+
+    // shadow + dark glass card
+    cv.fill(&round_rect(cx - 2.0, cy + 3.0, cw + 4.0, ch + 4.0, 22.0), (5, 7, 12, 80));
+    cv.fill(&round_rect(cx, cy, cw, ch, 20.0), tokens::SURFACE_PANEL);
+    cv.stroke(&round_rect(cx, cy, cw, ch, 20.0), tokens::BORDER_STRONG, 1.5);
+
+    // ---- sidebar -----------------------------------------------------------
+    let (sx, sy, sw, sh) = el.sidebar;
+    // rounded on the left to follow the card; the right edge tucks under the
+    // list column (its small rounded notch reads as the card surface behind).
+    cv.fill(&round_rect(sx, sy, sw, sh, 18.0), tokens::SURFACE_WINDOW);
+    cv.fill(&round_rect(sx + sw - 18.0, sy, 18.0, sh, 0.0), tokens::SURFACE_WINDOW);
+    cv.line(&[(sx + sw, sy + 6.0), (sx + sw, sy + sh - 6.0)], tokens::BORDER_SUBTLE, 1.0);
+
+    // logo: gold fish mark + ClipCat
+    let (lx, ly) = (sx + 16.0, sy + 20.0);
+    {
+        let mut pb = PathBuilder::new();
+        pb.move_to(lx + 12.0, ly);
+        pb.quad_to(lx + 6.0, ly - 5.5, lx + 0.5, ly);
+        pb.quad_to(lx + 6.0, ly + 5.5, lx + 12.0, ly);
+        pb.close();
+        cv.fill(&pb.finish(), tokens::ACCENT_GOLD);
+        cv.line(&[(lx + 12.0, ly), (lx + 16.5, ly - 4.0), (lx + 16.5, ly + 4.0), (lx + 12.0, ly)], tokens::ACCENT_GOLD_2, 1.6);
+    }
+    cv.ui_text("ClipCat", lx + 22.0, ly - 7.0, 2.1, txt);
+
+    // level badge (gold ring) + XP bar
+    let badge_cx = sx + sw - 24.0;
+    cv.fill(&oval(badge_cx, sy + 20.0, 13.0, 13.0), tokens::ACCENT_GOLD);
+    {
+        let s = format!("{}", v.level);
+        let w = sysfont::measure(&s, 1.5);
+        cv.ui_text(&s, badge_cx - w / 2.0, sy + 14.5, 1.5, (30, 24, 12, 255));
+    }
+    let xpb = (sx + 16.0, sy + 44.0, sw - 32.0, 8.0);
+    fill_round_rect(cv.pm, xpb, 4.0, tokens::SURFACE_CONTROL, cv.ts);
+    fill_round_rect(cv.pm, (xpb.0, xpb.1, (xpb.2 * v.xp_pct.clamp(0.0, 1.0)).max(4.0), xpb.3), 4.0, tokens::ACCENT_GOLD, cv.ts);
+
+    // TODAY stats
+    cv.ui_text(t(lang, Msg::ExpToday), sx + 16.0, sy + 62.0, 1.2, muted);
+    let stats = [
+        (Msg::BubbleKeys, fmt_thousands(v.keys)),
+        (Msg::BubbleClicks, fmt_thousands(v.clicks)),
+        (Msg::BubbleClips, fmt_thousands(v.copies)),
+    ];
+    for (i, (label, value)) in stats.iter().enumerate() {
+        let y = sy + 80.0 + i as f32 * 16.0;
+        cv.ui_text(t(lang, *label), sx + 16.0, y, 1.4, txt2);
+        let vw = sysfont::measure(value, 1.4);
+        cv.ui_text(value, sx + sw - 16.0 - vw, y, 1.4, txt);
+    }
+
+    // nav items
+    for (i, nav) in pl::NavView::ALL.iter().enumerate() {
+        let y = el.nav_y0 + i as f32 * el.nav_h;
+        let selected = *nav == v.panel.nav;
+        if selected {
+            fill_round_rect(cv.pm, (sx + 8.0, y, sw - 16.0, el.nav_h - 4.0), 8.0, tokens::SURFACE_CONTROL, cv.ts);
+            fill_round_rect(cv.pm, (sx + 8.0, y + 4.0, 3.0, el.nav_h - 12.0), 1.5, tokens::ACCENT_GOLD, cv.ts);
+        }
+        let label = t(lang, nav_msg(*nav));
+        cv.ui_text(label, sx + 20.0, y + (el.nav_h - 4.0) / 2.0 - 5.5, 1.7, if selected { txt } else { txt2 });
+        // count badge for Clipboard/Pinned
+        if let Some(n) = nav_count(*nav, v.store) {
+            let s = n.to_string();
+            let w = sysfont::measure(&s, 1.3);
+            cv.ui_text(&s, sx + sw - 18.0 - w, y + (el.nav_h - 4.0) / 2.0 - 4.5, 1.3, muted);
+        }
+    }
+
+    // capture status (sidebar bottom)
+    let cap_y = sy + sh - 22.0;
+    let (dot, msg) = if v.capture {
+        (tokens::ACCENT_GREEN, Msg::CaptureRunning)
+    } else {
+        (tokens::ACCENT_RED, Msg::CapturePaused)
+    };
+    cv.fill(&oval(sx + 18.0, cap_y, 3.0, 3.0), dot);
+    cv.ui_text(t(lang, msg), sx + 28.0, cap_y - 5.0, 1.3, muted);
+
+    // ---- list column -------------------------------------------------------
+    let rows = v.panel.expanded_visible(v.store);
+    let (lxc, _, lwc, _) = el.list;
+    // search box
+    let (qx, qy, qw, qh) = el.search;
+    fill_round_rect(cv.pm, (qx, qy, qw, qh), 9.0, tokens::SURFACE_CONTROL, cv.ts);
+    stroke_round_rect(cv.pm, (qx, qy, qw, qh), 9.0, tokens::BORDER_SUBTLE, 1.5, cv.ts);
+    cv.stroke(&oval(qx + 11.0, qy + qh / 2.0 - 1.5, 3.4, 3.4), muted, 1.7);
+    cv.line(&[(qx + 14.0, qy + qh / 2.0 + 1.5), (qx + 17.0, qy + qh / 2.0 + 4.5)], muted, 1.7);
+    if v.panel.query.is_empty() {
+        cv.ui_text(t(lang, Msg::SearchHint), qx + 22.0, qy + (qh - 12.6) / 2.0, 1.8, muted);
+    } else {
+        cv.ui_text(&v.panel.query, qx + 22.0, qy + (qh - 12.6) / 2.0, 1.8, txt);
+    }
+
+    let now = crate::clipboard::now_ts();
+    let hover_row = v.panel.cursor.and_then(|(hx, hy)| {
+        if hx >= lxc && hx <= lxc + lwc { row_at_expanded(&el, hy) } else { None }
+    });
+    if rows.is_empty() {
+        let msg = if v.store.is_empty() { t(lang, Msg::PanelEmpty) } else { t(lang, Msg::PanelNoMatch) };
+        let w = sysfont::measure(msg, 1.8);
+        cv.ui_text(msg, lxc + (lwc - w) / 2.0, el.rows_y + 60.0, 1.8, muted);
+    }
+    for i in 0..el.rows {
+        let idx = v.panel.scroll + i;
+        let Some(clip) = rows.get(idx) else { break };
+        let ry = el.rows_y + i as f32 * pl::ROW_H;
+        let rrect = (lxc + 8.0, ry + 1.0, lwc - 16.0, pl::ROW_H - 2.0);
+        if idx == v.panel.sel {
+            fill_round_rect(cv.pm, rrect, 8.0, tokens::SURFACE_CARD, cv.ts);
+            focus_border(cv.pm, rrect, 8.0, cv.ts);
+        } else if hover_row == Some(idx) {
+            fill_round_rect(cv.pm, rrect, 8.0, tokens::SURFACE_CONTROL_HOVER, cv.ts);
+        }
+        // pin star
+        let star = star_path(lxc + 20.0, ry + pl::ROW_H / 2.0, 6.0, 0.0);
+        if clip.pinned {
+            cv.fill(&star, PIN_GOLD);
+        } else {
+            cv.stroke(&star, fade(muted, 0.7), 1.3);
+        }
+        // source badge + preview + meta
+        let tx = lxc + 34.0;
+        let tmax = lwc - 16.0 - 34.0 - 30.0;
+        let prev = sysfont::truncate_to_width(&clip.preview(), 1.8, tmax);
+        cv.ui_text(&prev, tx, ry + 5.0, 1.8, txt);
+        let mut mx = tx;
+        if let Some(src) = &clip.source {
+            source_badge(cv.pm, mx + 4.0, ry + 24.5, 8.0, &Badge::from_source(Some(src)), cv.ts);
+            mx += 12.0;
+        }
+        let mut meta = i18n::time_ago(lang, now.saturating_sub(clip.ts));
+        if let Some(src) = &clip.source {
+            meta = format!("{src} - {meta}");
+        }
+        let meta = sysfont::truncate_to_width(&meta, 1.3, tmax - (mx - tx));
+        cv.ui_text(&meta, mx, ry + 20.5, 1.3, muted);
+        // quick-copy digit badge for the first ten rows
+        if idx < pl::QUICK_KEYS {
+            let bx = lxc + lwc - 22.0;
+            cv.fill(&oval(bx, ry + pl::ROW_H / 2.0, 7.0, 7.0), tokens::ACCENT_PURPLE);
+            let d = char::from(b'0' + idx as u8).to_string();
+            let dw = sysfont::measure(&d, 1.3);
+            cv.ui_text(&d, bx - dw / 2.0, ry + pl::ROW_H / 2.0 - 4.6, 1.3, tokens::TEXT_PRIMARY);
+        }
+    }
+
+    // ---- detail pane -------------------------------------------------------
+    draw_detail_pane(&mut cv, v, &el, &rows, now);
+
+    // ---- collapse button ---------------------------------------------------
+    let (bx, by, bw, bh) = el.collapse;
+    fill_round_rect(cv.pm, (bx, by, bw, bh), 6.0, tokens::SURFACE_CONTROL, cv.ts);
+    stroke_round_rect(cv.pm, (bx, by, bw, bh), 6.0, tokens::BORDER_SUBTLE, 1.5, cv.ts);
+    let (mx, my) = (bx + bw / 2.0, by + bh / 2.0);
+    // inward chevrons (collapse)
+    cv.line(&[(mx - 4.5, my - 4.0), (mx - 1.0, my), (mx - 4.5, my + 4.0)], txt2, 1.7);
+    cv.line(&[(mx + 4.5, my - 4.0), (mx + 1.0, my), (mx + 4.5, my + 4.0)], txt2, 1.7);
+    let _ = v.caret;
+    let _ = v.autoclose;
+}
+
+fn draw_detail_pane(cv: &mut Cv, v: &ExpandedView, el: &pl::ExpandedLayout, rows: &[&crate::clipboard::Clip], now: u64) {
+    let lang = v.lang;
+    let (dx, dy, dw, dh) = el.detail;
+    let txt = tokens::TEXT_PRIMARY;
+    let txt2 = tokens::TEXT_SECONDARY;
+    let muted = tokens::TEXT_MUTED;
+    cv.line(&[(dx, dy + 6.0), (dx, dy + dh - 6.0)], tokens::BORDER_SUBTLE, 1.0);
+    let px = dx + 14.0;
+    let pw = dw - 28.0;
+
+    let Some(clip) = rows.get(v.panel.sel) else {
+        let m = t(lang, Msg::DetailEmpty);
+        let w = sysfont::measure(m, 1.5);
+        cv.ui_text(m, dx + (dw - w) / 2.0, dy + dh / 2.0 - 6.0, 1.5, muted);
+        return;
+    };
+
+    // title (first line) + pin star
+    let title = sysfont::truncate_to_width(clip.preview().lines().next().unwrap_or(""), 2.0, pw - 16.0);
+    cv.ui_text(&title, px, dy + 16.0, 2.0, txt);
+    let star = star_path(dx + dw - 16.0, dy + 22.0, 6.5, 0.0);
+    if clip.pinned { cv.fill(&star, PIN_GOLD); } else { cv.stroke(&star, fade(muted, 0.7), 1.3); }
+
+    // source line
+    if let Some(src) = &clip.source {
+        source_badge(cv.pm, px + 4.0, dy + 40.0, 9.0, &Badge::from_source(Some(src)), cv.ts);
+        let s = sysfont::truncate_to_width(&format!("{src} - {}", i18n::time_ago(lang, now.saturating_sub(clip.ts))), 1.3, pw - 14.0);
+        cv.ui_text(&s, px + 13.0, dy + 36.0, 1.3, muted);
+    }
+
+    // preview box (first lines of the clip text)
+    let box_y = dy + 52.0;
+    let box_h = 120.0;
+    fill_round_rect(cv.pm, (px, box_y, pw, box_h), 10.0, tokens::SURFACE_WINDOW, cv.ts);
+    stroke_round_rect(cv.pm, (px, box_y, pw, box_h), 10.0, tokens::BORDER_SUBTLE, 1.0, cv.ts);
+    for (i, line) in clip.text.lines().take(7).enumerate() {
+        let l = sysfont::truncate_to_width(line, 1.5, pw - 16.0);
+        cv.ui_text(&l, px + 8.0, box_y + 8.0 + i as f32 * 15.0, 1.5, txt2);
+    }
+
+    // action buttons: Copy (gold, primary), Pin/Unpin (neutral), Delete (red).
+    // `accent` is the text+border color for the non-primary buttons.
+    let pin_label = if clip.pinned { Msg::ActUnpin } else { Msg::ActPin };
+    let actions = [
+        (Msg::ActCopy, true, tokens::ACCENT_GOLD),
+        (pin_label, false, tokens::TEXT_SECONDARY),
+        (Msg::ActDelete, false, tokens::ACCENT_RED),
+    ];
+    for (i, (label, primary, accent)) in actions.iter().enumerate() {
+        let by = el.action_y0 + i as f32 * (el.action_h + 6.0);
+        let brect = (px, by, pw, el.action_h);
+        let fg = if *primary {
+            fill_round_rect(cv.pm, brect, 8.0, tokens::ACCENT_GOLD, cv.ts);
+            (30, 24, 12, 255)
+        } else {
+            fill_round_rect(cv.pm, brect, 8.0, tokens::SURFACE_CONTROL, cv.ts);
+            stroke_round_rect(cv.pm, brect, 8.0, fade(*accent, 0.6), 1.5, cv.ts);
+            *accent
+        };
+        let s = t(lang, *label);
+        let w = sysfont::measure(s, 1.6);
+        cv.ui_text(s, px + (pw - w) / 2.0, by + (el.action_h - 12.6) / 2.0, 1.6, fg);
+    }
+
+    // clip info (Copied / Source / Size / Type)
+    let info_y = el.action_y0 + 3.0 * (el.action_h + 6.0) + 8.0;
+    let kb = clip.text.len();
+    let size = if kb >= 1024 { format!("{:.1} KB", kb as f32 / 1024.0) } else { format!("{kb} B") };
+    let info = [
+        (Msg::DetailCreated, i18n::time_ago(lang, now.saturating_sub(clip.ts))),
+        (Msg::DetailSource, clip.source.clone().unwrap_or_else(|| "—".into())),
+        (Msg::DetailSize, size),
+        (Msg::DetailType, "Text".into()),
+    ];
+    for (i, (label, value)) in info.iter().enumerate() {
+        let y = info_y + i as f32 * 16.0;
+        cv.ui_text(t(lang, *label), px, y, 1.3, muted);
+        let val = sysfont::truncate_to_width(value, 1.3, pw - 70.0);
+        let vw = sysfont::measure(&val, 1.3);
+        cv.ui_text(&val, px + pw - vw, y, 1.3, txt2);
+    }
+}
+
+/// Which list row (if any) is under canvas-y `hy` in the expanded list.
+fn row_at_expanded(el: &pl::ExpandedLayout, hy: f32) -> Option<usize> {
+    if hy < el.rows_y {
+        return None;
+    }
+    let i = ((hy - el.rows_y) / pl::ROW_H) as usize;
+    if i < el.rows { Some(i) } else { None }
+}
+
+fn nav_msg(nav: pl::NavView) -> Msg {
+    match nav {
+        pl::NavView::Clipboard => Msg::NavClipboard,
+        pl::NavView::Pinned => Msg::NavPinned,
+        pl::NavView::Statistics => Msg::NavStatistics,
+        pl::NavView::Customization => Msg::NavCustomization,
+        pl::NavView::Settings => Msg::NavSettings,
+    }
+}
+
+fn nav_count(nav: pl::NavView, store: &ClipStore) -> Option<usize> {
+    match nav {
+        pl::NavView::Clipboard => Some(store.len()),
+        pl::NavView::Pinned => Some(store.pinned_count()),
+        _ => None,
+    }
+}
+
 // ---- tray icon -------------------------------------------------------------
 
 /// Draws a 32x32 cat face (with its little fish) for the tray/window icon.

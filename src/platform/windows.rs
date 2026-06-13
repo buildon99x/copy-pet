@@ -71,6 +71,7 @@ const CMD_CAPTURE: usize = 17;
 const CMD_UPDATE: usize = 18;
 const CMD_AUTOUPDATE: usize = 19;
 const CMD_AUTOCLOSE: usize = 23;
+const CMD_EXPANDED: usize = 24;
 const CMD_SIZE0: usize = 20; // ..=22
 const CMD_SOUND0: usize = 30; // ..=32
 const CMD_ACC0: usize = 40; // 40 = none, 41..=46 accessories
@@ -802,6 +803,7 @@ struct MenuSnapshot {
     capture: bool,
     autoclose: bool,
     panel_open: bool,
+    expanded: bool,
     hotkey_label: String,
     auto_update: bool,
     /// Newer release the user can install, when the checker found one.
@@ -827,9 +829,15 @@ unsafe fn show_menu(hwnd: HWND, ms: &MenuSnapshot) -> usize {
 
     AppendMenuW(
         menu,
-        MF_STRING | chk(ms.panel_open),
+        MF_STRING | chk(ms.panel_open && !ms.expanded),
         CMD_PANEL,
         wz(&i18n::menu_clipboard(lang, &ms.hotkey_label)).as_ptr(),
+    );
+    AppendMenuW(
+        menu,
+        MF_STRING | chk(ms.expanded),
+        CMD_EXPANDED,
+        wz(t(lang, Msg::MenuExpanded)).as_ptr(),
     );
     AppendMenuW(
         menu,
@@ -1011,6 +1019,7 @@ fn menu_snapshot() -> Option<MenuSnapshot> {
         capture: a.pet.st.clip_capture,
         autoclose: a.pet.st.panel_autoclose,
         panel_open: a.pet.panel_open(),
+        expanded: a.pet.panel_expanded(),
         hotkey_label: a.hotkey_label.clone(),
         auto_update: a.pet.st.auto_update,
         update: a.pet.update_available().map(str::to_string),
@@ -1078,6 +1087,9 @@ unsafe fn open_menu(hwnd: HWND) {
             }
             CMD_PANEL => {
                 with_app(|a| a.pet.toggle_panel());
+            }
+            CMD_EXPANDED => {
+                with_app(|a| a.pet.toggle_expanded());
             }
             CMD_CAPTURE => {
                 with_app(|a| {

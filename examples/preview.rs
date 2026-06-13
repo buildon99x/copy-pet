@@ -307,4 +307,33 @@ fn main() {
         sc.toast = Some(("Enable Accessibility for global shortcuts & typing reactions", 1.0));
         pet_png("frame_12_permission_missing", &sc);
     }
+
+    // frame_13/14: the expanded three-pane screen (ADR-0012), EN + KO
+    for (lang, name) in [(Lang::En, "frame_13_expanded_screen"), (Lang::Ko, "frame_14_expanded_korean")] {
+        let store = demo_store();
+        let mut panel = Panel::default();
+        panel.toggle();
+        panel.toggle_expanded();
+        panel.sel = 1;
+        let lt = panel.layout();
+        let mut sc = base_scene(lang);
+        sc.origin = lt.cat;
+        let mut pm = Pixmap::new(lt.canvas_w as u32, lt.canvas_h as u32).unwrap();
+        render::render_card(&mut pm, &sc, 1.0);
+        let view = render::ExpandedView {
+            panel: &panel,
+            store: &store,
+            lang,
+            capture: true,
+            caret: true,
+            level: 24,
+            xp_pct: 0.68,
+            keys: 12_430,
+            clicks: 3_210,
+            copies: 1_248,
+            autoclose: true,
+        };
+        render::draw_expanded_panel(&mut pm, &view, 1.0);
+        save(&pm, &dir, name);
+    }
 }

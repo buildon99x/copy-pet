@@ -17,6 +17,8 @@ use crate::i18n::Lang;
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum MenuAction {
     TogglePanel,
+    /// Open the expanded three-pane screen (or collapse it).
+    ToggleExpanded,
     ToggleCapture,
     /// Close the clipboard panel automatically after copying a clip (on/off).
     TogglePanelAutoClose,

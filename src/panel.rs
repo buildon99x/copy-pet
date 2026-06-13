@@ -32,6 +32,14 @@ pub const DEFAULT_OFF: (f32, f32) = (-56.0, -282.0);
 /// can't produce an absurd canvas.
 pub const MAX_OFF: f32 = 4096.0;
 
+/// Expanded "full screen" mode: a fixed-size three-pane card (sidebar, clip
+/// list, clip detail). Not user-resizable — the compact card's w/h/off are
+/// kept separately and restored on collapse. See ADR-0012.
+pub const EXP_W: f32 = 760.0;
+pub const EXP_H: f32 = 560.0;
+/// Expanded card offset relative to the cat: centers the cat below the card.
+pub const EXP_OFF: (f32, f32) = (-260.0, -564.0);
+
 pub const BTN: f32 = 18.0;
 pub const ROW_H: f32 = 34.0;
 /// Row x-zones: pin toggle | clip body | delete.
@@ -145,6 +153,68 @@ pub enum PanelDrag {
     Resize,
 }
 
+/// What a click in the expanded screen landed on.
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub enum ExpandedHit {
+    None,
+    Collapse,
+    Nav(NavView),
+    Row(usize),
+    Action(ExpAction),
+}
+
+/// A detail-pane action button in the expanded screen.
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub enum ExpAction {
+    Copy,
+    Pin,
+    Delete,
+}
+
+/// Sidebar destinations in the expanded screen.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum NavView {
+    Clipboard,
+    Pinned,
+    Statistics,
+    Customization,
+    Settings,
+}
+
+impl NavView {
+    /// Nav items, top to bottom.
+    pub const ALL: [NavView; 5] = [
+        NavView::Clipboard,
+        NavView::Pinned,
+        NavView::Statistics,
+        NavView::Customization,
+        NavView::Settings,
+    ];
+}
+
+/// Geometry of the expanded three-pane screen (canvas units), derived from the
+/// card rect in [`Layout`]. The sidebar lists [`NavView`]s, the center holds
+/// the search + clip rows, the right pane shows the selected clip's detail.
+#[derive(Clone, Copy, Debug)]
+pub struct ExpandedLayout {
+    pub card: (f32, f32, f32, f32),
+    pub sidebar: (f32, f32, f32, f32),
+    pub list: (f32, f32, f32, f32),
+    pub detail: (f32, f32, f32, f32),
+    /// Collapse-to-compact button (top-right of the card).
+    pub collapse: (f32, f32, f32, f32),
+    /// First nav item's top y and the per-item height (sidebar).
+    pub nav_y0: f32,
+    pub nav_h: f32,
+    /// Search box in the list column.
+    pub search: (f32, f32, f32, f32),
+    pub rows_y: f32,
+    pub rows: usize,
+    /// Detail action buttons start y + per-button height.
+    pub action_y0: f32,
+    pub action_h: f32,
+}
+
 pub struct Panel {
     pub open: bool,
     pub query: String,
@@ -164,6 +234,10 @@ pub struct Panel {
     pub h: f32,
     /// Card top-left relative to the cat's top-left (user-movable, persisted).
     pub off: (f32, f32),
+    /// Expanded three-pane "full screen" mode (vs. the compact panel).
+    pub expanded: bool,
+    /// Selected sidebar destination while expanded.
+    pub nav: NavView,
     /// Cached filtered row order (the panel is redrawn every tick while
     /// open; without this the query would re-scan every clip text per frame).
     cache: RefCell<ViewCache>,
@@ -182,6 +256,8 @@ impl Default for Panel {
             w: DEFAULT_W,
             h: DEFAULT_H,
             off: DEFAULT_OFF,
+            expanded: false,
+            nav: NavView::Clipboard,
             cache: RefCell::new(ViewCache::default()),
         }
     }
@@ -208,10 +284,14 @@ impl Panel {
         }
     }
 
-    /// The full geometry for the current card size/offset.
+    /// The full geometry for the current card size/offset. In expanded mode
+    /// the card is the fixed three-pane size/offset instead of the user's.
     pub fn layout(&self) -> Layout {
-        let (w, h) = (self.w, self.h);
-        let (off_x, off_y) = self.off;
+        let (w, h, off_x, off_y) = if self.expanded {
+            (EXP_W, EXP_H, EXP_OFF.0, EXP_OFF.1)
+        } else {
+            (self.w, self.h, self.off.0, self.off.1)
+        };
         // canvas = union of the cat canvas and the margin-padded card
         let left = (off_x - MARGIN).min(0.0);
         let top = (off_y - MARGIN).min(0.0);
@@ -249,7 +329,92 @@ impl Panel {
 
     /// Clip rows that fit on screen with the current card height.
     pub fn visible_rows(&self) -> usize {
-        self.layout().rows
+        if self.expanded {
+            self.expanded_layout().rows
+        } else {
+            self.layout().rows
+        }
+    }
+
+    /// Sub-rects of the expanded three-pane screen (only meaningful while
+    /// `expanded`); derived from the card rect in [`Panel::layout`].
+    pub fn expanded_layout(&self) -> ExpandedLayout {
+        let l = self.layout();
+        let (cx, cy, cw, ch) = (l.card_x, l.card_y, l.card_w, l.card_h);
+        let sidebar_w = 196.0;
+        let detail_w = 244.0;
+        let list_w = cw - sidebar_w - detail_w;
+        let list = (cx + sidebar_w, cy, list_w, ch);
+        ExpandedLayout {
+            card: (cx, cy, cw, ch),
+            sidebar: (cx, cy, sidebar_w, ch),
+            list,
+            detail: (cx + sidebar_w + list_w, cy, detail_w, ch),
+            collapse: (cx + cw - 26.0, cy + 8.0, 18.0, 18.0),
+            nav_y0: cy + 176.0,
+            nav_h: 30.0,
+            search: (list.0 + 12.0, cy + 44.0, list_w - 24.0, 22.0),
+            rows_y: cy + 80.0,
+            rows: (((ch - 80.0 - 34.0) / ROW_H) as usize).max(1),
+            action_y0: cy + 246.0,
+            action_h: 26.0,
+        }
+    }
+
+    /// Enter/leave the expanded three-pane screen.
+    pub fn toggle_expanded(&mut self) {
+        self.expanded = !self.expanded;
+        self.clear_armed = false;
+        self.scroll = 0;
+        if self.expanded {
+            self.nav = NavView::Clipboard;
+        }
+    }
+
+    /// Clip rows the expanded list shows for the current nav: the filtered
+    /// history for Clipboard, only pinned clips for Pinned.
+    pub fn expanded_visible<'a>(&self, store: &'a ClipStore) -> Vec<&'a Clip> {
+        let all = self.visible(store);
+        match self.nav {
+            NavView::Pinned => all.into_iter().filter(|c| c.pinned).collect(),
+            _ => all,
+        }
+    }
+
+    /// What a click at canvas coords landed on in the expanded screen.
+    pub fn expanded_hit(&self, x: f32, y: f32, store: &ClipStore) -> ExpandedHit {
+        let el = self.expanded_layout();
+        let inr = |r: (f32, f32, f32, f32)| x >= r.0 && x <= r.0 + r.2 && y >= r.1 && y <= r.1 + r.3;
+        if inr(el.collapse) {
+            return ExpandedHit::Collapse;
+        }
+        let (sx, _, sw, _) = el.sidebar;
+        for (i, nav) in NavView::ALL.iter().enumerate() {
+            let ny = el.nav_y0 + i as f32 * el.nav_h;
+            if x >= sx + 8.0 && x <= sx + sw - 8.0 && y >= ny && y < ny + el.nav_h - 4.0 {
+                return ExpandedHit::Nav(*nav);
+            }
+        }
+        let has_sel = self.sel < self.expanded_visible(store).len();
+        let (dx, _, dw, _) = el.detail;
+        let (px, pw) = (dx + 14.0, dw - 28.0);
+        for (i, act) in [ExpAction::Copy, ExpAction::Pin, ExpAction::Delete].into_iter().enumerate() {
+            let by = el.action_y0 + i as f32 * (el.action_h + 6.0);
+            if has_sel && x >= px && x <= px + pw && y >= by && y <= by + el.action_h {
+                return ExpandedHit::Action(act);
+            }
+        }
+        let (lxc, _, lwc, _) = el.list;
+        if x >= lxc && x <= lxc + lwc && y >= el.rows_y {
+            let i = ((y - el.rows_y) / ROW_H) as usize;
+            if i < el.rows {
+                let idx = self.scroll + i;
+                if idx < self.expanded_visible(store).len() {
+                    return ExpandedHit::Row(idx);
+                }
+            }
+        }
+        ExpandedHit::None
     }
 
     pub fn toggle(&mut self) {

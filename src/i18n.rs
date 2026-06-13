@@ -89,6 +89,27 @@ pub enum Msg {
     LevelShort,
     /// Shown once when a corrupt clips.json was backed up and reset.
     ToastClipsCorrupt,
+    /// Tray/context-menu item that opens the expanded three-pane screen.
+    MenuExpanded,
+    // expanded "full screen" — sidebar nav
+    NavClipboard,
+    NavPinned,
+    NavStatistics,
+    NavCustomization,
+    NavSettings,
+    ExpToday,
+    CaptureRunning,
+    CapturePaused,
+    // expanded — clip detail pane
+    ActCopy,
+    ActPin,
+    ActUnpin,
+    ActDelete,
+    DetailCreated,
+    DetailSource,
+    DetailSize,
+    DetailType,
+    DetailEmpty,
 }
 
 /// Looks up a fixed string for the language.
@@ -190,6 +211,42 @@ pub fn t(lang: Lang, msg: Msg) -> &'static str {
         (LevelShort, Lang::Ko) => "LV",
         (ToastClipsCorrupt, Lang::En) => "History was corrupt — started fresh",
         (ToastClipsCorrupt, Lang::Ko) => "기록이 손상되어 새로 시작했어요",
+        (MenuExpanded, Lang::En) => "Expanded view",
+        (MenuExpanded, Lang::Ko) => "전체 화면",
+        (NavClipboard, Lang::En) => "Clipboard",
+        (NavClipboard, Lang::Ko) => "클립보드",
+        (NavPinned, Lang::En) => "Pinned",
+        (NavPinned, Lang::Ko) => "고정됨",
+        (NavStatistics, Lang::En) => "Statistics",
+        (NavStatistics, Lang::Ko) => "통계",
+        (NavCustomization, Lang::En) => "Customization",
+        (NavCustomization, Lang::Ko) => "꾸미기",
+        (NavSettings, Lang::En) => "Settings",
+        (NavSettings, Lang::Ko) => "설정",
+        (ExpToday, Lang::En) => "TODAY",
+        (ExpToday, Lang::Ko) => "오늘",
+        (CaptureRunning, Lang::En) => "Capture running",
+        (CaptureRunning, Lang::Ko) => "캡처 작동 중",
+        (CapturePaused, Lang::En) => "Capture paused",
+        (CapturePaused, Lang::Ko) => "캡처 멈춤",
+        (ActCopy, Lang::En) => "Copy",
+        (ActCopy, Lang::Ko) => "복사",
+        (ActPin, Lang::En) => "Pin",
+        (ActPin, Lang::Ko) => "고정",
+        (ActUnpin, Lang::En) => "Unpin",
+        (ActUnpin, Lang::Ko) => "고정 해제",
+        (ActDelete, Lang::En) => "Delete",
+        (ActDelete, Lang::Ko) => "삭제",
+        (DetailCreated, Lang::En) => "Copied",
+        (DetailCreated, Lang::Ko) => "복사 시각",
+        (DetailSource, Lang::En) => "Source",
+        (DetailSource, Lang::Ko) => "출처",
+        (DetailSize, Lang::En) => "Size",
+        (DetailSize, Lang::Ko) => "크기",
+        (DetailType, Lang::En) => "Type",
+        (DetailType, Lang::Ko) => "종류",
+        (DetailEmpty, Lang::En) => "Select a clip to see details",
+        (DetailEmpty, Lang::Ko) => "클립을 선택하면 상세가 보여요",
     }
 }
 
@@ -332,7 +389,11 @@ mod tests {
             ToastCapturePaused, ToastCaptureOn, ToastAutoCloseOn, ToastAutoCloseOff,
             MenuAutoUpdate, ToastUpdateDownloading,
             ToastUpdateFailed, ToastAccessibility, BubbleKeys, BubbleClicks, BubbleClips,
-            BubbleActive, LevelShort, ToastClipsCorrupt,
+            BubbleActive, LevelShort, ToastClipsCorrupt, MenuExpanded,
+            NavClipboard, NavPinned, NavStatistics, NavCustomization, NavSettings,
+            ExpToday, CaptureRunning, CapturePaused,
+            ActCopy, ActPin, ActUnpin, ActDelete,
+            DetailCreated, DetailSource, DetailSize, DetailType, DetailEmpty,
         ];
         for msg in all {
             assert!(!t(Lang::En, msg).is_empty());

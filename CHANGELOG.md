@@ -17,6 +17,11 @@ versions follow [SemVer](https://semver.org/). Maintenance rules:
 ## [Unreleased]
 
 ### Added
+- **Expanded view** (tray/right-click menu, "Expanded view"): a roomy
+  three-pane screen with a sidebar (level, XP, today's activity, Clipboard /
+  Pinned nav), the full clip list, and a detail pane that previews the selected
+  clip with Copy / Pin / Delete and its source, size and time. The compact
+  panel is unchanged; collapse from the screen's corner button or with Esc.
 - A floating **"+5 XP / +10 XP" popup** now drifts up from the cat whenever a
   copied fish is eaten or you pet it, so the reward is visible.
 - During copy bursts, extra copies now **merge into the latest fish with a

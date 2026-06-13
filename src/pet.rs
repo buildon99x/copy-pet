@@ -7,7 +7,7 @@
 use crate::clipboard::ClipStore;
 use crate::i18n::{self, t, Lang, Msg};
 use crate::menu::{MenuAction, MenuEntry, MenuItem, MenuOutcome};
-use crate::panel::{NavKey, Panel, PanelAction, PanelDrag};
+use crate::panel::{ExpAction, ExpandedHit, NavKey, Panel, PanelAction, PanelDrag};
 use crate::render::{
     self, Accessory, Badge, BubbleData, FishView, Particle, ParticleKind, Scene, XpPop,
 };
@@ -454,6 +454,11 @@ impl Pet {
         self.panel.open
     }
 
+    /// Whether the expanded three-pane screen is showing.
+    pub fn panel_expanded(&self) -> bool {
+        self.panel.expanded
+    }
+
     pub fn toggle_panel(&mut self) {
         self.drag = None;
         self.relayout(|p| p.panel.toggle());
@@ -507,23 +512,32 @@ impl Pet {
         self.panel.hit(cx, cy)
     }
 
+    /// Copies a clip's text to hand back to the backend (toast + bump, no
+    /// panel close). Shared by the compact `Copy` action and the expanded
+    /// detail/list copy paths.
+    fn copy_text(&mut self, id: u64) -> Option<String> {
+        let text = self.clips.get(id).map(|c| c.text.clone());
+        if text.is_some() {
+            self.set_toast(t(self.lang(), Msg::ToastCopied).to_string(), 1.6);
+            self.happy = (self.happy + 0.4).min(1.0);
+            if self.st.sound_mode >= 1 {
+                sound::play_pop();
+            }
+        }
+        text
+    }
+
     /// Executes a panel action. Returns text the backend must put on the
     /// OS clipboard, if any.
     fn run_action(&mut self, action: PanelAction) -> Option<String> {
         match action {
             PanelAction::Copy(id) => {
-                let text = self.clips.get(id).map(|c| c.text.clone());
-                if text.is_some() {
-                    self.set_toast(t(self.lang(), Msg::ToastCopied).to_string(), 1.6);
-                    self.happy = (self.happy + 0.4).min(1.0);
-                    if self.st.sound_mode >= 1 {
-                        sound::play_pop();
-                    }
-                    // picked a clip: close the panel so the user can paste
-                    // (switchable off to grab several clips in a row)
-                    if self.st.panel_autoclose {
-                        self.toggle_panel();
-                    }
+                let text = self.copy_text(id);
+                // picked a clip: close the panel so the user can paste
+                // (switchable off to grab several clips in a row). The expanded
+                // screen never auto-closes — its detail pane is the point.
+                if text.is_some() && self.st.panel_autoclose && !self.panel.expanded {
+                    self.toggle_panel();
                 }
                 return text;
             }
@@ -586,10 +600,61 @@ impl Pet {
         self.set_toast(t(self.lang(), msg).to_string(), 2.2);
     }
 
+    /// Enter the expanded three-pane screen (opening the panel if needed) or,
+    /// if already expanded, collapse back to the compact panel.
+    pub fn toggle_expanded(&mut self) {
+        self.drag = None;
+        self.relayout(|p| {
+            if !p.panel.open {
+                p.panel.toggle();
+            }
+            p.panel.toggle_expanded();
+        });
+    }
+
     /// A click at window-canvas coords while the panel is open.
     pub fn panel_click(&mut self, cx: f32, cy: f32) -> Option<String> {
+        if self.panel.expanded {
+            return self.expanded_click(cx, cy);
+        }
         let action = self.panel.click(cx, cy, &self.clips)?;
         self.run_action(action)
+    }
+
+    /// Routes a click in the expanded screen: collapse, switch nav, select a
+    /// row, or run a detail-pane action.
+    fn expanded_click(&mut self, cx: f32, cy: f32) -> Option<String> {
+        match self.panel.expanded_hit(cx, cy, &self.clips) {
+            ExpandedHit::Collapse => {
+                self.relayout(|p| p.panel.toggle_expanded());
+                None
+            }
+            ExpandedHit::Nav(n) => {
+                self.panel.nav = n;
+                self.panel.sel = 0;
+                self.panel.scroll = 0;
+                None
+            }
+            ExpandedHit::Row(i) => {
+                self.panel.sel = i;
+                None
+            }
+            ExpandedHit::Action(a) => {
+                let id = self.panel.expanded_visible(&self.clips).get(self.panel.sel)?.id;
+                match a {
+                    ExpAction::Copy => self.copy_text(id),
+                    ExpAction::Pin => {
+                        self.run_action(PanelAction::TogglePin(id));
+                        None
+                    }
+                    ExpAction::Delete => {
+                        self.run_action(PanelAction::Delete(id));
+                        None
+                    }
+                }
+            }
+            ExpandedHit::None => None,
+        }
     }
 
     /// Mouse wheel over the panel (positive rows = scroll down).
@@ -604,6 +669,19 @@ impl Pet {
 
     /// Navigation key while the panel is open.
     pub fn panel_nav(&mut self, key: NavKey) -> Option<String> {
+        // In the expanded screen, Esc collapses back to the compact panel, and
+        // Enter/Quick copy the selected clip without closing the screen.
+        if self.panel.expanded {
+            if key == NavKey::Esc {
+                self.relayout(|p| p.panel.toggle_expanded());
+                return None;
+            }
+            let action = self.panel.nav(key, &self.clips)?;
+            if let PanelAction::Copy(id) = action {
+                return self.copy_text(id);
+            }
+            return self.run_action(action);
+        }
         let action = self.panel.nav(key, &self.clips)?;
         self.run_action(action)
     }
@@ -926,15 +1004,34 @@ impl Pet {
             render::render(pm, &scene, self.scale());
         }
         if self.panel.open {
-            let view = render::PanelView {
-                panel: &self.panel,
-                store: &self.clips,
-                lang: self.lang(),
-                capture: self.st.clip_capture,
-                hint: &self.panel_hint,
-                caret: (t * 1.6).fract() < 0.65,
-            };
-            render::draw_panel(pm, &view, self.scale());
+            let caret = (t * 1.6).fract() < 0.65;
+            if self.panel.expanded {
+                let (lv, into, need) = level_progress(self.st.total_xp);
+                let view = render::ExpandedView {
+                    panel: &self.panel,
+                    store: &self.clips,
+                    lang: self.lang(),
+                    capture: self.st.clip_capture,
+                    caret,
+                    level: lv,
+                    xp_pct: into as f32 / need as f32,
+                    keys: self.st.keys_today,
+                    clicks: self.st.clicks_today,
+                    copies: self.st.copies_today,
+                    autoclose: self.st.panel_autoclose,
+                };
+                render::draw_expanded_panel(pm, &view, self.scale());
+            } else {
+                let view = render::PanelView {
+                    panel: &self.panel,
+                    store: &self.clips,
+                    lang: self.lang(),
+                    capture: self.st.clip_capture,
+                    hint: &self.panel_hint,
+                    caret,
+                };
+                render::draw_panel(pm, &view, self.scale());
+            }
         }
     }
 
@@ -1016,7 +1113,12 @@ impl Pet {
         m.push(MenuItem::leaf(
             i18n::menu_clipboard(lang, hotkey),
             MenuAction::TogglePanel,
-            self.panel.open,
+            self.panel.open && !self.panel.expanded,
+        ));
+        m.push(MenuItem::leaf(
+            t(lang, Msg::MenuExpanded),
+            MenuAction::ToggleExpanded,
+            self.panel.expanded,
         ));
         m.push(MenuItem::leaf(
             t(lang, Msg::MenuCapturePause),
@@ -1117,6 +1219,7 @@ impl Pet {
     pub fn apply_menu_action(&mut self, action: MenuAction) -> MenuOutcome {
         match action {
             MenuAction::TogglePanel => self.toggle_panel(),
+            MenuAction::ToggleExpanded => self.toggle_expanded(),
             MenuAction::ToggleCapture => {
                 self.run_action(PanelAction::ToggleCapture);
             }
