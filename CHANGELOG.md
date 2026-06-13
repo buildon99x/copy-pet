@@ -17,6 +17,10 @@ versions follow [SemVer](https://semver.org/). Maintenance rules:
 ## [Unreleased]
 
 ### Added
+- A floating **"+5 XP / +10 XP" popup** now drifts up from the cat whenever a
+  copied fish is eaten or you pet it, so the reward is visible.
+- During copy bursts, extra copies now **merge into the latest fish with a
+  "+N" count** instead of being dropped — every clip is still saved.
 - The clipboard panel is now yours to arrange: drag its **header** to move
   the panel anywhere — the cat stays put — and drag the **grip in its
   bottom-right corner** to resize it (a taller panel shows more clips).
@@ -30,10 +34,25 @@ versions follow [SemVer](https://semver.org/). Maintenance rules:
   can grab several clips in a row. On by default.
 
 ### Changed
+- **New dark-premium look**: the clipboard panel and stats bubble are now a
+  dark glass card with gold highlights — gold selection borders, a gold XP
+  bar, colored per-app source badges (matching the fish) and purple quick-copy
+  digit badges. The cat keeps its warm look on a dark keyboard.
+- The cat is **livelier**: it gets curious (a side glance and ear flicks) after
+  a while idle, throws sparks while you type at full speed, and opens its mouth
+  right as the fish arrives.
+- A **double-click pet now grants exactly +10 XP** (the single-click bounce it
+  starts with is no longer double-counted).
 - The hover **stats bubble now uses your system font** instead of the
   built-in pixel font, matching the panel's typography.
 - **Holding a key no longer farms stats**: key auto-repeat is ignored, so
   the key counter (and its XP) only advances once per actual press.
+
+### Fixed
+- **Korean (IME) input in search**: pressing Enter to confirm a composing
+  Hangul syllable no longer also copies the selected clip and closes the panel.
+- A **corrupt clipboard history file** is now backed up and the app starts
+  fresh with a brief notice, instead of failing to restore your clips silently.
 
 ### Removed
 - The built-in 5×7 pixel font and the hand-drawn vector Hangul are gone;
