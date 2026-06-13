@@ -25,6 +25,18 @@ pub const XP_PER_COPY: u64 = 5;
 const FISH_SECS: f32 = 0.9;
 /// At most this many fish queue up during copy bursts.
 const FISH_QUEUE_MAX: usize = 3;
+/// Lifetime of the floating "+N XP" popup, in seconds.
+const XP_POPUP_SECS: f32 = 0.85;
+const YAWN_SECS: f32 = 1.1;
+const LOOK_SECS: f32 = 1.4;
+
+/// An occasional idle gesture that adds subtle life when the cat is calm.
+#[derive(Clone, Copy, PartialEq)]
+enum Gesture {
+    None,
+    Yawn,
+    Look,
+}
 
 /// Logical window size in physical pixels for a given scale (cat only).
 pub fn window_size(scale: f32) -> (i32, i32) {
@@ -46,6 +58,21 @@ fn rand_f(seed: &mut u32) -> f32 {
 fn ease_press(p: f32) -> f32 {
     // snappy down, smooth up
     1.0 - (1.0 - p) * (1.0 - p)
+}
+
+/// Discrete typing energy tier from the smoothed keys+clicks/second rate
+/// (thresholds per `docs/design/interaction_behavior.yaml`): 0 idle, 1 slow,
+/// 2 fast, 3 extreme.
+fn tier_for_rate(rate: f32) -> u8 {
+    if rate >= 10.0 {
+        3
+    } else if rate >= 5.0 {
+        2
+    } else if rate >= 1.0 {
+        1
+    } else {
+        0
+    }
 }
 
 /// A seed derived from the wall clock; avoids `rand` as a dependency.
@@ -78,6 +105,13 @@ pub struct Pet {
     squash: f32,
     rate: f32,
     tail_phase: f32,
+    typing_tier: u8,  // 0 idle, 1 slow, 2 fast, 3 extreme
+    extreme_next: f32, // throttle for extreme-typing energy sparkles
+    gesture: Gesture,
+    gesture_t0: f32,  // when the current gesture started (sec)
+    gesture_next: f32, // earliest time to start the next idle gesture (sec)
+    look_dir: f32,    // which way the look-around glances (-1 / +1)
+    xp_popup: Option<(String, f32)>, // text, start time (sec since start)
     last_event: Instant,
     particles: Vec<Particle>,
     zzz_next: f32,
@@ -128,6 +162,13 @@ impl Pet {
             squash: 0.0,
             rate: 0.0,
             tail_phase: 0.0,
+            typing_tier: 0,
+            extreme_next: 0.0,
+            gesture: Gesture::None,
+            gesture_t0: 0.0,
+            gesture_next: 9.0,
+            look_dir: 1.0,
+            xp_popup: None,
             last_event: now,
             particles: Vec::new(),
             zzz_next: 0.0,
@@ -492,6 +533,7 @@ impl Pet {
             if self.sleep > 0.5 {
                 self.spawn_sparkles(3, 120.0, 100.0); // waking up
             }
+            self.gesture = Gesture::None; // activity interrupts idle gestures
             self.last_event = now;
             self.st.total_keys += k;
             self.st.total_clicks += c;
@@ -547,6 +589,50 @@ impl Pet {
 
         let excite = (self.rate / 7.0).clamp(0.0, 1.0);
         self.tail_phase += dt * (1.3 + excite * 5.0 + self.happy * 2.0 - self.sleep * 0.9);
+
+        // discrete typing tiers (keys+clicks per second) — see
+        // docs/design/interaction_behavior.yaml. Extreme typing throws off
+        // little bursts of energy sparkles.
+        self.typing_tier = tier_for_rate(self.rate);
+        if self.typing_tier == 3 && t > self.extreme_next {
+            self.extreme_next = t + 0.11;
+            self.spawn_sparkles(2, 120.0, 92.0);
+        }
+
+        // occasional idle gestures (yawn / look-around) when the cat is calm
+        let calm = self.rate < 1.0
+            && self.sleep < 0.25
+            && self.fish.is_none()
+            && self.fish_queue.is_empty()
+            && !self.panel.open
+            && self.gesture == Gesture::None;
+        if calm && t > self.gesture_next {
+            self.gesture = if rand_f(&mut self.rng) < 0.5 {
+                Gesture::Yawn
+            } else {
+                Gesture::Look
+            };
+            self.gesture_t0 = t;
+            self.look_dir = if rand_f(&mut self.rng) < 0.5 { -1.0 } else { 1.0 };
+            self.gesture_next = t + 9.0 + rand_f(&mut self.rng) * 9.0;
+        }
+        if self.gesture != Gesture::None {
+            let dur = if self.gesture == Gesture::Yawn {
+                YAWN_SECS
+            } else {
+                LOOK_SECS
+            };
+            if t - self.gesture_t0 > dur || self.sleep > 0.3 {
+                self.gesture = Gesture::None;
+            }
+        }
+
+        // expire the "+N XP" popup
+        if let Some((_, t0)) = &self.xp_popup {
+            if t - *t0 > XP_POPUP_SECS {
+                self.xp_popup = None;
+            }
+        }
 
         // fish flight
         if self.fish.is_none() {
@@ -628,7 +714,7 @@ impl Pet {
         !(resting && self.frame.is_multiple_of(2))
     }
 
-    /// The fish reached the mouth: crunch, sparkles, a happy bump.
+    /// The fish reached the mouth: crunch, sparkles, a happy bump, "+5 XP".
     fn nom(&mut self) {
         self.happy = (self.happy + 0.5).min(1.0);
         self.squash = 0.6;
@@ -644,8 +730,44 @@ impl Pet {
             size: 4.0,
             spin: 0.0,
         });
+        // the popup lands *after* the fish is eaten (never before the nom)
+        self.start_xp_popup(XP_PER_COPY);
         if self.st.sound_mode >= 1 {
             sound::play_nom();
+        }
+    }
+
+    /// Starts the floating "+N XP" popup above the head.
+    fn start_xp_popup(&mut self, n: u64) {
+        self.xp_popup = Some((i18n::xp_gain(self.lang(), n), self.now_t()));
+    }
+
+    /// Yawn (0..1) and look-around glance (-1..1) envelopes at time `t`.
+    fn gesture_envelope(&self, t: f32) -> (f32, f32) {
+        match self.gesture {
+            Gesture::None => (0.0, 0.0),
+            Gesture::Yawn => {
+                let e = t - self.gesture_t0;
+                let v = if e < 0.35 {
+                    e / 0.35
+                } else if e < 0.8 {
+                    1.0
+                } else {
+                    (1.0 - (e - 0.8) / (YAWN_SECS - 0.8)).max(0.0)
+                };
+                (v.clamp(0.0, 1.0), 0.0)
+            }
+            Gesture::Look => {
+                let e = t - self.gesture_t0;
+                let v = if e < 0.4 {
+                    e / 0.4
+                } else if e < 1.05 {
+                    1.0
+                } else {
+                    (1.0 - (e - 1.05) / (LOOK_SECS - 1.05)).max(0.0)
+                };
+                (0.0, self.look_dir * v.clamp(0.0, 1.0))
+            }
         }
     }
 
@@ -725,6 +847,11 @@ impl Pet {
             Some((_, ft)) => ((ft - 0.45) / 0.4).clamp(0.0, 1.0),
             None => 0.0,
         };
+        let (yawn, look) = self.gesture_envelope(t);
+        let xp_popup = self
+            .xp_popup
+            .as_ref()
+            .map(|(s, t0)| (s.as_str(), ((t - *t0) / XP_POPUP_SECS).clamp(0.0, 1.0)));
 
         let scene = Scene {
             paw_l: ease_press(self.paw_l),
@@ -737,6 +864,10 @@ impl Pet {
             breath,
             tail_phase: self.tail_phase,
             mouth_open,
+            typing_tier: self.typing_tier,
+            yawn,
+            look,
+            xp_popup,
             accessory: Accessory::from_id(self.st.accessory),
             particles: &self.particles,
             fish,
@@ -770,6 +901,7 @@ impl Pet {
     pub fn pet(&mut self) {
         self.happy = 1.0;
         self.st.total_xp += 10;
+        self.start_xp_popup(10);
         self.dirty = true;
         for _ in 0..6 {
             let r1 = rand_f(&mut self.rng);
@@ -796,6 +928,7 @@ impl Pet {
     pub fn click_bounce(&mut self, cx: f32, cy: f32) {
         self.squash = 1.0;
         self.st.total_xp += 1;
+        self.start_xp_popup(1);
         self.dirty = true;
         let r = rand_f(&mut self.rng);
         self.particles.push(Particle {
@@ -1231,6 +1364,64 @@ mod tests {
         assert!(p.fish.is_none());
         assert!(p.fish_queue.is_empty());
         assert!(p.happy > 0.0, "nom should make the cat happy");
+    }
+
+    #[test]
+    fn typing_tiers_match_rate_thresholds() {
+        assert_eq!(tier_for_rate(0.4), 0);
+        assert_eq!(tier_for_rate(1.0), 1);
+        assert_eq!(tier_for_rate(4.9), 1);
+        assert_eq!(tier_for_rate(5.0), 2);
+        assert_eq!(tier_for_rate(9.9), 2);
+        assert_eq!(tier_for_rate(10.0), 3);
+        assert_eq!(tier_for_rate(40.0), 3);
+    }
+
+    #[test]
+    fn xp_popup_appears_at_nom_not_at_copy() {
+        let mut p = pet();
+        p.on_copy("fish food".into(), None, None);
+        assert!(p.xp_popup.is_none(), "no XP popup before the fish is eaten");
+        for _ in 0..50 {
+            p.last_tick -= std::time::Duration::from_millis(33);
+            p.advance(0, 0, 0);
+        }
+        let (text, _) = p.xp_popup.as_ref().expect("nom shows the +XP popup");
+        assert!(text.contains('5'), "copy grants +5 XP, got {text:?}");
+    }
+
+    #[test]
+    fn pet_and_boop_show_their_xp_popup() {
+        let mut p = pet();
+        p.pet();
+        assert_eq!(p.xp_popup.as_ref().map(|(s, _)| s.as_str()), Some("+10 XP"));
+        let mut q = pet();
+        q.click_bounce(120.0, 120.0);
+        assert_eq!(q.xp_popup.as_ref().map(|(s, _)| s.as_str()), Some("+1 XP"));
+    }
+
+    #[test]
+    fn idle_gesture_envelope_rises_and_falls_and_input_cancels_it() {
+        let mut p = pet();
+        let t0 = p.now_t();
+        p.gesture = Gesture::Yawn;
+        p.gesture_t0 = t0;
+        assert!(p.gesture_envelope(t0).0 < 0.1, "yawn starts closed");
+        assert!(p.gesture_envelope(t0 + 0.5).0 > 0.9, "yawn opens mid-gesture");
+        assert_eq!(
+            p.gesture_envelope(t0 + YAWN_SECS + 0.1).0,
+            0.0,
+            "yawn closes after its duration"
+        );
+        // a look-around glances fully to the chosen side
+        p.gesture = Gesture::Look;
+        p.gesture_t0 = t0;
+        p.look_dir = -1.0;
+        assert!(p.gesture_envelope(t0 + 0.7).1 < -0.9, "look reaches full glance");
+        // any input interrupts the idle gesture
+        p.last_tick -= std::time::Duration::from_millis(33);
+        p.advance(1, 0, 0);
+        assert!(p.gesture == Gesture::None, "typing cancels the idle gesture");
     }
 
     #[test]

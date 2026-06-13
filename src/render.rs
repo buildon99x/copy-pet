@@ -200,6 +200,14 @@ pub struct Scene<'a> {
     pub breath: f32,
     pub tail_phase: f32,
     pub mouth_open: f32,
+    /// Discrete typing energy: 0 idle, 1 slow, 2 fast, 3 extreme.
+    pub typing_tier: u8,
+    /// Sleepy yawn envelope (0..1) — opens a wide mouth, droops the eyes.
+    pub yawn: f32,
+    /// Side glance for the look-around gesture (-1 left .. 1 right).
+    pub look: f32,
+    /// Floating "+N XP" popup: text + progress 0..1 (rises and fades).
+    pub xp_popup: Option<(&'a str, f32)>,
     pub accessory: Accessory,
     pub particles: &'a [Particle],
     pub fish: Option<FishView<'a>>,
@@ -498,6 +506,15 @@ fn draw_scene(pm: &mut Pixmap, sc: &Scene, scale: f32) {
         draw_particle(&mut cv, p);
     }
 
+    // "+N XP" popup — rises and fades just above the head
+    if let Some((text, prog)) = sc.xp_popup {
+        let a = if prog < 0.75 { 1.0 } else { (1.0 - (prog - 0.75) / 0.25).max(0.0) };
+        let px = 2.2;
+        let w = sysfont::measure(text, px);
+        let y = 70.0 - 34.0 * prog;
+        cv.ui_text(text, 120.0 - w / 2.0, y, px, fade(SPARK_A, a));
+    }
+
     // toast pill
     if let Some((text, a)) = sc.toast {
         if a > 0.01 {
@@ -519,12 +536,15 @@ fn draw_scene(pm: &mut Pixmap, sc: &Scene, scale: f32) {
 }
 
 fn draw_face(cv: &mut Cv, sc: &Scene, t: Transform) {
-    let closed = sc.blink.max(sc.sleep);
-    let happy = sc.happy > 0.35 && sc.sleep < 0.5;
+    // a yawn droops the lids and opens a wide mouth, like a heavy blink
+    let closed = sc.blink.max(sc.sleep).max(sc.yawn * 0.85);
+    let happy = sc.happy > 0.35 && sc.sleep < 0.5 && sc.yawn < 0.2;
     let chase = sc.mouth_open > 0.05 && sc.sleep < 0.5; // eyeing the fish
+    let lx = sc.look * 4.0; // side glance shifts the eyes
+    let excited = sc.typing_tier >= 2 && sc.sleep < 0.3 && sc.yawn < 0.2;
 
-    for (ex, dir) in [(92.0f32, -1.0f32), (148.0, 1.0)] {
-        let _ = dir;
+    for ex0 in [92.0f32, 148.0] {
+        let ex = ex0 + lx;
         if happy && !chase {
             // ∩ shaped happy eyes
             let mut pb = PathBuilder::new();
@@ -539,8 +559,14 @@ fn draw_face(cv: &mut Cv, sc: &Scene, t: Transform) {
             cv.stroke_t(&pb.finish(), EYE, 2.6, t);
         } else {
             let ry = 5.2 * (1.0 - closed * 0.85);
-            // big glossy eyes while a fish is incoming
-            let r = if chase { 6.2 } else { 5.2 };
+            // big glossy eyes while a fish is incoming or typing fast
+            let r = if chase {
+                6.2
+            } else if excited {
+                5.9
+            } else {
+                5.2
+            };
             cv.fill_t(&oval(ex, 122.0, r, (ry * r / 5.2).max(0.8)), EYE, t);
             if ry > 2.0 {
                 cv.fill_t(&oval(ex - 1.6, 120.2, 1.7, 1.7 * (ry / 5.2)), (255, 255, 255, 230), t);
@@ -551,25 +577,28 @@ fn draw_face(cv: &mut Cv, sc: &Scene, t: Transform) {
     // nose — soft pink, above the mouth
     {
         let mut pb = PathBuilder::new();
-        pb.move_to(116.0, 130.0);
-        pb.line_to(124.0, 130.0);
-        pb.quad_to(120.0, 134.0, 116.0, 130.0);
+        pb.move_to(116.0 + lx, 130.0);
+        pb.line_to(124.0 + lx, 130.0);
+        pb.quad_to(120.0 + lx, 134.0, 116.0 + lx, 130.0);
         pb.close();
         cv.fill_t(&pb.finish(), NOSE, t);
     }
 
-    if sc.mouth_open > 0.05 {
-        // open mouth, ready to nom — dark interior with a tongue
-        let o = sc.mouth_open.clamp(0.0, 1.0);
-        let (rx, ry) = (4.5 + 3.5 * o, 3.0 + 5.5 * o);
-        cv.fill_t(&oval(120.0, 139.0, rx, ry), MOUTH_C, t);
-        cv.fill_t(&oval(120.0, 139.0 + ry * 0.42, rx * 0.72, ry * 0.5), TONGUE, t);
+    // open mouth: fish-nom or a wide sleepy yawn (whichever is bigger)
+    let open = sc.mouth_open.max(sc.yawn);
+    if open > 0.05 {
+        // dark interior with a tongue; a yawn is rounder/taller
+        let o = open.clamp(0.0, 1.0);
+        let tall = if sc.yawn > sc.mouth_open { 6.5 } else { 5.5 };
+        let (rx, ry) = (4.5 + 3.5 * o, 3.0 + tall * o);
+        cv.fill_t(&oval(120.0 + lx, 139.0, rx, ry), MOUTH_C, t);
+        cv.fill_t(&oval(120.0 + lx, 139.0 + ry * 0.42, rx * 0.72, ry * 0.5), TONGUE, t);
     } else {
         // ω mouth
         let mut pb = PathBuilder::new();
-        pb.move_to(112.0, 136.0);
-        pb.quad_to(116.0, 141.0, 120.0, 136.5);
-        pb.quad_to(124.0, 141.0, 128.0, 136.0);
+        pb.move_to(112.0 + lx, 136.0);
+        pb.quad_to(116.0 + lx, 141.0, 120.0 + lx, 136.5);
+        pb.quad_to(124.0 + lx, 141.0, 128.0 + lx, 136.0);
         cv.stroke_t(&pb.finish(), MOUTH_C, 2.4, t);
     }
 

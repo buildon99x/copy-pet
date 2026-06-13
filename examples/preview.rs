@@ -7,8 +7,10 @@
 use clipcat::clipboard::ClipStore;
 use clipcat::i18n::Lang;
 use clipcat::panel::Panel;
-use clipcat::render::{self, Accessory, Badge, BubbleData, FishView, PanelView, Scene};
-use tiny_skia::Pixmap;
+use clipcat::render::{
+    self, Accessory, Badge, BubbleData, FishView, PanelView, Particle, ParticleKind, Scene,
+};
+use tiny_skia::{Color, Pixmap, PixmapPaint, Transform};
 
 fn base_scene(lang: Lang) -> Scene<'static> {
     Scene {
@@ -22,6 +24,10 @@ fn base_scene(lang: Lang) -> Scene<'static> {
         breath: 0.3,
         tail_phase: 1.2,
         mouth_open: 0.0,
+        typing_tier: 0,
+        yawn: 0.0,
+        look: 0.0,
+        xp_popup: None,
         accessory: Accessory::Scarf,
         particles: &[],
         fish: None,
@@ -37,6 +43,29 @@ fn save(pm: &Pixmap, dir: &str, name: &str) {
     let path = format!("{dir}/{name}.png");
     pm.save_png(&path).unwrap();
     println!("wrote {path}");
+}
+
+/// A single 240x256 cat render on a transparent background.
+fn render_tile(sc: &Scene) -> Pixmap {
+    let mut pm = Pixmap::new(240, 256).unwrap();
+    render::render(&mut pm, sc, 1.0);
+    pm
+}
+
+/// Composites several cat tiles in a row on a dark "desktop" backdrop, the way
+/// the design reference board shows the pet states side by side.
+fn board(dir: &str, name: &str, tiles: &[Pixmap], scale: f32) {
+    let (tw, th) = ((240.0 * scale) as u32, (256.0 * scale) as u32);
+    let pad = 8u32;
+    let cols = tiles.len() as u32;
+    let mut big = Pixmap::new(cols * tw + (cols + 1) * pad, th + 2 * pad).unwrap();
+    big.fill(Color::from_rgba8(22, 24, 30, 255));
+    for (i, t) in tiles.iter().enumerate() {
+        let x = pad + i as u32 * (tw + pad);
+        let ts = Transform::from_translate(x as f32, pad as f32).pre_scale(scale, scale);
+        big.draw_pixmap(0, 0, t.as_ref(), &PixmapPaint::default(), ts, None);
+    }
+    save(&big, dir, name);
 }
 
 fn demo_store() -> ClipStore {
@@ -165,5 +194,80 @@ fn main() {
         let mut pm = Pixmap::new(64, 64).unwrap();
         render::draw_icon_scaled(&mut pm, 2.0);
         save(&pm, &dir, "5-icon");
+    }
+
+    // 6. pet states board: idle, typing slow/fast/extreme, sleep, yawn, look
+    {
+        let mut tiles = Vec::new();
+        tiles.push(render_tile(&base_scene(Lang::En)));
+        let mut slow = base_scene(Lang::En);
+        slow.typing_tier = 1;
+        slow.paw_l = 0.8;
+        slow.excite = 0.2;
+        tiles.push(render_tile(&slow));
+        let mut fast = base_scene(Lang::En);
+        fast.typing_tier = 2;
+        fast.paw_l = 1.0;
+        fast.paw_r = 0.4;
+        fast.excite = 0.65;
+        tiles.push(render_tile(&fast));
+        // extreme typing throws off energy sparkles
+        let ex_fx = [
+            Particle { x: 150.0, y: 96.0, vx: 0.0, vy: 0.0, life: 0.9, kind: ParticleKind::Sparkle, size: 5.0, spin: 0.0 },
+            Particle { x: 92.0, y: 104.0, vx: 0.0, vy: 0.0, life: 0.7, kind: ParticleKind::Sparkle, size: 4.0, spin: 0.0 },
+            Particle { x: 120.0, y: 66.0, vx: 0.0, vy: 0.0, life: 1.0, kind: ParticleKind::Star, size: 5.0, spin: 0.4 },
+        ];
+        let mut extreme = base_scene(Lang::En);
+        extreme.typing_tier = 3;
+        extreme.paw_r = 1.0;
+        extreme.excite = 1.0;
+        extreme.particles = &ex_fx;
+        tiles.push(render_tile(&extreme));
+        let zzz = [Particle { x: 150.0, y: 78.0, vx: 8.0, vy: -15.0, life: 0.9, kind: ParticleKind::Zzz, size: 2.0, spin: 0.0 }];
+        let mut sleep = base_scene(Lang::En);
+        sleep.sleep = 1.0;
+        sleep.paw_r = 0.0;
+        sleep.particles = &zzz;
+        tiles.push(render_tile(&sleep));
+        let mut yawn = base_scene(Lang::En);
+        yawn.yawn = 1.0;
+        tiles.push(render_tile(&yawn));
+        let mut look = base_scene(Lang::En);
+        look.look = 1.0;
+        tiles.push(render_tile(&look));
+        board(&dir, "6-states", &tiles, 0.72);
+    }
+
+    // 7. accessories board: none + the six unlockables
+    {
+        let tiles: Vec<Pixmap> = [
+            Accessory::None,
+            Accessory::Scarf,
+            Accessory::Glasses,
+            Accessory::Beanie,
+            Accessory::Headphones,
+            Accessory::Crown,
+            Accessory::Wizard,
+        ]
+        .into_iter()
+        .map(|acc| {
+            let mut s = base_scene(Lang::En);
+            s.accessory = acc;
+            render_tile(&s)
+        })
+        .collect();
+        board(&dir, "7-accessories", &tiles, 0.72);
+    }
+
+    // 8. happy nom with the "+5 XP" popup
+    {
+        let hearts = [Particle { x: 120.0, y: 96.0, vx: 0.0, vy: -20.0, life: 1.0, kind: ParticleKind::Heart, size: 5.0, spin: 0.0 }];
+        let mut sc = base_scene(Lang::Ko);
+        sc.happy = 1.0;
+        sc.xp_popup = Some(("+5 XP", 0.3));
+        sc.particles = &hearts;
+        let mut pm = Pixmap::new(240, 256).unwrap();
+        render::render_card(&mut pm, &sc, 1.0);
+        save(&pm, &dir, "8-nom-xp");
     }
 }

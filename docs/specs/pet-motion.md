@@ -1,6 +1,7 @@
 # ClipCat — Pet Motion & Visual System
 
-Status: in progress · Owner: ClipCat · Last updated: 2026-06-13 ·
+Status: implemented (first pass; panel open/close animation deferred) · Owner: ClipCat ·
+Last updated: 2026-06-13 ·
 Contract: [`docs/design/`](../design) · Decision: [ADR-0012](../../.context/kb/adr/0012-pet-motion-visual-system.md)
 
 ## 1. Summary
@@ -18,41 +19,50 @@ contract YAML/JSON; this file records **what is done vs. pending**.
 
 ## 2. Implementation status
 
-Legend: ✅ done · 🟡 this pass · ⬜ deferred
+Legend: ✅ done · ⬜ deferred
 
 ### Visuals
 | Item | Status | Where |
 |------|:--:|------|
-| Soft-shaded fur (gradient head/body/paws), matte tone | 🟡 | `render.rs` |
-| Contract palette (`pet_tokens.json`) | 🟡 | `render.rs` |
-| Remove hard outline / soft edges | 🟡 | `render.rs` |
-| Soft drop shadow + pink nose | 🟡 | `render.rs` |
-| Dark-glass hover stats card (yellow accent, cat peek) | 🟡 | `render.rs::draw_bubble` |
-| Accessories (scarf, glasses, beanie, headphones, crown, wizard) | ✅ | `render.rs::draw_accessory` |
+| Soft-shaded fur (matte vertical gradients head/body/ears/paws/tail) | ✅ | `render.rs` (`vgrad`/`fill_grad_t`) |
+| Contract palette (`pet_tokens.json`) | ✅ | `render.rs` |
+| Remove hard outline / soft edges | ✅ | `render.rs` |
+| Soft stacked-oval drop shadow + pink nose + tongue | ✅ | `render.rs::draw_face` |
+| Dark-glass hover stats card (yellow accent, cat peek) | ✅ | `render.rs::draw_bubble` |
+| Accessories (scarf re-shaded; glasses/beanie/headphones/crown/wizard) | ✅ | `render.rs::draw_accessory` |
 
 ### States / behaviors
 | Item | Status | Where |
 |------|:--:|------|
 | Idle (blink, breath, tail) | ✅ | `pet.rs` / `render.rs` |
 | Sleep + Zzz after idle | ✅ | `pet.rs` |
-| Discrete typing tiers (slow / fast / extreme + extreme FX) | 🟡 | `pet.rs` |
-| Yawn + look-around idle gestures | 🟡 | `pet.rs` / `render.rs` |
+| Discrete typing tiers (slow / fast / extreme + extreme energy FX) | ✅ | `pet.rs` (`tier_for_rate`) |
+| Yawn + look-around idle gestures | ✅ | `pet.rs` (`Gesture`/`gesture_envelope`) |
 | Copy → fish + badge + fly-to-mouth + nom + happy | ✅ | `pet.rs` |
-| "+N XP" floating popup (after nom) | 🟡 | `pet.rs` / `render.rs` |
+| "+N XP" floating popup (starts at nom, never before) | ✅ | `pet.rs::start_xp_popup` / `render.rs` |
 | Petting (double-click, +10 XP, hearts) | ✅ | `pet.rs::pet` |
 | Boop (single-click, +1 XP) | ✅ | `pet.rs::click_bounce` |
 | Level-up (stars + "LEVEL UP!") | ✅ | `pet.rs::maybe_level_up` |
 | New-accessory unlock + auto-equip | ✅ | `pet.rs` |
-| Panel open/close grow animation (cat anchored) | 🟡 | `pet.rs` / `panel.rs` / `render.rs` |
+| Panel open/close grow animation (cat anchored) | ⬜ | deferred — see §3 |
 
 ### QA
 | Item | Status | Where |
 |------|:--:|------|
-| Preview frames per `visual_qa.md` | 🟡 | `examples/preview.rs` |
-| e2e/unit coverage for new behaviors | 🟡 | `tests/e2e.rs`, `pet.rs` tests |
+| Preview frames (states board, accessories board, +XP, fish, bubble EN/KO) | ✅ | `examples/preview.rs` |
+| e2e/unit coverage for new behaviors | ✅ | `pet.rs` tests (tiers, gesture, +XP ordering) |
 
-## 3. Deferred (would need their own change/ADR)
+## 3. Deferred
 
+- ⬜ **Panel open/close grow animation** (`motion_spec.yaml: panel_open/close`).
+  A correct animated *close* requires deferring the window shrink until the
+  card finishes collapsing, which changes the timing of the cat-anchor
+  contract (`take_window_shift`) and the public `panel_open()` semantics that
+  both backends and the e2e suite depend on. That anchor behavior is exactly the
+  `visual_qa.md` fail condition ("panel open shifts cat anchor by > 1px") and
+  can only be validated on a real Windows/macOS window — not headlessly. It is
+  intentionally left for a pass that can be GUI-verified; the panel still opens
+  instantly and keeps the cat anchored as before.
 - ⬜ Bundled brand-specific source badges (VS Code/Chrome/Notion/…). We keep the
   current privacy- and asset-friendly approach: a stable hashed-colour initial
   chip, plus the real exe icon on Windows.

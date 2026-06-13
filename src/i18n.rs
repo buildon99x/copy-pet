@@ -210,6 +210,11 @@ pub fn new_accessory(lang: Lang, name: &str) -> String {
     }
 }
 
+/// The floating "+N XP" reward popup ("XP" is the same token in both UIs).
+pub fn xp_gain(_lang: Lang, n: u64) -> String {
+    format!("+{n} XP")
+}
+
 pub fn accessory_locked(lang: Lang, name: &str, level: u32) -> String {
     match lang {
         Lang::En => format!("{name} (unlocks at LV {level})"),

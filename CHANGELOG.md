@@ -17,6 +17,13 @@ versions follow [SemVer](https://semver.org/). Maintenance rules:
 ## [Unreleased]
 
 ### Added
+- **The cat is more alive at rest**: it now reacts to your typing speed in
+  tiers — calm, focused, excited, and a burst of energy sparkles when you're
+  really flying — and between bursts it will occasionally **yawn** or **glance
+  around**.
+- A floating **"+N XP"** now pops up from the cat whenever you earn XP — eating
+  a copied clip (+5), a petting (+10) or a boop (+1) — landing right as the cat
+  noms its fish.
 - The clipboard panel is now yours to arrange: drag its **header** to move
   the panel anywhere — the cat stays put — and drag the **grip in its
   bottom-right corner** to resize it (a taller panel shows more clips).
@@ -30,6 +37,12 @@ versions follow [SemVer](https://semver.org/). Maintenance rules:
   can grab several clips in a row. On by default.
 
 ### Changed
+- **The cat got a glow-up**: softer, rounder *matte* shading with gentle
+  highlights and shadow instead of the old flat fill and hard outline, a warmer
+  cream-and-red palette, a little pink nose, and a smoother red scarf.
+- The hover **stats bubble is now a sleek dark "RPG" card** — your level, a
+  yellow XP bar, today's keys / clicks / clips / active time, and a tiny cat
+  peeking over the top edge.
 - The hover **stats bubble now uses your system font** instead of the
   built-in pixel font, matching the panel's typography.
 - **Holding a key no longer farms stats**: key auto-repeat is ignored, so
