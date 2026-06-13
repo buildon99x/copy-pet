@@ -9,18 +9,32 @@ use crate::panel as pl;
 use crate::panel::Panel;
 use crate::sysfont;
 use tiny_skia::{
-    FillRule, FilterQuality, LineCap, LineJoin, Paint, Path, PathBuilder, Pixmap, PixmapPaint,
-    Rect, Stroke, Transform,
+    Color, FillRule, FilterQuality, GradientStop, LineCap, LineJoin, LinearGradient, Paint, Path,
+    PathBuilder, Pixmap, PixmapPaint, Point, Rect, Shader, SpreadMode, Stroke, Transform,
 };
 
 pub const CANVAS_W: f32 = 240.0;
 pub const CANVAS_H: f32 = 256.0;
 
-// palette
-const OUTLINE: (u8, u8, u8, u8) = (84, 72, 58, 255);
-const FUR: (u8, u8, u8, u8) = (250, 247, 242, 255);
-const EAR_PINK: (u8, u8, u8, u8) = (247, 200, 207, 255);
-const BLUSH: (u8, u8, u8, u8) = (245, 168, 176, 255);
+// palette — pet tokens from docs/design/pet_tokens.json (matte-soft tone:
+// gentle fur-shadow gradient, no hard outline, no specular highlight).
+const OUTLINE: (u8, u8, u8, u8) = (84, 72, 58, 255); // desk/panel soft strokes only
+const FUR: (u8, u8, u8, u8) = (255, 244, 234, 255); // furBase
+const FUR_TOP: (u8, u8, u8, u8) = (255, 250, 245, 255); // soft top of the fur gradient
+const FUR_SH: (u8, u8, u8, u8) = (232, 209, 193, 255); // furShadow
+const EAR_PINK: (u8, u8, u8, u8) = (247, 196, 200, 255);
+const BLUSH: (u8, u8, u8, u8) = (255, 168, 178, 255);
+const EYE: (u8, u8, u8, u8) = (23, 23, 23, 255); // eye
+const NOSE: (u8, u8, u8, u8) = (255, 162, 170, 255); // nose (token #FFB3B3, a touch deeper to read)
+const MOUTH_C: (u8, u8, u8, u8) = (43, 26, 26, 255); // mouth
+const TONGUE: (u8, u8, u8, u8) = (255, 143, 163, 255); // tongue
+const SCARF_RED: (u8, u8, u8, u8) = (183, 53, 46, 255); // scarfRed
+const SCARF_TOP: (u8, u8, u8, u8) = (205, 80, 72, 255); // soft top of the scarf gradient
+const SCARF_DARK: (u8, u8, u8, u8) = (124, 32, 29, 255); // scarfDark
+const SPARK: (u8, u8, u8) = (255, 201, 40); // sparkle
+const SPARK_A: (u8, u8, u8, u8) = (SPARK.0, SPARK.1, SPARK.2, 255);
+const HEART_C: (u8, u8, u8) = (255, 111, 163); // heart
+const SLEEP_BLUE: (u8, u8, u8) = (120, 168, 255); // sleepBlue
 const DESK_TOP: (u8, u8, u8, u8) = (207, 159, 110, 255);
 const DESK_FRONT: (u8, u8, u8, u8) = (179, 133, 79, 255);
 const KEY_BASE: (u8, u8, u8, u8) = (78, 85, 102, 255);
@@ -31,6 +45,12 @@ const FISH_BLUE: (u8, u8, u8) = (108, 160, 220);
 const ROW_SEL: (u8, u8, u8, u8) = (208, 228, 248, 200);
 const ROW_HOVER: (u8, u8, u8, u8) = (226, 238, 250, 150);
 const PIN_GOLD: (u8, u8, u8, u8) = (242, 201, 76, 255);
+// dark-glass hover card
+const GLASS_BG: (u8, u8, u8, u8) = (32, 37, 46, 235);
+const GLASS_BORDER: (u8, u8, u8, u8) = (70, 78, 94, 255);
+const GLASS_TRACK: (u8, u8, u8, u8) = (58, 64, 76, 255);
+const GLASS_INK: (u8, u8, u8, u8) = (236, 238, 242, 255);
+const GLASS_DIM: (u8, u8, u8, u8) = (150, 158, 170, 255);
 
 #[derive(Clone, Copy, PartialEq)]
 pub enum Accessory {
@@ -205,6 +225,35 @@ fn fade(c: (u8, u8, u8, u8), a: f32) -> (u8, u8, u8, u8) {
     (c.0, c.1, c.2, (c.3 as f32 * a.clamp(0.0, 1.0)) as u8)
 }
 
+fn col(c: (u8, u8, u8, u8)) -> Color {
+    Color::from_rgba8(c.0, c.1, c.2, c.3)
+}
+
+/// A soft top-to-bottom matte gradient (light top → base → shadow bottom), used
+/// to give the flat fur/scarf forms gentle volume without a hard outline. The
+/// endpoints are in local cat coords; the fill transform moves them with the part.
+fn vgrad(
+    cx: f32,
+    top_y: f32,
+    bot_y: f32,
+    top: (u8, u8, u8, u8),
+    mid: (u8, u8, u8, u8),
+    bot: (u8, u8, u8, u8),
+) -> Shader<'static> {
+    LinearGradient::new(
+        Point::from_xy(cx, top_y),
+        Point::from_xy(cx, bot_y),
+        vec![
+            GradientStop::new(0.0, col(top)),
+            GradientStop::new(0.55, col(mid)),
+            GradientStop::new(1.0, col(bot)),
+        ],
+        SpreadMode::Pad,
+        Transform::identity(),
+    )
+    .unwrap_or_else(|| Shader::SolidColor(col(mid)))
+}
+
 fn oval(cx: f32, cy: f32, rx: f32, ry: f32) -> Option<Path> {
     let mut pb = PathBuilder::new();
     pb.push_oval(Rect::from_xywh(cx - rx, cy - ry, rx * 2.0, ry * 2.0)?);
@@ -241,6 +290,19 @@ impl<'a> Cv<'a> {
         if let Some(p) = p {
             self.pm
                 .fill_path(p, &paint(c), FillRule::Winding, t.post_concat(self.ts), None);
+        }
+    }
+    /// Fill a path with a gradient (see [`vgrad`]); the fill transform maps both
+    /// the path and the gradient endpoints together.
+    fn fill_grad_t(&mut self, p: &Option<Path>, shader: Shader, t: Transform) {
+        if let Some(p) = p {
+            let paint = Paint {
+                shader,
+                anti_alias: true,
+                ..Default::default()
+            };
+            self.pm
+                .fill_path(p, &paint, FillRule::Winding, t.post_concat(self.ts), None);
         }
     }
     fn stroke(&mut self, p: &Option<Path>, c: (u8, u8, u8, u8), w: f32) {
@@ -334,10 +396,13 @@ fn draw_scene(pm: &mut Pixmap, sc: &Scene, scale: f32) {
     let body_t = squash_t.pre_translate(0.0, breath_dy * 0.5);
     let head_t = head_t.post_concat(squash_t);
 
-    // ground shadow
-    cv.fill(&oval(120.0, 244.0, 102.0, 8.0), (0, 0, 0, 26));
+    // ground shadow — stacked soft ovals approximate a blurred drop shadow
+    // (token shadow blur 18 / opacity 0.32); deterministic, no blur filter.
+    for (rx, ry, a) in [(110.0, 11.0, 14u8), (98.0, 8.0, 20), (84.0, 6.0, 26)] {
+        cv.fill(&oval(120.0, 245.0, rx, ry), (40, 30, 26, a));
+    }
 
-    // tail (behind everything)
+    // tail (behind everything) — soft fur, no hard outline
     {
         let sway = (sc.tail_phase).sin() * 7.0;
         let sway2 = (sc.tail_phase * 0.7 + 1.2).sin() * 5.0;
@@ -345,16 +410,15 @@ fn draw_scene(pm: &mut Pixmap, sc: &Scene, scale: f32) {
         pb.move_to(64.0, 196.0);
         pb.quad_to(28.0 + sway2, 188.0, 30.0 + sway, 156.0);
         let p = pb.finish();
-        cv.stroke_t(&p, OUTLINE, 14.0, body_t);
+        cv.stroke_t(&p, FUR_SH, 13.0, body_t);
         cv.stroke_t(&p, FUR, 9.0, body_t);
     }
 
-    // body
+    // body — matte vertical gradient, no outline
     let body = oval(120.0, 182.0, 64.0, 44.0);
-    cv.fill_t(&body, FUR, body_t);
-    cv.stroke_t(&body, OUTLINE, 3.0, body_t);
+    cv.fill_grad_t(&body, vgrad(120.0, 138.0, 226.0, FUR_TOP, FUR, FUR_SH), body_t);
 
-    // ears (under head outline)
+    // ears (under head) — soft fur fill + pink inner, no outline
     {
         let mut le = PathBuilder::new();
         le.move_to(72.0, 98.0);
@@ -368,10 +432,8 @@ fn draw_scene(pm: &mut Pixmap, sc: &Scene, scale: f32) {
         re.line_to(132.0, 76.0);
         re.close();
         let re = re.finish();
-        cv.fill_t(&le, FUR, head_t);
-        cv.stroke_t(&le, OUTLINE, 3.0, head_t);
-        cv.fill_t(&re, FUR, head_t);
-        cv.stroke_t(&re, OUTLINE, 3.0, head_t);
+        cv.fill_grad_t(&le, vgrad(90.0, 56.0, 98.0, FUR_TOP, FUR, FUR_SH), head_t);
+        cv.fill_grad_t(&re, vgrad(150.0, 56.0, 98.0, FUR_TOP, FUR, FUR_SH), head_t);
         // inner pink
         let mut li = PathBuilder::new();
         li.move_to(80.0, 90.0);
@@ -387,10 +449,9 @@ fn draw_scene(pm: &mut Pixmap, sc: &Scene, scale: f32) {
         cv.fill_t(&ri.finish(), EAR_PINK, head_t);
     }
 
-    // head
+    // head — matte vertical gradient, no outline
     let head = oval(120.0, 128.0, 66.0, 52.0);
-    cv.fill_t(&head, FUR, head_t);
-    cv.stroke_t(&head, OUTLINE, 3.0, head_t);
+    cv.fill_grad_t(&head, vgrad(120.0, 76.0, 184.0, FUR_TOP, FUR, FUR_SH), head_t);
 
     // face
     draw_face(&mut cv, sc, head_t);
@@ -469,41 +530,51 @@ fn draw_face(cv: &mut Cv, sc: &Scene, t: Transform) {
             let mut pb = PathBuilder::new();
             pb.move_to(ex - 7.0, 124.0);
             pb.quad_to(ex, 115.0, ex + 7.0, 124.0);
-            cv.stroke_t(&pb.finish(), OUTLINE, 3.0, t);
+            cv.stroke_t(&pb.finish(), EYE, 3.0, t);
         } else if closed > 0.8 {
             // gently closed
             let mut pb = PathBuilder::new();
             pb.move_to(ex - 6.5, 121.0);
             pb.quad_to(ex, 125.0, ex + 6.5, 121.0);
-            cv.stroke_t(&pb.finish(), OUTLINE, 2.6, t);
+            cv.stroke_t(&pb.finish(), EYE, 2.6, t);
         } else {
             let ry = 5.2 * (1.0 - closed * 0.85);
-            // big sparkly eyes while a fish is incoming
+            // big glossy eyes while a fish is incoming
             let r = if chase { 6.2 } else { 5.2 };
-            cv.fill_t(&oval(ex, 122.0, r, (ry * r / 5.2).max(0.8)), OUTLINE, t);
+            cv.fill_t(&oval(ex, 122.0, r, (ry * r / 5.2).max(0.8)), EYE, t);
             if ry > 2.0 {
                 cv.fill_t(&oval(ex - 1.6, 120.2, 1.7, 1.7 * (ry / 5.2)), (255, 255, 255, 230), t);
             }
         }
     }
 
+    // nose — soft pink, above the mouth
+    {
+        let mut pb = PathBuilder::new();
+        pb.move_to(116.0, 130.0);
+        pb.line_to(124.0, 130.0);
+        pb.quad_to(120.0, 134.0, 116.0, 130.0);
+        pb.close();
+        cv.fill_t(&pb.finish(), NOSE, t);
+    }
+
     if sc.mouth_open > 0.05 {
-        // open mouth, ready to nom
+        // open mouth, ready to nom — dark interior with a tongue
         let o = sc.mouth_open.clamp(0.0, 1.0);
-        let mouth = oval(120.0, 138.0, 4.5 + 3.5 * o, 3.0 + 5.5 * o);
-        cv.fill_t(&mouth, (164, 88, 92, 255), t);
-        cv.stroke_t(&mouth, OUTLINE, 2.2, t);
+        let (rx, ry) = (4.5 + 3.5 * o, 3.0 + 5.5 * o);
+        cv.fill_t(&oval(120.0, 139.0, rx, ry), MOUTH_C, t);
+        cv.fill_t(&oval(120.0, 139.0 + ry * 0.42, rx * 0.72, ry * 0.5), TONGUE, t);
     } else {
         // ω mouth
         let mut pb = PathBuilder::new();
         pb.move_to(112.0, 136.0);
         pb.quad_to(116.0, 141.0, 120.0, 136.5);
         pb.quad_to(124.0, 141.0, 128.0, 136.0);
-        cv.stroke_t(&pb.finish(), OUTLINE, 2.4, t);
+        cv.stroke_t(&pb.finish(), MOUTH_C, 2.4, t);
     }
 
     // blush
-    let blush_a = 0.45 + sc.happy * 0.5;
+    let blush_a = 0.4 + sc.happy * 0.4;
     cv.fill_t(&oval(78.0, 134.0, 9.0, 4.5), fade(BLUSH, blush_a), t);
     cv.fill_t(&oval(162.0, 134.0, 9.0, 4.5), fade(BLUSH, blush_a), t);
 
@@ -524,15 +595,14 @@ fn draw_paw(cv: &mut Cv, cx: f32, press: f32, right: bool, breath_dy: f32) {
     let rot = if right { 6.0 } else { -6.0 };
     let t = Transform::from_rotate_at(rot, cx, y);
     let paw = oval(cx, y, 15.0, 11.0);
-    cv.fill_t(&paw, FUR, t);
-    cv.stroke_t(&paw, OUTLINE, 3.0, t);
-    // toe separators, more visible when pressed
-    let a = 0.35 + press * 0.45;
+    cv.fill_grad_t(&paw, vgrad(cx, y - 11.0, y + 11.0, FUR_TOP, FUR, FUR_SH), t);
+    // toe separators, more visible when pressed (soft fur-shadow tone)
+    let a = 0.5 + press * 0.4;
     for dx in [-5.0f32, 5.0] {
         let mut pb = PathBuilder::new();
         pb.move_to(cx + dx, y + 3.0);
         pb.line_to(cx + dx, y + 9.0);
-        cv.stroke_t(&pb.finish(), fade(OUTLINE, a), 2.0, t);
+        cv.stroke_t(&pb.finish(), fade(FUR_SH, a), 2.0, t);
     }
 }
 
@@ -558,6 +628,7 @@ fn draw_fish(cv: &mut Cv, f: &FishView) {
 
     let body_c = lighten(f.badge.color, 0.35);
     let dark_c = darken(f.badge.color, 0.18);
+    let edge_c = darken(f.badge.color, 0.34); // tonal edge instead of a brown outline
 
     // tail (two-lobe fin at the right/back)
     {
@@ -568,12 +639,12 @@ fn draw_fish(cv: &mut Cv, f: &FishView) {
         pb.close();
         let tail = pb.finish();
         cv.fill_t(&tail, dark_c, t);
-        cv.stroke_t(&tail, OUTLINE, 2.4, t);
+        cv.stroke_t(&tail, edge_c, 2.4, t);
     }
     // body
     let body = oval(x, y, 16.0, 10.0);
     cv.fill_t(&body, body_c, t);
-    cv.stroke_t(&body, OUTLINE, 2.6, t);
+    cv.stroke_t(&body, edge_c, 2.6, t);
     // top fin
     {
         let mut pb = PathBuilder::new();
@@ -581,17 +652,17 @@ fn draw_fish(cv: &mut Cv, f: &FishView) {
         pb.quad_to(x + 1.0, y - 15.0, x + 7.0, y - 8.5);
         let fin = pb.finish();
         cv.fill_t(&fin, dark_c, t);
-        cv.stroke_t(&fin, OUTLINE, 2.2, t);
+        cv.stroke_t(&fin, edge_c, 2.2, t);
     }
     // eye
-    cv.fill_t(&oval(x - 10.0, y - 2.5, 1.9, 1.9), OUTLINE, t);
+    cv.fill_t(&oval(x - 10.0, y - 2.5, 1.9, 1.9), EYE, t);
 
     // badge: real app icon if present, else letter chip
     if let Some(icon) = &f.badge.icon {
         let size = 13.0;
         let chip = round_rect(x - size / 2.0 - 1.5, y - size / 2.0 - 1.5, size + 3.0, size + 3.0, 4.0);
         cv.fill_t(&chip, (255, 255, 255, 235), t);
-        cv.stroke_t(&chip, fade(OUTLINE, 0.7), 1.6, t);
+        cv.stroke_t(&chip, (150, 156, 168, 200), 1.6, t);
         let k = size / icon.width() as f32;
         let it = t
             .post_concat(cv.ts)
@@ -605,7 +676,7 @@ fn draw_fish(cv: &mut Cv, f: &FishView) {
     } else {
         let chip = oval(x + 1.0, y + 0.5, 7.0, 7.0);
         cv.fill_t(&chip, (255, 255, 255, 235), t);
-        cv.stroke_t(&chip, fade(OUTLINE, 0.7), 1.6, t);
+        cv.stroke_t(&chip, (150, 156, 168, 200), 1.6, t);
         // the letter stays upright inside the round chip while the fish
         // rotates (sysfont rasterizes under scale+translate transforms only)
         let px = 1.6 * f.scale;
@@ -624,12 +695,11 @@ fn draw_accessory(cv: &mut Cv, acc: Accessory, t: Transform) {
     match acc {
         Accessory::None => {}
         Accessory::Scarf => {
+            // soft red scarf — matte vertical gradient, no hard outline
             let band = round_rect(76.0, 168.0, 88.0, 16.0, 8.0);
-            cv.fill_t(&band, (217, 79, 79, 255), t);
-            cv.stroke_t(&band, OUTLINE, 2.5, t);
+            cv.fill_grad_t(&band, vgrad(120.0, 168.0, 184.0, SCARF_TOP, SCARF_RED, SCARF_DARK), t);
             let knot = round_rect(140.0, 180.0, 14.0, 22.0, 6.0);
-            cv.fill_t(&knot, (185, 61, 61, 255), t);
-            cv.stroke_t(&knot, OUTLINE, 2.5, t);
+            cv.fill_grad_t(&knot, vgrad(147.0, 180.0, 202.0, SCARF_RED, SCARF_RED, SCARF_DARK), t);
         }
         Accessory::Glasses => {
             for ex in [92.0f32, 148.0] {
@@ -649,13 +719,13 @@ fn draw_accessory(cv: &mut Cv, acc: Accessory, t: Transform) {
             pb.close();
             let hat = pb.finish();
             cv.fill_t(&hat, (91, 141, 217, 255), t);
-            cv.stroke_t(&hat, OUTLINE, 3.0, t);
+            cv.stroke_t(&hat, (54, 92, 156, 255), 3.0, t);
             let brim = round_rect(62.0, 86.0, 116.0, 13.0, 6.0);
             cv.fill_t(&brim, (74, 118, 184, 255), t);
-            cv.stroke_t(&brim, OUTLINE, 2.5, t);
+            cv.stroke_t(&brim, (54, 92, 156, 255), 2.5, t);
             let pom = oval(120.0, 38.0, 9.0, 9.0);
             cv.fill_t(&pom, (240, 240, 240, 255), t);
-            cv.stroke_t(&pom, OUTLINE, 2.5, t);
+            cv.stroke_t(&pom, (200, 205, 214, 255), 2.5, t);
         }
         Accessory::Headphones => {
             let mut pb = PathBuilder::new();
@@ -694,10 +764,10 @@ fn draw_accessory(cv: &mut Cv, acc: Accessory, t: Transform) {
             pb.close();
             let cone = pb.finish();
             cv.fill_t(&cone, (107, 91, 217, 255), t);
-            cv.stroke_t(&cone, OUTLINE, 3.0, t);
+            cv.stroke_t(&cone, (72, 58, 156, 255), 3.0, t);
             let brim = round_rect(56.0, 84.0, 128.0, 12.0, 6.0);
             cv.fill_t(&brim, (88, 73, 184, 255), t);
-            cv.stroke_t(&brim, OUTLINE, 2.5, t);
+            cv.stroke_t(&brim, (72, 58, 156, 255), 2.5, t);
             star_at(cv, 120.0, 56.0, 9.0, 0.0, (250, 220, 90, 255), t);
             star_at(cv, 102.0, 74.0, 4.5, 0.6, (250, 220, 90, 220), t);
             star_at(cv, 140.0, 70.0, 4.5, 1.2, (250, 220, 90, 220), t);
@@ -738,11 +808,11 @@ fn draw_particle(cv: &mut Cv, p: &Particle) {
     let a = p.life.clamp(0.0, 1.0);
     match p.kind {
         ParticleKind::Heart => {
-            cv.fill(&heart_path(p.x, p.y, p.size), fade((240, 98, 146, 255), a));
+            cv.fill(&heart_path(p.x, p.y, p.size), fade((HEART_C.0, HEART_C.1, HEART_C.2, 255), a));
         }
         ParticleKind::Star => {
             let t = Transform::from_rotate_at(p.spin * 57.3, p.x, p.y);
-            cv.fill_t(&star_path(p.x, p.y, p.size, 0.0), fade((245, 197, 66, 255), a), t);
+            cv.fill_t(&star_path(p.x, p.y, p.size, 0.0), fade(SPARK_A, a), t);
         }
         ParticleKind::Sparkle => {
             let mut pb = PathBuilder::new();
@@ -763,7 +833,7 @@ fn draw_particle(cv: &mut Cv, p: &Particle) {
                 p.x,
                 p.y,
                 px,
-                fade((122, 156, 201, 255), a),
+                fade((SLEEP_BLUE.0, SLEEP_BLUE.1, SLEEP_BLUE.2, 255), a),
                 cv.ts,
             );
         }
@@ -782,44 +852,65 @@ fn fmt_thousands(n: u64) -> String {
     out
 }
 
+/// The hover stats bubble — a dark-glass RPG-style status card (yellow accent,
+/// XP bar, today's activity) with a small cat peeking over the top edge.
 fn draw_bubble(cv: &mut Cv, b: &BubbleData, alpha: f32, lang: Lang) {
     let a = alpha;
-    let rect = round_rect(14.0, 2.0, 212.0, 84.0, 11.0);
-    cv.fill(&rect, fade((255, 255, 255, 242), a));
-    cv.stroke(&rect, fade(OUTLINE, a), 2.5);
-    // tail pointing to the cat
+    let glass = fade(GLASS_BG, a);
+    // a little cat peeking over the top-right corner (drawn first, behind card)
+    {
+        let fur = fade(FUR, a);
+        cv.fill_t(&{
+            let mut p = PathBuilder::new();
+            p.move_to(189.0, 11.0);
+            p.line_to(192.0, 3.0);
+            p.line_to(199.0, 11.0);
+            p.close();
+            p.finish()
+        }, fur, Transform::identity());
+        cv.fill_t(&{
+            let mut p = PathBuilder::new();
+            p.move_to(207.0, 11.0);
+            p.line_to(204.0, 3.0);
+            p.line_to(197.0, 11.0);
+            p.close();
+            p.finish()
+        }, fur, Transform::identity());
+        cv.fill(&oval(198.0, 16.0, 15.0, 12.0), fur);
+        cv.fill(&oval(193.0, 15.0, 1.7, 2.0), fade(EYE, a));
+        cv.fill(&oval(203.0, 15.0, 1.7, 2.0), fade(EYE, a));
+    }
+
+    let card = round_rect(14.0, 12.0, 212.0, 80.0, 12.0);
+    cv.fill(&card, glass);
+    cv.stroke(&card, fade(GLASS_BORDER, a), 1.5);
+    // tail pointing down at the cat
     {
         let mut pb = PathBuilder::new();
-        pb.move_to(112.0, 85.0);
-        pb.line_to(128.0, 85.0);
-        pb.line_to(121.0, 97.0);
+        pb.move_to(112.0, 91.0);
+        pb.line_to(128.0, 91.0);
+        pb.line_to(120.0, 100.0);
         pb.close();
-        let tail = pb.finish();
-        cv.fill(&tail, fade((255, 255, 255, 242), a));
-        cv.stroke(&tail, fade(OUTLINE, a), 2.0);
-        // cover the seam
-        if let Some(r) = Rect::from_xywh(113.5, 82.5, 13.0, 4.0) {
-            cv.pm.fill_rect(
-                r,
-                &paint(fade((255, 255, 255, 242), a)),
-                cv.ts,
-                None,
-            );
+        cv.fill(&pb.finish(), glass);
+        if let Some(r) = Rect::from_xywh(113.0, 88.0, 14.0, 4.0) {
+            cv.pm.fill_rect(r, &paint(glass), cv.ts, None);
         }
     }
 
-    let tc = fade(TEXT, a);
-    // row 1: level + xp bar
-    cv.ui_text(&format!("LV {}", b.level), 24.0, 8.0, 2.0, tc);
-    let bar_bg = round_rect(82.0, 8.5, 134.0, 12.0, 6.0);
-    cv.fill(&bar_bg, fade((231, 224, 214, 255), a));
-    let w = (134.0 * b.pct.clamp(0.0, 1.0)).max(10.0);
-    let bar_fg = round_rect(82.0, 8.5, w, 12.0, 6.0);
-    cv.fill(&bar_fg, fade((126, 201, 110, 255), a));
-    cv.stroke(&bar_bg, fade(OUTLINE, 0.8 * a), 2.0);
+    let ink = fade(GLASS_INK, a);
+    let dim = fade(GLASS_DIM, a);
+    // title row: name + level (yellow)
+    cv.ui_text("ClipCat", 24.0, 17.0, 2.0, ink);
+    cv.ui_text(&format!("Lv {}", b.level), 176.0, 18.0, 1.8, fade(SPARK_A, a));
 
-    // rows 2-5: today's keys / clicks / copies / active time
-    let px = 1.7;
+    // xp bar — yellow accent on a dark track
+    let bar = round_rect(24.0, 35.0, 192.0, 8.0, 4.0);
+    cv.fill(&bar, fade(GLASS_TRACK, a));
+    let w = (192.0 * b.pct.clamp(0.0, 1.0)).max(6.0);
+    cv.fill(&round_rect(24.0, 35.0, w, 8.0, 4.0), fade(SPARK_A, a));
+
+    // today's keys / clicks / copies / active time (value right-aligned)
+    let px = 1.6;
     let rows: [(Msg, String); 4] = [
         (Msg::BubbleKeys, fmt_thousands(b.keys)),
         (Msg::BubbleClicks, fmt_thousands(b.clicks)),
@@ -830,9 +921,10 @@ fn draw_bubble(cv: &mut Cv, b: &BubbleData, alpha: f32, lang: Lang) {
         }),
     ];
     for (i, (label, value)) in rows.iter().enumerate() {
-        let y = 27.0 + i as f32 * 14.0;
-        cv.ui_text(t(lang, *label), 24.0, y, px, fade(TEXT_DIM, a));
-        cv.ui_text(value, 96.0, y, px, tc);
+        let y = 48.0 + i as f32 * 10.5;
+        cv.ui_text(t(lang, *label), 24.0, y, px, dim);
+        let vx = 216.0 - sysfont::measure(value, px);
+        cv.ui_text(value, vx, y, px, ink);
     }
 }
 
