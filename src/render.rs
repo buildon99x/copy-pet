@@ -262,6 +262,13 @@ impl<'a> Cv<'a> {
     fn ui_text(&mut self, s: &str, x: f32, y: f32, px: f32, c: (u8, u8, u8, u8)) {
         sysfont::draw(self.pm, s, x, y, px, c, self.ts);
     }
+    /// Faux-bold UI text: a horizontal double-strike. The glyph advance is
+    /// unchanged, so callers can still measure it like normal text. Used to
+    /// emphasize the start of a clip row.
+    fn ui_text_bold(&mut self, s: &str, x: f32, y: f32, px: f32, c: (u8, u8, u8, u8)) {
+        sysfont::draw(self.pm, s, x, y, px, c, self.ts);
+        sysfont::draw(self.pm, s, x + px * 0.35, y, px, c, self.ts);
+    }
     fn line(&mut self, pts: &[(f32, f32)], c: (u8, u8, u8, u8), w: f32) {
         let mut pb = PathBuilder::new();
         for (i, (x, y)) in pts.iter().enumerate() {
@@ -1004,11 +1011,20 @@ pub fn draw_panel(pm: &mut Pixmap, v: &PanelView) {
         let quick = idx < pl::QUICK_KEYS;
         let badge_w = if quick { 18.0 } else { 0.0 };
 
-        // preview + meta (source dot + app - age - size)
+        // body + meta (source dot + app - age - size). The body is the whole
+        // clip flattened to one line so more of its content shows; the first
+        // few characters are bolded for scannability.
         let tx = lt.row_x + 28.0;
         let tmax = lt.row_x + lt.row_w - pl::DEL_ZONE - tx - 4.0 - badge_w;
-        let prev = sysfont::truncate_to_width(&clip.preview(), 1.9, tmax);
-        cv.ui_text(&prev, tx, ry + 4.5, 1.9, TEXT);
+        const BODY_PX: f32 = 1.75;
+        const BODY_BOLD: usize = 10;
+        let body = sysfont::truncate_to_width(&clip.flattened(), BODY_PX, tmax);
+        let lead: String = body.chars().take(BODY_BOLD).collect();
+        let rest: String = body.chars().skip(BODY_BOLD).collect();
+        cv.ui_text_bold(&lead, tx, ry + 4.5, BODY_PX, TEXT);
+        if !rest.is_empty() {
+            cv.ui_text(&rest, tx + sysfont::measure(&lead, BODY_PX), ry + 4.5, BODY_PX, TEXT);
+        }
         let mut meta = i18n::time_ago(lang, now.saturating_sub(clip.ts));
         if clip.text.len() > 500 {
             meta = format!("{meta} - {:.1}K", clip.text.len() as f32 / 1024.0);

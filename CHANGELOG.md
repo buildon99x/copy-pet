@@ -30,6 +30,9 @@ versions follow [SemVer](https://semver.org/). Maintenance rules:
   can grab several clips in a row. On by default.
 
 ### Changed
+- **Each clip row shows more of its content.** Multi-line clips are flattened
+  onto the row (so you see past the first line), the first few characters are
+  bolded for quick scanning, and the text is a touch smaller to fit more in.
 - The **clipboard panel now keeps one fixed (normal) size** no matter which
   pet size — small, normal or large — you choose. The cat still grows and
   shrinks; the panel stays comfortably readable.
