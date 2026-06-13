@@ -77,7 +77,6 @@ const CMD_ACC0: usize = 40; // 40 = none, 41..=46 accessories
 const CMD_LANG_EN: usize = 50;
 const CMD_LANG_KO: usize = 51;
 const CMD_WINLEVEL0: usize = 52; // 52 top, 53 normal, 54 hide
-const CMD_PANELVIEW: usize = 55;
 
 fn wz(s: &str) -> Vec<u16> {
     s.encode_utf16().chain(std::iter::once(0)).collect()
@@ -847,7 +846,6 @@ struct MenuSnapshot {
     scale_idx: usize,
     sound: u8,
     window_level: u8,
-    panel_view: u8,
     accessory: usize,
     level: u32,
     autostart: bool,
@@ -895,12 +893,6 @@ unsafe fn show_menu(hwnd: HWND, ms: &MenuSnapshot) -> usize {
         MF_STRING | chk(ms.autoclose),
         CMD_AUTOCLOSE,
         wz(t(lang, Msg::MenuAutoClose)).as_ptr(),
-    );
-    AppendMenuW(
-        menu,
-        MF_STRING | chk(ms.panel_view == 1),
-        CMD_PANELVIEW,
-        wz(t(lang, Msg::MenuThumbnailView)).as_ptr(),
     );
     AppendMenuW(menu, MF_SEPARATOR, 0, null());
 
@@ -1084,7 +1076,6 @@ fn menu_snapshot() -> Option<MenuSnapshot> {
         scale_idx: a.pet.st.scale_idx,
         sound: a.pet.st.sound_mode,
         window_level: a.pet.window_level(),
-        panel_view: a.pet.st.panel_view,
         accessory: a.pet.st.accessory,
         level: a.pet.level(),
         autostart: unsafe { autostart_enabled() },
@@ -1168,9 +1159,6 @@ unsafe fn open_menu(hwnd: HWND) {
             }
             CMD_AUTOCLOSE => {
                 with_app(|a| a.pet.toggle_panel_autoclose());
-            }
-            CMD_PANELVIEW => {
-                with_app(|a| a.pet.toggle_panel_view());
             }
             CMD_BUBBLE => {
                 with_app(|a| {

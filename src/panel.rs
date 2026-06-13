@@ -119,13 +119,14 @@ pub struct Layout {
     pub card_y: f32,
     pub card_w: f32,
     pub card_h: f32,
-    /// Header buttons, right-aligned: filter, pause, clear, language, close.
+    /// Header buttons, right-aligned: view, filter, pause, clear, language, close.
     pub btn_y: f32,
     pub btn_close_x: f32,
     pub btn_lang_x: f32,
     pub btn_clear_x: f32,
     pub btn_pause_x: f32,
     pub btn_filter_x: f32,
+    pub btn_view_x: f32,
     pub search_x: f32,
     pub search_y: f32,
     pub search_w: f32,
@@ -157,6 +158,8 @@ pub enum PanelAction {
     /// Toggle clipboard capture on/off.
     ToggleCapture,
     ToggleLang,
+    /// Switch the clip list between the compact list and roomy cards.
+    ToggleView,
     Close,
 }
 
@@ -310,6 +313,7 @@ impl Panel {
             btn_clear_x: btn_close_x - 44.0,
             btn_pause_x: btn_close_x - 66.0,
             btn_filter_x: btn_close_x - 88.0,
+            btn_view_x: btn_close_x - 110.0,
             search_x: card_x + 8.0,
             search_y: card_y + 30.0,
             search_w: w - 16.0,
@@ -350,7 +354,7 @@ impl Panel {
         if x >= x1 - GRIP && x <= x1 + 2.0 && y >= y1 - GRIP && y <= y1 + 2.0 {
             return Some(PanelDrag::Resize);
         }
-        if self.hit(x, y) && y < l.search_y - 2.0 && x < l.btn_filter_x - 4.0 {
+        if self.hit(x, y) && y < l.search_y - 2.0 && x < l.btn_view_x - 4.0 {
             return Some(PanelDrag::Move);
         }
         None
@@ -507,6 +511,9 @@ impl Panel {
             // pure panel state: cycle the source filter, no action needed
             self.cycle_source(store);
             return None;
+        }
+        if on_btn(l.btn_view_x) {
+            return Some(PanelAction::ToggleView);
         }
         // clip rows
         let visible = self.visible(store);
@@ -687,6 +694,15 @@ mod tests {
             p.click(l.btn_close_x + 8.0, l.btn_y + 8.0, &s),
             Some(PanelAction::Close)
         );
+        // view-toggle button (leftmost of the header cluster)
+        assert_eq!(
+            p.click(l.btn_view_x + 8.0, l.btn_y + 8.0, &s),
+            Some(PanelAction::ToggleView)
+        );
+        // the view button is not part of the move-drag handle
+        assert_eq!(p.drag_hit(l.btn_view_x + 8.0, l.btn_y + 8.0), None);
+        // the header strip left of it still moves the card
+        assert_eq!(p.drag_hit(l.btn_view_x - 12.0, l.btn_y + 8.0), Some(PanelDrag::Move));
     }
 
     #[test]

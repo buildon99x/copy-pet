@@ -21,8 +21,6 @@ pub enum MenuAction {
     /// Close the clipboard panel automatically after copying a clip (on/off).
     TogglePanelAutoClose,
     ToggleStats,
-    /// Switch the clipboard list between the compact list and roomy cards.
-    TogglePanelView,
     SetSize(usize),
     SetAccessory(usize),
     SetSound(u8),

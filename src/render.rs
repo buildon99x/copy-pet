@@ -908,6 +908,7 @@ pub fn draw_panel(pm: &mut Pixmap, v: &PanelView) {
     }
 
     // header buttons
+    draw_btn(&mut cv, lt.btn_view_x, lt.btn_y, BtnIcon::View(v.panel.view == 1));
     draw_btn(&mut cv, lt.btn_filter_x, lt.btn_y, BtnIcon::Filter(v.panel.source.is_some()));
     draw_btn(&mut cv, lt.btn_pause_x, lt.btn_y, BtnIcon::Pause(v.capture));
     draw_btn(&mut cv, lt.btn_clear_x, lt.btn_y, BtnIcon::Trash(v.panel.clear_armed));
@@ -1148,6 +1149,7 @@ enum BtnIcon {
     Pause(bool),  // capture currently on?
     Trash(bool),  // clear armed (next press clears)?
     Lang(Lang),
+    View(bool), // thumbnail (card) view currently on?
     Close,
 }
 
@@ -1157,7 +1159,7 @@ fn draw_btn(cv: &mut Cv, bx: f32, by: f32, icon: BtnIcon) {
     if matches!(icon, BtnIcon::Pause(false) | BtnIcon::Trash(true)) {
         cv.fill(&bg, (250, 224, 224, 255));
         cv.stroke(&bg, (217, 79, 79, 255), 1.6);
-    } else if matches!(icon, BtnIcon::Filter(true)) {
+    } else if matches!(icon, BtnIcon::Filter(true) | BtnIcon::View(true)) {
         cv.fill(&bg, (208, 228, 248, 255));
         cv.stroke(&bg, (91, 141, 217, 255), 1.6);
     } else {
@@ -1215,6 +1217,19 @@ fn draw_btn(cv: &mut Cv, bx: f32, by: f32, icon: BtnIcon) {
             };
             let w = sysfont::measure(s, 1.25);
             sysfont::draw(cv.pm, s, cx - w / 2.0, cy - 4.3, 1.25, TEXT, cv.ts);
+        }
+        BtnIcon::View(active) => {
+            // two stacked cards = the list/thumbnail toggle; filled when the
+            // roomy card view is on (mirrors the Filter active convention)
+            let top = round_rect(cx - 5.0, cy - 4.8, 10.0, 3.6, 1.2);
+            let bot = round_rect(cx - 5.0, cy + 1.2, 10.0, 3.6, 1.2);
+            if active {
+                cv.fill(&top, (74, 118, 184, 255));
+                cv.fill(&bot, (74, 118, 184, 255));
+            } else {
+                cv.stroke(&top, TEXT, 1.5);
+                cv.stroke(&bot, TEXT, 1.5);
+            }
         }
         BtnIcon::Close => {
             cv.line(&[(cx - 4.0, cy - 4.0), (cx + 4.0, cy + 4.0)], TEXT, 2.0);

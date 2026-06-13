@@ -562,6 +562,7 @@ impl Pet {
                 self.st.set_lang(lang);
                 self.dirty = true;
             }
+            PanelAction::ToggleView => self.toggle_panel_view(),
             PanelAction::Close => self.toggle_panel(),
         }
         None
@@ -977,11 +978,6 @@ impl Pet {
             MenuAction::TogglePanelAutoClose,
             self.st.panel_autoclose,
         ));
-        m.push(MenuItem::leaf(
-            t(lang, Msg::MenuThumbnailView),
-            MenuAction::TogglePanelView,
-            self.st.panel_view == 1,
-        ));
         m.push(MenuEntry::Separator);
 
         m.push(MenuItem::leaf(
@@ -1086,7 +1082,6 @@ impl Pet {
                 self.run_action(PanelAction::ToggleCapture);
             }
             MenuAction::TogglePanelAutoClose => self.toggle_panel_autoclose(),
-            MenuAction::TogglePanelView => self.toggle_panel_view(),
             MenuAction::ToggleStats => {
                 self.st.bubble_pinned = !self.st.bubble_pinned;
                 self.dirty = true;
