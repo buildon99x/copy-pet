@@ -129,8 +129,9 @@ pub(crate) fn write_atomic(path: &std::path::Path, contents: &str) {
         let _ = std::fs::create_dir_all(dir);
     }
     let tmp = path.with_extension("json.tmp");
-    if std::fs::write(&tmp, contents).is_ok() {
-        let _ = std::fs::rename(&tmp, path);
+    if std::fs::write(&tmp, contents).is_ok() && std::fs::rename(&tmp, path).is_err() {
+        // rename failed: don't leave the temp file orphaned in the config dir
+        let _ = std::fs::remove_file(&tmp);
     }
 }
 

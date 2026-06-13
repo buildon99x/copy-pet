@@ -1099,8 +1099,9 @@ impl Pet {
             }
             MenuAction::SetSize(i) => self.set_scale_idx(i),
             MenuAction::SetAccessory(id) => {
-                // ignore a still-locked accessory (the menu greys it, but guard anyway)
-                if id == 0 || self.level() >= ACCESSORIES[id - 1].level {
+                // ignore a still-locked or unknown accessory (the menu greys it,
+                // but guard anyway — `id` is an untrusted index here)
+                if id == 0 || ACCESSORIES.get(id - 1).is_some_and(|a| self.level() >= a.level) {
                     self.st.accessory = id;
                     self.dirty = true;
                 }

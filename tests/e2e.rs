@@ -545,4 +545,11 @@ fn context_menu_unlocks_accessories_by_level() {
     high.apply_menu_action(MenuAction::SetAccessory(1));
     assert_eq!(high.st.accessory, 1);
     assert!(menu_find(&high.build_menu("HK", false), MenuAction::SetAccessory(1)).unwrap().checked);
+
+    // An out-of-range id (past the accessory table) must be a guarded no-op,
+    // not an index-out-of-bounds panic — `apply_menu_action` takes an
+    // untrusted index that round-trips through the native menus.
+    let prev = high.st.accessory;
+    high.apply_menu_action(MenuAction::SetAccessory(9999));
+    assert_eq!(high.st.accessory, prev);
 }
