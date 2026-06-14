@@ -43,6 +43,9 @@ pub struct Persist {
     /// True once the user has opened the clipboard panel at least once. Gates
     /// the first-run under-pet hotkey hint, which shows only until then.
     pub onboarded: bool,
+    /// When true, picking a clip also pastes it into the previously focused app
+    /// (synthesized Ctrl/Cmd+V). Off by default — some users want copy-only.
+    pub paste_on_select: bool,
     // lifetime
     pub total_keys: u64,
     pub total_clicks: u64,
@@ -77,6 +80,7 @@ impl Default for Persist {
             panel_off_y: crate::panel::DEFAULT_OFF.1,
             panel_autoclose: true,
             onboarded: false,
+            paste_on_select: false,
             total_keys: 0,
             total_clicks: 0,
             total_copies: 0,

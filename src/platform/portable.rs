@@ -43,7 +43,7 @@
 use crate::hotkey::Hotkey;
 use crate::input;
 use crate::panel::NavKey;
-use crate::pet::Pet;
+use crate::pet::{ClipPick, Pet};
 use crate::state::{Persist, ACCESSORIES};
 #[cfg(not(target_os = "macos"))]
 use std::num::NonZeroU32;
@@ -278,12 +278,21 @@ impl PortableApp {
     }
 
     /// Puts text on the OS clipboard (a clip picked from the panel).
-    fn set_clipboard(&self, text: String) {
+    /// Puts a panel-picked clip on the OS clipboard (our own change is
+    /// suppressed once by the watcher). When `pick.paste` (the `paste_on_select`
+    /// setting), it also synthesizes the paste shortcut. Focus restoration is
+    /// best-effort here: unlike the Windows-native backend, the portable stack
+    /// can't reliably re-focus the previous app, so the paste lands in whatever
+    /// is frontmost after the panel closes.
+    fn set_clipboard(&self, pick: ClipPick) {
         if let Ok(mut guard) = self.suppress.lock() {
-            *guard = Some(text.clone());
+            *guard = Some(pick.text.clone());
         }
         if let Ok(mut cb) = arboard::Clipboard::new() {
-            let _ = cb.set_text(text);
+            let _ = cb.set_text(pick.text);
+        }
+        if pick.paste {
+            paste_synthesize();
         }
     }
 
@@ -437,8 +446,8 @@ impl PortableApp {
             _ => None,
         };
         if let Some(key) = nav {
-            if let Some(text) = self.pet.panel_nav(key) {
-                self.set_clipboard(text);
+            if let Some(pick) = self.pet.panel_nav(key) {
+                self.set_clipboard(pick);
             }
             return;
         }
@@ -567,8 +576,8 @@ impl ApplicationHandler for PortableApp {
                         }
                         if self.pet.panel_hit(cx, cy) {
                             // panel interactions act on press; no drag/petting
-                            if let Some(text) = self.pet.panel_click(cx, cy) {
-                                self.set_clipboard(text);
+                            if let Some(pick) = self.pet.panel_click(cx, cy) {
+                                self.set_clipboard(pick);
                             }
                             self.mouse_down = false;
                             self.last_click = None;
@@ -786,6 +795,26 @@ impl ChordTracker {
             _ => {}
         }
         false
+    }
+}
+
+/// Synthesizes the paste shortcut (Ctrl+V, or Cmd+V on macOS) into the focused
+/// app via `rdev::simulate` (auto-paste). Output-only: it injects keystrokes,
+/// never reads them, so the input-privacy guarantee is untouched (golden rule
+/// 1); and being a `simulate` call it avoids the macOS TIS *listen* crash path
+/// (LNR-0005).
+fn paste_synthesize() {
+    #[cfg(target_os = "macos")]
+    let modifier = rdev::Key::MetaLeft;
+    #[cfg(not(target_os = "macos"))]
+    let modifier = rdev::Key::ControlLeft;
+    for et in [
+        rdev::EventType::KeyPress(modifier),
+        rdev::EventType::KeyPress(rdev::Key::KeyV),
+        rdev::EventType::KeyRelease(rdev::Key::KeyV),
+        rdev::EventType::KeyRelease(modifier),
+    ] {
+        let _ = rdev::simulate(&et);
     }
 }
 

@@ -20,6 +20,8 @@ pub enum MenuAction {
     ToggleCapture,
     /// Close the clipboard panel automatically after copying a clip (on/off).
     TogglePanelAutoClose,
+    /// Paste the picked clip into the previous app automatically (on/off).
+    TogglePasteOnSelect,
     ToggleStats,
     SetSize(usize),
     SetAccessory(usize),

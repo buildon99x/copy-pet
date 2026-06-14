@@ -14,7 +14,7 @@ use crate::hotkey::{self, Hotkey};
 use crate::i18n::{self, t, Lang, Msg};
 use crate::input;
 use crate::panel::NavKey;
-use crate::pet::{window_size, Pet, SCALES};
+use crate::pet::{window_size, ClipPick, Pet, SCALES};
 use crate::render::{self, Badge};
 use crate::state::{Persist, ACCESSORIES};
 use crate::update;
@@ -39,9 +39,9 @@ use windows_sys::Win32::System::Threading::{
 };
 use windows_sys::Win32::UI::HiDpi::SetProcessDpiAwarenessContext;
 use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
-    GetKeyState, RegisterHotKey, ReleaseCapture, SetCapture, SetFocus, TrackMouseEvent,
-    UnregisterHotKey, MOD_ALT, MOD_CONTROL, MOD_NOREPEAT, MOD_SHIFT, MOD_WIN, TME_LEAVE,
-    TRACKMOUSEEVENT,
+    GetKeyState, RegisterHotKey, ReleaseCapture, SendInput, SetCapture, SetFocus, TrackMouseEvent,
+    UnregisterHotKey, INPUT, INPUT_KEYBOARD, KEYEVENTF_KEYUP, MOD_ALT, MOD_CONTROL, MOD_NOREPEAT,
+    MOD_SHIFT, MOD_WIN, TME_LEAVE, TRACKMOUSEEVENT, VK_CONTROL,
 };
 use windows_sys::Win32::UI::Shell::{
     ExtractIconExW, Shell_NotifyIconW, NIF_ICON, NIF_MESSAGE, NIF_TIP, NIM_ADD, NIM_DELETE,
@@ -117,6 +117,9 @@ struct App {
     /// Display label of the actually registered panel hotkey (tray menu,
     /// About dialog); empty when no hotkey could be registered.
     hotkey_label: String,
+    /// The window that had focus when the panel was opened — where auto-paste
+    /// (`paste_on_select`) sends the synthesized Ctrl+V. Null until captured.
+    paste_target: HWND,
 }
 
 thread_local! {
@@ -156,10 +159,18 @@ impl App {
     }
 
     /// Puts panel-picked text on the OS clipboard; our own change is
-    /// suppressed once in WM_CLIPBOARDUPDATE.
-    fn copy_back(&mut self, text: String) {
-        self.suppress_clip = Some(text.clone());
-        unsafe { set_clipboard_text(self.hwnd, &text) };
+    /// suppressed once in WM_CLIPBOARDUPDATE. When `pick.paste` (the
+    /// `paste_on_select` setting), it then restores focus to the app that was
+    /// active when the panel opened and synthesizes Ctrl+V there.
+    fn copy_back(&mut self, pick: ClipPick) {
+        self.suppress_clip = Some(pick.text.clone());
+        unsafe { set_clipboard_text(self.hwnd, &pick.text) };
+        if pick.paste && !self.paste_target.is_null() && self.paste_target != self.hwnd {
+            unsafe {
+                SetForegroundWindow(self.paste_target);
+                send_ctrl_v();
+            }
+        }
     }
 
     // ---- per-frame update --------------------------------------------------
@@ -291,6 +302,9 @@ impl App {
         let ex = GetWindowLongPtrW(self.hwnd, GWL_EXSTYLE);
         let no_activate = ex & WS_EX_NOACTIVATE as isize != 0;
         if self.pet.panel_open() && no_activate {
+            // remember who had focus before we steal it, so auto-paste can
+            // send the clip back to that app
+            self.paste_target = GetForegroundWindow();
             SetWindowLongPtrW(self.hwnd, GWL_EXSTYLE, ex & !(WS_EX_NOACTIVATE as isize));
             SetForegroundWindow(self.hwnd);
             SetFocus(self.hwnd);
@@ -664,6 +678,28 @@ unsafe fn register_panel_hotkey(hwnd: HWND, spec: &str) -> String {
         return fallback.display();
     }
     String::new()
+}
+
+/// Synthesizes a Ctrl+V keystroke into the foreground window (auto-paste).
+/// Output-only: we never read keystrokes, so this does not touch the input
+/// privacy guarantee (golden rule 1). The modifiers are released in reverse.
+unsafe fn send_ctrl_v() {
+    let mut inputs: [INPUT; 4] = std::mem::zeroed();
+    for inp in &mut inputs {
+        inp.r#type = INPUT_KEYBOARD;
+    }
+    const VK_V: u16 = 0x56;
+    inputs[0].Anonymous.ki.wVk = VK_CONTROL; // Ctrl down
+    inputs[1].Anonymous.ki.wVk = VK_V; // V down
+    inputs[2].Anonymous.ki.wVk = VK_V; // V up
+    inputs[2].Anonymous.ki.dwFlags = KEYEVENTF_KEYUP;
+    inputs[3].Anonymous.ki.wVk = VK_CONTROL; // Ctrl up
+    inputs[3].Anonymous.ki.dwFlags = KEYEVENTF_KEYUP;
+    SendInput(
+        inputs.len() as u32,
+        inputs.as_ptr(),
+        std::mem::size_of::<INPUT>() as i32,
+    );
 }
 
 // ---- hooks -------------------------------------------------------------------
@@ -1217,8 +1253,8 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
                 }
                 if a.pet.panel_hit(cx, cy) {
                     // panel interactions act on press; no dragging from there
-                    if let Some(text) = a.pet.panel_click(cx, cy) {
-                        a.copy_back(text);
+                    if let Some(pick) = a.pet.panel_click(cx, cy) {
+                        a.copy_back(pick);
                     }
                     return;
                 }
@@ -1325,8 +1361,8 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
                 }
                 if a.pet.panel_hit(cx, cy) {
                     // fast row clicks arrive as double-clicks; treat as click
-                    if let Some(text) = a.pet.panel_click(cx, cy) {
-                        a.copy_back(text);
+                    if let Some(pick) = a.pet.panel_click(cx, cy) {
+                        a.copy_back(pick);
                     }
                 } else {
                     a.pet.pet();
@@ -1383,8 +1419,8 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
                     _ => None,
                 };
                 if let Some(key) = key {
-                    if let Some(text) = a.pet.panel_nav(key) {
-                        a.copy_back(text);
+                    if let Some(pick) = a.pet.panel_nav(key) {
+                        a.copy_back(pick);
                     }
                     true
                 } else {
@@ -1606,6 +1642,7 @@ pub fn run() {
             icon,
             taskbar_created: RegisterWindowMessageW(wz("TaskbarCreated").as_ptr()),
             hotkey_label,
+            paste_target: null_mut(),
         };
 
         APP.with(|cell| *cell.borrow_mut() = Some(app));

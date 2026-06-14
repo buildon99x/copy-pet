@@ -21,6 +21,15 @@ pub const SCALES: [f32; 3] = [0.78, 1.0, 1.3];
 /// XP granted for every captured copy event.
 pub const XP_PER_COPY: u64 = 5;
 
+/// A clip the user picked from the panel, handed to the backend to put on the
+/// OS clipboard. `paste` additionally asks the backend to paste it into the
+/// previously focused app (synthesized Ctrl/Cmd+V; see `paste_on_select`).
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct ClipPick {
+    pub text: String,
+    pub paste: bool,
+}
+
 /// Flight time of one fish, in seconds.
 const FISH_SECS: f32 = 0.9;
 /// At most this many fish queue up during copy bursts.
@@ -392,11 +401,11 @@ impl Pet {
 
     /// Executes a panel action. Returns text the backend must put on the
     /// OS clipboard, if any.
-    fn run_action(&mut self, action: PanelAction) -> Option<String> {
+    fn run_action(&mut self, action: PanelAction) -> Option<ClipPick> {
         match action {
             PanelAction::Copy(id) => {
                 let text = self.clips.get(id).map(|c| c.text.clone());
-                if text.is_some() {
+                if let Some(text) = text {
                     self.set_toast(t(self.lang(), Msg::ToastCopied).to_string(), 1.6);
                     self.happy = (self.happy + 0.4).min(1.0);
                     if self.st.sound_mode >= 1 {
@@ -407,8 +416,12 @@ impl Pet {
                     if self.st.panel_autoclose {
                         self.toggle_panel();
                     }
+                    return Some(ClipPick {
+                        text,
+                        paste: self.st.paste_on_select,
+                    });
                 }
-                return text;
+                return None;
             }
             PanelAction::TogglePin(id) => {
                 self.clips.toggle_pin(id);
@@ -471,6 +484,24 @@ impl Pet {
         next
     }
 
+    /// Whether picking a clip also pastes it into the previous app.
+    pub fn paste_on_select(&self) -> bool {
+        self.st.paste_on_select
+    }
+
+    /// Flips "paste the clip into the previous app after picking it" and
+    /// confirms via toast.
+    pub fn toggle_paste_on_select(&mut self) {
+        self.st.paste_on_select = !self.st.paste_on_select;
+        self.dirty = true;
+        let msg = if self.st.paste_on_select {
+            Msg::ToastPasteOn
+        } else {
+            Msg::ToastPasteOff
+        };
+        self.set_toast(t(self.lang(), msg).to_string(), 2.2);
+    }
+
     /// Flips "close the panel after copying a clip" and confirms via toast.
     pub fn toggle_panel_autoclose(&mut self) {
         self.st.panel_autoclose = !self.st.panel_autoclose;
@@ -484,7 +515,7 @@ impl Pet {
     }
 
     /// A click at window-canvas coords while the panel is open.
-    pub fn panel_click(&mut self, cx: f32, cy: f32) -> Option<String> {
+    pub fn panel_click(&mut self, cx: f32, cy: f32) -> Option<ClipPick> {
         let action = self.panel.click(cx, cy, &self.clips)?;
         self.run_action(action)
     }
@@ -500,7 +531,7 @@ impl Pet {
     }
 
     /// Navigation key while the panel is open.
-    pub fn panel_nav(&mut self, key: NavKey) -> Option<String> {
+    pub fn panel_nav(&mut self, key: NavKey) -> Option<ClipPick> {
         let action = self.panel.nav(key, &self.clips)?;
         self.run_action(action)
     }
@@ -878,6 +909,11 @@ impl Pet {
             MenuAction::TogglePanelAutoClose,
             self.st.panel_autoclose,
         ));
+        m.push(MenuItem::leaf(
+            t(lang, Msg::MenuPasteOnSelect),
+            MenuAction::TogglePasteOnSelect,
+            self.st.paste_on_select,
+        ));
         // Panel hotkey: a one-click cycle through safe presets (no rebind UI);
         // the label shows the live chord and a click advances to the next.
         let chord = crate::hotkey::Hotkey::from_spec(&self.st.hotkey).display();
@@ -979,6 +1015,7 @@ impl Pet {
                 self.run_action(PanelAction::ToggleCapture);
             }
             MenuAction::TogglePanelAutoClose => self.toggle_panel_autoclose(),
+            MenuAction::TogglePasteOnSelect => self.toggle_paste_on_select(),
             MenuAction::ToggleStats => {
                 self.st.bubble_pinned = !self.st.bubble_pinned;
                 self.dirty = true;
@@ -1232,6 +1269,39 @@ mod tests {
     }
 
     #[test]
+    fn paste_on_select_flag_flows_into_pick() {
+        let mut p = pet();
+        p.st.panel_autoclose = false; // keep the panel state simple
+        p.on_copy("hello".into(), None, None);
+        let id = p.clips.visible("")[0].id;
+        p.toggle_panel();
+        // default: copy only, no auto-paste
+        let pick = p.run_action(PanelAction::Copy(id)).expect("a pick");
+        assert_eq!(pick.text, "hello");
+        assert!(!pick.paste, "auto-paste is off by default");
+        // turning it on makes the next pick request a paste
+        p.toggle_paste_on_select();
+        assert!(p.paste_on_select());
+        let pick = p.run_action(PanelAction::Copy(id)).expect("a pick");
+        assert!(pick.paste, "now the pick also asks the backend to paste");
+    }
+
+    #[test]
+    fn menu_toggle_paste_on_select() {
+        let mut p = pet();
+        let menu = p.build_menu("HK", false);
+        assert!(!find(&menu, MenuAction::TogglePasteOnSelect).unwrap().checked);
+        assert_eq!(
+            p.apply_menu_action(MenuAction::TogglePasteOnSelect),
+            MenuOutcome::Handled
+        );
+        assert!(p.paste_on_select());
+        assert!(p.toast.is_some(), "the toggle is confirmed via toast");
+        let menu = p.build_menu("HK", false);
+        assert!(find(&menu, MenuAction::TogglePasteOnSelect).unwrap().checked);
+    }
+
+    #[test]
     fn menu_autostart_check_reflects_param() {
         let p = pet();
         assert!(find(&p.build_menu("HK", true), MenuAction::ToggleAutostart).unwrap().checked);
@@ -1309,7 +1379,7 @@ mod tests {
         p.toggle_panel();
         assert!(p.panel_open());
         let got = p.panel_nav(NavKey::Enter);
-        assert_eq!(got.as_deref(), Some("copy me back"));
+        assert_eq!(got.map(|c| c.text).as_deref(), Some("copy me back"));
         assert!(!p.panel_open(), "picking a clip closes the panel for pasting");
     }
 
