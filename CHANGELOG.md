@@ -39,7 +39,8 @@ versions follow [SemVer](https://semver.org/). Maintenance rules:
 ### Changed
 - **The cat got a glow-up**: softer, rounder *matte* shading with gentle
   highlights and shadow instead of the old flat fill and hard outline, a warmer
-  cream-and-red palette, a little pink nose, and a smoother red scarf.
+  cream-and-red palette, a little pink nose, and a smoother red scarf — and the
+  desk and keyboard were re-toned to match.
 - The hover **stats bubble is now a sleek dark "RPG" card** — your level, a
   yellow XP bar, today's keys / clicks / clips / active time, and a tiny cat
   peeking over the top edge.

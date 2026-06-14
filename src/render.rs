@@ -21,7 +21,7 @@ pub const CANVAS_H: f32 = 256.0;
 const OUTLINE: (u8, u8, u8, u8) = (84, 72, 58, 255); // desk/panel soft strokes only
 const FUR: (u8, u8, u8, u8) = (255, 244, 234, 255); // furBase
 const FUR_TOP: (u8, u8, u8, u8) = (255, 250, 245, 255); // soft top of the fur gradient
-const FUR_SH: (u8, u8, u8, u8) = (232, 209, 193, 255); // furShadow
+const FUR_SH: (u8, u8, u8, u8) = (226, 200, 182, 255); // furShadow (a touch deeper for form)
 const EAR_PINK: (u8, u8, u8, u8) = (247, 196, 200, 255);
 const BLUSH: (u8, u8, u8, u8) = (255, 168, 178, 255);
 const EYE: (u8, u8, u8, u8) = (23, 23, 23, 255); // eye
@@ -35,10 +35,11 @@ const SPARK: (u8, u8, u8) = (255, 201, 40); // sparkle
 const SPARK_A: (u8, u8, u8, u8) = (SPARK.0, SPARK.1, SPARK.2, 255);
 const HEART_C: (u8, u8, u8) = (255, 111, 163); // heart
 const SLEEP_BLUE: (u8, u8, u8) = (120, 168, 255); // sleepBlue
-const DESK_TOP: (u8, u8, u8, u8) = (207, 159, 110, 255);
-const DESK_FRONT: (u8, u8, u8, u8) = (179, 133, 79, 255);
-const KEY_BASE: (u8, u8, u8, u8) = (78, 85, 102, 255);
-const KEY_CAP: (u8, u8, u8, u8) = (153, 161, 181, 255);
+const DESK_TOP: (u8, u8, u8, u8) = (224, 190, 150, 255); // soft warm wood
+const DESK_TOP_HI: (u8, u8, u8, u8) = (238, 208, 172, 255); // front-edge sheen
+const DESK_FRONT: (u8, u8, u8, u8) = (198, 160, 120, 255);
+const KEY_BASE: (u8, u8, u8, u8) = (96, 103, 120, 255); // soft slate
+const KEY_CAP: (u8, u8, u8, u8) = (178, 186, 202, 255);
 const TEXT: (u8, u8, u8, u8) = (84, 72, 58, 255);
 const TEXT_DIM: (u8, u8, u8, u8) = (149, 138, 124, 255);
 const FISH_BLUE: (u8, u8, u8) = (108, 160, 220);
@@ -467,17 +468,18 @@ fn draw_scene(pm: &mut Pixmap, sc: &Scene, scale: f32) {
     // accessory (on head, over ears)
     draw_accessory(&mut cv, sc.accessory, head_t);
 
-    // desk
+    // desk — soft warm wood, no hard outline
     cv.fill(&round_rect(16.0, 222.0, 208.0, 20.0, 6.0), DESK_FRONT);
     let top = round_rect(12.0, 212.0, 216.0, 14.0, 7.0);
     cv.fill(&top, DESK_TOP);
-    cv.stroke(&top, fade(OUTLINE, 0.55), 2.0);
+    cv.fill(&round_rect(14.0, 212.5, 212.0, 3.0, 2.0), DESK_TOP_HI); // soft front-edge sheen
+    cv.stroke(&top, darken((DESK_TOP.0, DESK_TOP.1, DESK_TOP.2), 0.16), 1.4);
 
-    // keyboard
+    // keyboard — soft slate, rounded, no hard outline
     {
         let base = round_rect(74.0, 200.0, 92.0, 18.0, 5.0);
         cv.fill(&base, KEY_BASE);
-        cv.stroke(&base, fade(OUTLINE, 0.7), 2.0);
+        cv.stroke(&base, darken((KEY_BASE.0, KEY_BASE.1, KEY_BASE.2), 0.22), 1.4);
         for row in 0..2 {
             let y = 203.5 + row as f32 * 7.0;
             let n = 7 - row; // 7 keys then 6
