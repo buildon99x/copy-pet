@@ -72,9 +72,14 @@ src/
     mod.rs             selects exactly one backend by cfg
     windows.rs         native Win32 layered window + LL hooks + clipboard
                        listener + global panel hotkey (default Win+Shift+V,
-                       fallback Ctrl+Shift+V) + Shell tray
+                       fallback Ctrl+Shift+V) + Shell tray. The hotkey opens
+                       the panel as a caret-anchored flyout in a *second*
+                       focusable layered window (ADR-0013); middle-click keeps
+                       the embedded panel.
     portable.rs        winit + softbuffer + rdev + arboard (macOS/Linux,
-                       and Windows --feature portable)
+                       and Windows --feature portable). On macOS the hotkey
+                       opens the panel as a caret-anchored flyout in a second
+                       winit window (ADR-0013); Linux keeps the embedded panel.
     mac_input.rs       macOS-only global-input event tap (CoreGraphics).
                        Replaces rdev's keyboard listener, which crashes on
                        macOS 15 by calling Text Input Source APIs off the main
@@ -91,6 +96,9 @@ src/
                        confirmation) — the parity of the Windows MessageBoxW.
     mac_autostart.rs   macOS-only "run at login" via a ~/Library/LaunchAgents
                        plist (parity of the Windows HKCU\Run value).
+    mac_caret.rs       macOS-only text-caret read for the flyout (ADR-0013):
+                       Accessibility API (AXBoundsForRange), geometry only —
+                       never element text; falls back to the mouse cursor.
   bin/gen_icon.rs      regenerates assets/clipcat.ico from render::draw_icon_scaled
 examples/preview.rs    renders representative frames to PNGs (headless review)
 tests/e2e.rs           end-to-end core flows through the public Pet API
