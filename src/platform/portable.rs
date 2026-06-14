@@ -129,6 +129,27 @@ struct PortableApp {
     focused: bool,
     /// Live keyboard modifiers (for Ctrl+P / Ctrl+Z / Ctrl+digits in the panel).
     mods: ModifiersState,
+    /// The caret-anchored clipboard flyout's own window (macOS only — Win+V
+    /// parity). The hotkey opens the panel here, at the text caret, leaving
+    /// the cat window untouched. Created lazily on first use. Linux/Windows-
+    /// portable keep the embedded (cat-window) panel for the hotkey.
+    #[cfg(target_os = "macos")]
+    flyout: Option<Flyout>,
+}
+
+/// The flyout panel's dedicated winit window + transparent presenter (macOS).
+#[cfg(target_os = "macos")]
+struct Flyout {
+    window: Rc<Window>,
+    presenter: Option<super::mac_present::Presenter>,
+    pm: tiny_skia::Pixmap,
+    w: u32,
+    h: u32,
+    cursor: PhysicalPosition<f64>,
+    /// header-move drag (moves the window) / grip-resize drag (resizes the card)
+    move_drag: bool,
+    resize_drag: bool,
+    drag_screen: (f64, f64),
 }
 
 impl PortableApp {
@@ -178,6 +199,8 @@ impl PortableApp {
             last_click: None,
             focused: false,
             mods: ModifiersState::default(),
+            #[cfg(target_os = "macos")]
+            flyout: None,
         }
     }
 
@@ -346,8 +369,10 @@ impl PortableApp {
     }
 
     /// Brings the (possibly obscured or hidden) window to the front and gives
-    /// it focus — the panel hotkey's "reveal". Un-hides first; `focus_window`
-    /// raises it above other windows (Normal mode) and activates it on macOS.
+    /// it focus — the panel hotkey's "reveal" for the embedded panel. On macOS
+    /// the hotkey opens the caret-anchored flyout instead (its own window), so
+    /// this is only used on Linux/Windows-portable.
+    #[cfg(not(target_os = "macos"))]
     fn reveal(&mut self) {
         if self.pet.show_window() {
             self.apply_window_level(); // was hidden -> show
@@ -510,25 +535,7 @@ impl PortableApp {
     fn panel_key(&mut self, event: &winit::event::KeyEvent) {
         // Ctrl on Linux/Windows-portable, Cmd on macOS — accept either
         let ctrl = self.mods.control_key() || self.mods.super_key();
-        let nav = match event.physical_key {
-            PhysicalKey::Code(KeyCode::ArrowUp) => Some(NavKey::Up),
-            PhysicalKey::Code(KeyCode::ArrowDown) => Some(NavKey::Down),
-            PhysicalKey::Code(KeyCode::PageUp) => Some(NavKey::PageUp),
-            PhysicalKey::Code(KeyCode::PageDown) => Some(NavKey::PageDown),
-            PhysicalKey::Code(KeyCode::Home) => Some(NavKey::Home),
-            PhysicalKey::Code(KeyCode::End) => Some(NavKey::End),
-            PhysicalKey::Code(KeyCode::Enter | KeyCode::NumpadEnter) => Some(NavKey::Enter),
-            PhysicalKey::Code(KeyCode::Delete) => Some(NavKey::Delete),
-            PhysicalKey::Code(KeyCode::Backspace) => Some(NavKey::Backspace),
-            PhysicalKey::Code(KeyCode::Escape) => Some(NavKey::Esc),
-            PhysicalKey::Code(KeyCode::Tab) => Some(NavKey::Tab), // source filter
-            PhysicalKey::Code(KeyCode::KeyP) if ctrl => Some(NavKey::Pin),
-            PhysicalKey::Code(KeyCode::KeyZ) if ctrl => Some(NavKey::Undo),
-            // Ctrl/Cmd+0..9: quick-copy the nth row from the top
-            PhysicalKey::Code(code) if ctrl => quick_digit(code).map(NavKey::Quick),
-            _ => None,
-        };
-        if let Some(key) = nav {
+        if let Some(key) = nav_from_key(event, ctrl) {
             if let Some(pick) = self.pet.panel_nav(key) {
                 self.set_clipboard(pick);
             }
@@ -541,6 +548,281 @@ impl PortableApp {
             for c in txt.chars() {
                 self.pet.panel_char(c);
             }
+        }
+    }
+}
+
+// ---- caret-anchored flyout (macOS only) ------------------------------------
+
+#[cfg(target_os = "macos")]
+impl PortableApp {
+    fn flyout_id(&self) -> Option<WindowId> {
+        self.flyout.as_ref().map(|f| f.window.id())
+    }
+
+    /// Opens the panel as a flyout at the text caret (else the mouse cursor),
+    /// creating its window on first use, sizing it to the card and focusing it
+    /// for the search box. The cat window is left untouched.
+    fn open_flyout(&mut self, event_loop: &ActiveEventLoop) {
+        self.pet.open_flyout();
+        let (fw, fh) = self.pet.flyout_size();
+        let (fw, fh) = (fw as u32, fh as u32);
+
+        if self.flyout.is_none() {
+            let attrs = Window::default_attributes()
+                .with_title("ClipCat Clipboard")
+                .with_inner_size(PhysicalSize::new(fw, fh))
+                .with_decorations(false)
+                .with_transparent(true)
+                .with_resizable(false)
+                .with_window_level(WindowLevel::AlwaysOnTop)
+                .with_visible(false);
+            let Ok(win) = event_loop.create_window(attrs) else {
+                return;
+            };
+            let win = Rc::new(win);
+            let presenter = super::mac_present::Presenter::new(&win);
+            self.flyout = Some(Flyout {
+                window: win,
+                presenter,
+                pm: tiny_skia::Pixmap::new(fw, fh).unwrap(),
+                w: fw,
+                h: fh,
+                cursor: PhysicalPosition::new(0.0, 0.0),
+                move_drag: false,
+                resize_drag: false,
+                drag_screen: (0.0, 0.0),
+            });
+        }
+        self.resize_flyout_buffers();
+        self.place_flyout(super::mac_caret::caret_screen_pos());
+        if let Some(f) = self.flyout.as_ref() {
+            f.window.set_visible(true);
+            f.window.focus_window();
+        }
+        self.paint_flyout();
+    }
+
+    /// Rebuilds the flyout window/buffers to the current [`Pet::flyout_size`]
+    /// (after a grip-resize or before opening). No-op when unchanged.
+    fn resize_flyout_buffers(&mut self) {
+        let (fw, fh) = self.pet.flyout_size();
+        let (fw, fh) = (fw as u32, fh as u32);
+        if let Some(f) = self.flyout.as_mut() {
+            if (fw, fh) != (f.w, f.h) {
+                let _ = f.window.request_inner_size(PhysicalSize::new(fw, fh));
+                f.w = fw;
+                f.h = fh;
+                f.pm = tiny_skia::Pixmap::new(fw, fh).unwrap();
+            }
+        }
+    }
+
+    /// Positions the flyout window so its card lands at `anchor` (physical px,
+    /// top-left), slid onto the monitor it falls on. Falls back near the
+    /// top-left when no anchor is available.
+    fn place_flyout(&mut self, anchor: Option<(f64, f64)>) {
+        let l = self.pet.panel.layout_standalone();
+        let Some(f) = self.flyout.as_ref() else {
+            return;
+        };
+        let (ax, ay) = anchor.unwrap_or((40.0, 40.0));
+        // window top-left so the card (at card_x/card_y inside it) hits anchor
+        let mut wx = ax - l.card_x as f64;
+        let mut wy = ay - l.card_y as f64;
+        // park there first so current_monitor resolves the anchor's monitor
+        f.window
+            .set_outer_position(PhysicalPosition::new(wx as i32, wy as i32));
+        if let Some(mon) = f.window.current_monitor() {
+            let mp = mon.position();
+            let ms = mon.size();
+            let card = Rect {
+                x: wx as f32 + l.card_x,
+                y: wy as f32 + l.card_y,
+                w: l.card_w,
+                h: l.card_h,
+            };
+            let vis = Rect {
+                x: mp.x as f32,
+                y: mp.y as f32,
+                w: ms.width as f32,
+                h: ms.height as f32,
+            };
+            let (dx, dy) = fit_delta(card, vis);
+            wx += dx as f64;
+            wy += dy as f64;
+        }
+        f.window
+            .set_outer_position(PhysicalPosition::new(wx as i32, wy as i32));
+    }
+
+    fn paint_flyout(&mut self) {
+        let Some(f) = self.flyout.as_mut() else {
+            return;
+        };
+        self.pet.render_flyout(&mut f.pm);
+        let scale = f.window.scale_factor();
+        if let Some(p) = f.presenter.as_mut() {
+            p.present(&f.pm, scale);
+        }
+    }
+
+    fn close_flyout(&mut self) {
+        self.pet.close_flyout();
+        if let Some(f) = self.flyout.as_ref() {
+            f.window.set_visible(false);
+        }
+    }
+
+    /// Screen cursor for a flyout drag (window origin + local cursor); the
+    /// window moves/resizes under the pointer, so window-local deltas would
+    /// feed back into themselves.
+    fn flyout_screen_cursor(&self) -> (f64, f64) {
+        let Some(f) = self.flyout.as_ref() else {
+            return (0.0, 0.0);
+        };
+        let base = f
+            .window
+            .outer_position()
+            .map(|p| (p.x as f64, p.y as f64))
+            .unwrap_or((0.0, 0.0));
+        (base.0 + f.cursor.x, base.1 + f.cursor.y)
+    }
+
+    fn flyout_window_event(&mut self, event: WindowEvent) {
+        match event {
+            WindowEvent::RedrawRequested => self.paint_flyout(),
+            WindowEvent::Focused(false) | WindowEvent::CloseRequested => self.close_flyout(),
+            WindowEvent::CursorMoved { position, .. } => {
+                if let Some(f) = self.flyout.as_mut() {
+                    f.cursor = position;
+                }
+                self.pet.set_cursor(position.x as f32, position.y as f32);
+                let (mv, rz) = self
+                    .flyout
+                    .as_ref()
+                    .map(|f| (f.move_drag, f.resize_drag))
+                    .unwrap_or((false, false));
+                if mv || rz {
+                    let sc = self.flyout_screen_cursor();
+                    let ds = self.flyout.as_ref().map(|f| f.drag_screen).unwrap();
+                    let (dx, dy) = (sc.0 - ds.0, sc.1 - ds.1);
+                    if dx != 0.0 || dy != 0.0 {
+                        if mv {
+                            if let Some(f) = self.flyout.as_ref() {
+                                if let Ok(p) = f.window.outer_position() {
+                                    f.window.set_outer_position(PhysicalPosition::new(
+                                        p.x + dx as i32,
+                                        p.y + dy as i32,
+                                    ));
+                                }
+                            }
+                        } else {
+                            self.pet.panel_drag_update(dx as f32, dy as f32);
+                        }
+                        if let Some(f) = self.flyout.as_mut() {
+                            f.drag_screen = sc;
+                        }
+                    }
+                }
+            }
+            WindowEvent::MouseInput {
+                state,
+                button: MouseButton::Left,
+                ..
+            } => match state {
+                ElementState::Pressed => {
+                    let (cx, cy) = self
+                        .flyout
+                        .as_ref()
+                        .map(|f| (f.cursor.x as f32, f.cursor.y as f32))
+                        .unwrap_or((0.0, 0.0));
+                    if self.pet.panel_drag_start(cx, cy) {
+                        let kind = self.pet.panel_drag_kind();
+                        let sc = self.flyout_screen_cursor();
+                        if let Some(f) = self.flyout.as_mut() {
+                            f.drag_screen = sc;
+                            match kind {
+                                Some(crate::panel::PanelDrag::Move) => f.move_drag = true,
+                                Some(crate::panel::PanelDrag::Resize) => f.resize_drag = true,
+                                None => {}
+                            }
+                        }
+                        return;
+                    }
+                    if self.pet.panel_hit(cx, cy) {
+                        let pick = self.pet.panel_click(cx, cy);
+                        self.after_flyout_action(pick);
+                    }
+                }
+                ElementState::Released => {
+                    let dragging = self
+                        .flyout
+                        .as_ref()
+                        .map(|f| f.move_drag || f.resize_drag)
+                        .unwrap_or(false);
+                    if dragging {
+                        if let Some(f) = self.flyout.as_mut() {
+                            f.move_drag = false;
+                            f.resize_drag = false;
+                        }
+                        self.pet.panel_drag_end();
+                    }
+                }
+            },
+            WindowEvent::MouseWheel { delta, .. } => {
+                let dy = match delta {
+                    MouseScrollDelta::LineDelta(_, y) => y,
+                    MouseScrollDelta::PixelDelta(p) => p.y as f32,
+                };
+                if dy != 0.0 {
+                    self.pet.panel_wheel(if dy < 0.0 { 1 } else { -1 });
+                }
+            }
+            WindowEvent::Ime(Ime::Commit(s)) => {
+                for c in s.chars() {
+                    self.pet.panel_char(c);
+                }
+            }
+            WindowEvent::ModifiersChanged(m) => self.mods = m.state(),
+            WindowEvent::KeyboardInput { event, .. } => {
+                if event.state == ElementState::Pressed {
+                    self.flyout_key(&event);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// Like [`panel_key`](Self::panel_key), but reconciles the flyout window
+    /// (hide on dismiss, paste on pick) after each navigation key.
+    fn flyout_key(&mut self, event: &winit::event::KeyEvent) {
+        let ctrl = self.mods.control_key() || self.mods.super_key();
+        if let Some(key) = nav_from_key(event, ctrl) {
+            let pick = self.pet.panel_nav(key);
+            self.after_flyout_action(pick);
+            return;
+        }
+        if ctrl {
+            return;
+        }
+        if let Some(txt) = &event.text {
+            for c in txt.chars() {
+                self.pet.panel_char(c);
+            }
+        }
+    }
+
+    /// After a flyout click/key: hide the window if the panel closed (a pick
+    /// with auto-close, or Esc), then hand any picked clip to the clipboard.
+    fn after_flyout_action(&mut self, pick: Option<ClipPick>) {
+        if !self.pet.flyout_open() {
+            if let Some(f) = self.flyout.as_ref() {
+                f.window.set_visible(false);
+            }
+        }
+        if let Some(pick) = pick {
+            self.set_clipboard(pick);
         }
     }
 }
@@ -606,7 +888,16 @@ impl ApplicationHandler for PortableApp {
         self.apply_window_level(); // enforce a persisted level/hide
     }
 
-    fn window_event(&mut self, event_loop: &ActiveEventLoop, _id: WindowId, event: WindowEvent) {
+    fn window_event(&mut self, event_loop: &ActiveEventLoop, id: WindowId, event: WindowEvent) {
+        // the caret-anchored flyout (macOS) is a second window: route its
+        // events to the flyout handler, leaving the cat window's path below.
+        #[cfg(target_os = "macos")]
+        if self.flyout_id() == Some(id) {
+            self.flyout_window_event(event);
+            return;
+        }
+        #[cfg(not(target_os = "macos"))]
+        let _ = id;
         match event {
             WindowEvent::CloseRequested => {
                 self.save_position();
@@ -767,10 +1058,19 @@ impl ApplicationHandler for PortableApp {
             self.last_frame = now;
             // the global panel hotkey fired on the input thread
             if self.panel_toggle.swap(false, Ordering::Relaxed) {
-                // the hotkey always *shows* the panel (never toggles closed)
-                // and reveals the window so an obscured or hidden panel reappears
-                self.pet.open_panel();
-                self.reveal();
+                // macOS: open the panel as a caret-anchored flyout in its own
+                // window (Win+V parity) — the cat never moves. Linux/Windows-
+                // portable keep the embedded cat-window panel for the hotkey.
+                #[cfg(target_os = "macos")]
+                self.open_flyout(event_loop);
+                #[cfg(not(target_os = "macos"))]
+                {
+                    // the hotkey always *shows* the panel (never toggles
+                    // closed) and reveals the window so an obscured or hidden
+                    // panel reappears
+                    self.pet.open_panel();
+                    self.reveal();
+                }
             }
             // the macOS event tap couldn't start (Accessibility not granted)
             if self.perm_needed.swap(false, Ordering::Relaxed) {
@@ -800,8 +1100,42 @@ impl ApplicationHandler for PortableApp {
                     window.request_redraw();
                 }
             }
+            // the caret-anchored flyout paints into its own window; a grip
+            // resize rebuilds its buffers
+            #[cfg(target_os = "macos")]
+            if redraw && self.pet.flyout_open() {
+                if self.pet.take_flyout_resized() {
+                    self.resize_flyout_buffers();
+                }
+                if let Some(f) = self.flyout.as_ref() {
+                    f.window.request_redraw();
+                }
+            }
         }
         event_loop.set_control_flow(ControlFlow::WaitUntil(self.last_frame + TICK));
+    }
+}
+
+/// Maps a winit key event (+ Ctrl/Cmd state) to a panel [`NavKey`]. Shared by
+/// the embedded panel ([`PortableApp::panel_key`]) and the flyout window.
+fn nav_from_key(event: &winit::event::KeyEvent, ctrl: bool) -> Option<NavKey> {
+    match event.physical_key {
+        PhysicalKey::Code(KeyCode::ArrowUp) => Some(NavKey::Up),
+        PhysicalKey::Code(KeyCode::ArrowDown) => Some(NavKey::Down),
+        PhysicalKey::Code(KeyCode::PageUp) => Some(NavKey::PageUp),
+        PhysicalKey::Code(KeyCode::PageDown) => Some(NavKey::PageDown),
+        PhysicalKey::Code(KeyCode::Home) => Some(NavKey::Home),
+        PhysicalKey::Code(KeyCode::End) => Some(NavKey::End),
+        PhysicalKey::Code(KeyCode::Enter | KeyCode::NumpadEnter) => Some(NavKey::Enter),
+        PhysicalKey::Code(KeyCode::Delete) => Some(NavKey::Delete),
+        PhysicalKey::Code(KeyCode::Backspace) => Some(NavKey::Backspace),
+        PhysicalKey::Code(KeyCode::Escape) => Some(NavKey::Esc),
+        PhysicalKey::Code(KeyCode::Tab) => Some(NavKey::Tab), // source filter
+        PhysicalKey::Code(KeyCode::KeyP) if ctrl => Some(NavKey::Pin),
+        PhysicalKey::Code(KeyCode::KeyZ) if ctrl => Some(NavKey::Undo),
+        // Ctrl/Cmd+0..9: quick-copy the nth row from the top
+        PhysicalKey::Code(code) if ctrl => quick_digit(code).map(NavKey::Quick),
+        _ => None,
     }
 }
 
