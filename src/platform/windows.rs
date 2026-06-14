@@ -308,10 +308,17 @@ impl App {
         };
         GetWindowRect(self.hwnd, &mut rc);
         let (mut nx, mut ny) = (rc.left + dx, rc.top + dy);
-        if !self.pet.panel_open() {
-            // shrunk back to the cat: keep it reachable. While the panel is
-            // open the window legitimately extends offscreen (the card can
-            // sit anywhere); clamping then would drag the cat along.
+        // `apply_size` only ever sizes the *cat* window. The flyout lives in
+        // its own window, so the cat window is cat-only whenever the panel is a
+        // flyout — treat that exactly like "panel closed" here (clamp on
+        // screen, keep no-activate). Only the embedded middle-click panel grows
+        // the cat window and makes it focusable.
+        let embedded = self.pet.embedded_panel_open();
+        if !embedded {
+            // shrunk back to the cat (closed, or owned by the flyout): keep it
+            // reachable. While the *embedded* panel is open the window
+            // legitimately extends offscreen (the card can sit anywhere);
+            // clamping then would drag the cat along.
             (nx, ny) = clamp_to_screen(nx, ny, w, h);
         }
         if (w, h) != (self.w, self.h) {
@@ -327,10 +334,12 @@ impl App {
         }
 
         // toggle focusability only on a real open/close transition — a panel
-        // drag re-applies the size many times per second
+        // drag re-applies the size many times per second. Keyed on the
+        // *embedded* panel: the flyout is a separate focusable window, so the
+        // cat window must stay no-activate while it's up (and after it closes).
         let ex = GetWindowLongPtrW(self.hwnd, GWL_EXSTYLE);
         let no_activate = ex & WS_EX_NOACTIVATE as isize != 0;
-        if self.pet.panel_open() && no_activate {
+        if embedded && no_activate {
             // Remember who had focus before we steal it, so auto-paste can send
             // the clip back to that app. The hotkey path reveals (and
             // foregrounds) us *before* this runs, so it already grabbed the
@@ -341,7 +350,7 @@ impl App {
             SetWindowLongPtrW(self.hwnd, GWL_EXSTYLE, ex & !(WS_EX_NOACTIVATE as isize));
             SetForegroundWindow(self.hwnd);
             SetFocus(self.hwnd);
-        } else if !self.pet.panel_open() && !no_activate {
+        } else if !embedded && !no_activate {
             SetWindowLongPtrW(self.hwnd, GWL_EXSTYLE, ex | WS_EX_NOACTIVATE as isize);
         }
 
@@ -354,11 +363,12 @@ impl App {
         self.pet.render(&mut self.pm);
         self.blit_at(Some((nx, ny)));
 
-        // The panel just opened: if the card landed off the monitor (the pet
-        // sits near an edge, or a persisted offset put it offscreen), slide
-        // the card — not the cat — back into view and re-apply once. `fit` is
-        // already drained, so the recursive call can't loop.
-        if fit && self.pet.panel_open() {
+        // The embedded panel just opened: if the card landed off the monitor
+        // (the pet sits near an edge, or a persisted offset put it offscreen),
+        // slide the card — not the cat — back into view and re-apply once.
+        // `fit` is already drained, so the recursive call can't loop. (Only an
+        // embedded open sets `fit`; the flyout fits itself in its own window.)
+        if fit && embedded {
             if let Some((sdx, sdy)) = self.panel_fit_shift(nx, ny) {
                 self.pet.shift_panel(sdx, sdy);
                 self.apply_size();

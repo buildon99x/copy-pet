@@ -530,6 +530,15 @@ impl Pet {
         self.flyout && self.panel.open
     }
 
+    /// The panel is showing *embedded* in the cat window (middle-click), not as
+    /// the separate flyout — the only case in which the cat window itself takes
+    /// keyboard focus and grows its canvas. Backends key their cat-window
+    /// focus/size/clamp logic off this so the flyout (its own window) never
+    /// leaves the cat window focusable.
+    pub fn embedded_panel_open(&self) -> bool {
+        self.panel.open && !self.flyout
+    }
+
     /// Physical-pixel size of the flyout window (card + margins). The backend
     /// uses it to size/resize the flyout window; valid regardless of state.
     pub fn flyout_size(&self) -> (i32, i32) {

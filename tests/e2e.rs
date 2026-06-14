@@ -137,6 +137,35 @@ fn hotkey_flyout_leaves_the_cat_window_untouched() {
     );
 }
 
+/// The embedded (middle-click) panel and the flyout must be distinguishable so
+/// the Windows backend only makes the cat window focusable for the *embedded*
+/// panel — not the flyout (which is its own window). Pressing the hotkey while
+/// the embedded panel is up retracts it and hands ownership to the flyout.
+#[test]
+fn embedded_vs_flyout_panel_are_distinct() {
+    let mut p = pet();
+    copy(&mut p, "a clip", Some("Code"));
+
+    // middle-click: the panel is embedded in the cat window (it grows + focuses)
+    p.toggle_panel();
+    assert!(p.embedded_panel_open(), "middle-click opens the embedded panel");
+    assert!(!p.flyout_open());
+
+    // hotkey while embedded is up: retract the embedded panel, open the flyout
+    p.open_flyout();
+    assert!(p.flyout_open(), "hotkey hands ownership to the flyout");
+    assert!(
+        !p.embedded_panel_open(),
+        "the cat window is no longer the embedded panel (so it must not stay focusable)"
+    );
+
+    // closing the flyout leaves neither mode active
+    p.close_flyout();
+    assert!(!p.flyout_open());
+    assert!(!p.embedded_panel_open());
+    assert!(!p.panel_open());
+}
+
 /// The same filter driven by the mouse, through real panel coordinates —
 /// the path both backends' click handlers take.
 #[test]
