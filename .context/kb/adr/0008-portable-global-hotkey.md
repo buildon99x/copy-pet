@@ -59,3 +59,18 @@ key source we have is the `rdev` listener we already run for counting.
   still receives the keystroke (e.g. Cmd+Shift+V pastes-without-style in
   some macOS editors while also toggling the panel). Acceptable; users can
   configure a different spec in `state.json`.
+
+## Update (2026-06-14): runtime-mutable chord + output-only paste
+
+The hotkey is now changeable at runtime (preset cycling — see
+[`crate::hotkey::next_preset`]). The `ChordTracker` lives on the listener
+thread; the main thread sends the new `Hotkey` over an `mpsc` channel that
+`pump` drains with a cheap non-blocking `try_recv` before each event (chosen
+over an `Arc<Mutex<Hotkey>>` so we never lock on the per-keystroke hot path).
+The channel carries only the *configured chord spec* — never an observed key —
+so the compare-and-discard rule is unchanged.
+
+[ADR-0012](0012-auto-paste.md) adds opt-in auto-paste via `rdev::simulate`
+(Ctrl/Cmd+V). That is **output-only** — it injects a keystroke, never reads
+one — so it does not widen what the listener observes and does not weaken this
+ADR's input-privacy guarantee.

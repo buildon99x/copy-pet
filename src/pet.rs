@@ -21,6 +21,15 @@ pub const SCALES: [f32; 3] = [0.78, 1.0, 1.3];
 /// XP granted for every captured copy event.
 pub const XP_PER_COPY: u64 = 5;
 
+/// A clip the user picked from the panel, handed to the backend to put on the
+/// OS clipboard. `paste` additionally asks the backend to paste it into the
+/// previously focused app (synthesized Ctrl/Cmd+V; see `paste_on_select`).
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct ClipPick {
+    pub text: String,
+    pub paste: bool,
+}
+
 /// Flight time of one fish, in seconds.
 const FISH_SECS: f32 = 0.9;
 /// At most this many fish queue up during copy bursts.
@@ -226,6 +235,16 @@ impl Pet {
         self.set_toast(t(self.lang(), Msg::ToastAccessibility).to_string(), 8.0);
     }
 
+    /// The OS rejected the configured panel hotkey (e.g. Windows reserves
+    /// Win+Shift+V for clipboard history) and the fallback chord took its
+    /// place. Explain the swap via toast so the label shown in the menu/hint
+    /// stops looking like a silent mismatch with the saved setting. The
+    /// configured chord is kept in `state.json`, so it registers normally once
+    /// whatever was holding it is freed.
+    pub fn notify_hotkey_fallback(&mut self, wanted: &str, used: &str) {
+        self.set_toast(i18n::hotkey_fallback(self.lang(), wanted, used), 5.0);
+    }
+
     /// Returns `true` once after a level-up so the platform can refresh tray UI.
     pub fn take_level_changed(&mut self) -> bool {
         std::mem::take(&mut self.level_changed)
@@ -419,12 +438,25 @@ impl Pet {
 
     pub fn toggle_panel(&mut self) {
         self.drag = None;
-        self.relayout(|p| p.panel.toggle());
+        self.relayout(|p| {
+            // Opening the panel for the first time retires the first-run hint.
+            if !p.panel.open && !p.st.onboarded {
+                p.st.onboarded = true;
+                p.dirty = true;
+            }
+            p.panel.toggle();
+        });
         // ask the backend to fit the card on screen once it's positioned —
         // a pet near a screen edge would otherwise open the panel offscreen
         if self.panel.open {
             self.fit_panel = true;
         }
+    }
+
+    /// Whether the first-run hotkey hint banner is currently shown: only while
+    /// the panel is closed and the user has not yet opened it once.
+    fn show_hint(&self) -> bool {
+        !self.panel.open && !self.st.onboarded
     }
 
     /// Opens the panel if it isn't already — the global hotkey's "always show"
@@ -512,11 +544,11 @@ impl Pet {
 
     /// Executes a panel action. Returns text the backend must put on the
     /// OS clipboard, if any.
-    fn run_action(&mut self, action: PanelAction) -> Option<String> {
+    fn run_action(&mut self, action: PanelAction) -> Option<ClipPick> {
         match action {
             PanelAction::Copy(id) => {
                 let text = self.clips.get(id).map(|c| c.text.clone());
-                if text.is_some() {
+                if let Some(text) = text {
                     self.set_toast(t(self.lang(), Msg::ToastCopied).to_string(), 1.6);
                     self.happy = (self.happy + 0.4).min(1.0);
                     if self.st.sound_mode >= 1 {
@@ -527,8 +559,12 @@ impl Pet {
                     if self.st.panel_autoclose {
                         self.toggle_panel();
                     }
+                    return Some(ClipPick {
+                        text,
+                        paste: self.st.paste_on_select,
+                    });
                 }
-                return text;
+                return None;
             }
             PanelAction::TogglePin(id) => {
                 self.clips.toggle_pin(id);
@@ -578,6 +614,38 @@ impl Pet {
         None
     }
 
+    /// Advances the global panel hotkey to the next preset (see
+    /// [`crate::hotkey::next_preset`]), persists it, and toasts the new chord.
+    /// Returns the new spec so the backend can re-register the OS hotkey; the
+    /// backend also sets the precise panel hint (Windows may fall back on a
+    /// clash, so the displayed label is the backend's to confirm).
+    pub fn cycle_hotkey(&mut self) -> String {
+        let next = crate::hotkey::next_preset(&self.st.hotkey).to_string();
+        self.st.hotkey = next.clone();
+        self.dirty = true;
+        let chord = crate::hotkey::Hotkey::from_spec(&next).display();
+        self.set_toast(chord, 2.2);
+        next
+    }
+
+    /// Whether picking a clip also pastes it into the previous app.
+    pub fn paste_on_select(&self) -> bool {
+        self.st.paste_on_select
+    }
+
+    /// Flips "paste the clip into the previous app after picking it" and
+    /// confirms via toast.
+    pub fn toggle_paste_on_select(&mut self) {
+        self.st.paste_on_select = !self.st.paste_on_select;
+        self.dirty = true;
+        let msg = if self.st.paste_on_select {
+            Msg::ToastPasteOn
+        } else {
+            Msg::ToastPasteOff
+        };
+        self.set_toast(t(self.lang(), msg).to_string(), 2.2);
+    }
+
     /// Flips "close the panel after copying a clip" and confirms via toast.
     pub fn toggle_panel_autoclose(&mut self) {
         self.st.panel_autoclose = !self.st.panel_autoclose;
@@ -601,7 +669,7 @@ impl Pet {
     }
 
     /// A click at window-canvas coords while the panel is open.
-    pub fn panel_click(&mut self, cx: f32, cy: f32) -> Option<String> {
+    pub fn panel_click(&mut self, cx: f32, cy: f32) -> Option<ClipPick> {
         let action = self.panel.click(cx, cy, &self.clips)?;
         self.run_action(action)
     }
@@ -617,7 +685,7 @@ impl Pet {
     }
 
     /// Navigation key while the panel is open.
-    pub fn panel_nav(&mut self, key: NavKey) -> Option<String> {
+    pub fn panel_nav(&mut self, key: NavKey) -> Option<ClipPick> {
         let action = self.panel.nav(key, &self.clips)?;
         self.run_action(action)
     }
@@ -870,6 +938,12 @@ impl Pet {
             None => 0.0,
         };
 
+        // first-run hint banner: the live panel hotkey, until the panel opens once
+        let hint_text = self.show_hint().then(|| {
+            let chord = crate::hotkey::Hotkey::from_spec(&self.st.hotkey).display();
+            i18n::first_run_hint(self.lang(), &chord)
+        });
+
         let scene = Scene {
             paw_l: ease_press(self.paw_l),
             paw_r: ease_press(self.paw_r),
@@ -887,6 +961,7 @@ impl Pet {
             bubble,
             bubble_alpha: self.bubble_alpha,
             toast: toast_view,
+            hotkey_hint: hint_text.as_deref(),
             lang: self.lang(),
             origin: self.origin(),
         };
@@ -987,6 +1062,19 @@ impl Pet {
             t(lang, Msg::MenuAutoClose),
             MenuAction::TogglePanelAutoClose,
             self.st.panel_autoclose,
+        ));
+        m.push(MenuItem::leaf(
+            t(lang, Msg::MenuPasteOnSelect),
+            MenuAction::TogglePasteOnSelect,
+            self.st.paste_on_select,
+        ));
+        // Panel hotkey: a one-click cycle through safe presets (no rebind UI);
+        // the label shows the live chord and a click advances to the next.
+        let chord = crate::hotkey::Hotkey::from_spec(&self.st.hotkey).display();
+        m.push(MenuItem::leaf(
+            i18n::menu_hotkey(lang, &chord),
+            MenuAction::CycleHotkey,
+            false,
         ));
         m.push(MenuEntry::Separator);
 
@@ -1093,6 +1181,7 @@ impl Pet {
                 self.run_action(PanelAction::ToggleCapture);
             }
             MenuAction::TogglePanelAutoClose => self.toggle_panel_autoclose(),
+            MenuAction::TogglePasteOnSelect => self.toggle_paste_on_select(),
             MenuAction::ToggleStats => {
                 self.st.bubble_pinned = !self.st.bubble_pinned;
                 self.dirty = true;
@@ -1128,6 +1217,7 @@ impl Pet {
                 crate::update::set_enabled(self.st.auto_update);
                 self.dirty = true;
             }
+            MenuAction::CycleHotkey => return MenuOutcome::ReregisterHotkey(self.cycle_hotkey()),
             MenuAction::ToggleAutostart => return MenuOutcome::ToggleAutostart,
             MenuAction::InstallUpdate => return MenuOutcome::InstallUpdate,
             MenuAction::ResetStats => return MenuOutcome::ConfirmReset,
@@ -1326,6 +1416,65 @@ mod tests {
     }
 
     #[test]
+    fn cycle_hotkey_advances_persists_and_toasts() {
+        let mut p = pet();
+        let before = p.st.hotkey.clone();
+        let returned = p.cycle_hotkey();
+        assert_eq!(p.st.hotkey, returned, "returns the new spec it persisted");
+        assert_ne!(p.st.hotkey, before, "the spec advanced to the next preset");
+        assert_eq!(p.st.hotkey, crate::hotkey::PRESETS[1]);
+        assert!(p.dirty, "the new spec is persisted");
+        assert!(p.toast.is_some(), "the new chord is confirmed via toast");
+    }
+
+    #[test]
+    fn menu_cycle_hotkey_reregisters_with_new_spec() {
+        let mut p = pet();
+        // the menu carries a CycleHotkey leaf labelled with the live chord
+        let menu = p.build_menu("HK", false);
+        let item = find(&menu, MenuAction::CycleHotkey).unwrap();
+        assert!(item.label.contains(&crate::hotkey::Hotkey::from_spec(&p.st.hotkey).display()));
+        // applying it advances the spec and hands the backend the new one to register
+        match p.apply_menu_action(MenuAction::CycleHotkey) {
+            MenuOutcome::ReregisterHotkey(spec) => assert_eq!(spec, p.st.hotkey),
+            other => panic!("expected ReregisterHotkey, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn paste_on_select_flag_flows_into_pick() {
+        let mut p = pet();
+        p.st.panel_autoclose = false; // keep the panel state simple
+        p.on_copy("hello".into(), None, None);
+        let id = p.clips.visible("")[0].id;
+        p.toggle_panel();
+        // default: copy only, no auto-paste
+        let pick = p.run_action(PanelAction::Copy(id)).expect("a pick");
+        assert_eq!(pick.text, "hello");
+        assert!(!pick.paste, "auto-paste is off by default");
+        // turning it on makes the next pick request a paste
+        p.toggle_paste_on_select();
+        assert!(p.paste_on_select());
+        let pick = p.run_action(PanelAction::Copy(id)).expect("a pick");
+        assert!(pick.paste, "now the pick also asks the backend to paste");
+    }
+
+    #[test]
+    fn menu_toggle_paste_on_select() {
+        let mut p = pet();
+        let menu = p.build_menu("HK", false);
+        assert!(!find(&menu, MenuAction::TogglePasteOnSelect).unwrap().checked);
+        assert_eq!(
+            p.apply_menu_action(MenuAction::TogglePasteOnSelect),
+            MenuOutcome::Handled
+        );
+        assert!(p.paste_on_select());
+        assert!(p.toast.is_some(), "the toggle is confirmed via toast");
+        let menu = p.build_menu("HK", false);
+        assert!(find(&menu, MenuAction::TogglePasteOnSelect).unwrap().checked);
+    }
+
+    #[test]
     fn menu_autostart_check_reflects_param() {
         let p = pet();
         assert!(find(&p.build_menu("HK", true), MenuAction::ToggleAutostart).unwrap().checked);
@@ -1440,7 +1589,7 @@ mod tests {
         p.toggle_panel();
         assert!(p.panel_open());
         let got = p.panel_nav(NavKey::Enter);
-        assert_eq!(got.as_deref(), Some("copy me back"));
+        assert_eq!(got.map(|c| c.text).as_deref(), Some("copy me back"));
         assert!(!p.panel_open(), "picking a clip closes the panel for pasting");
     }
 
@@ -1607,6 +1756,30 @@ mod tests {
         p.notify_update("9.9.10");
         assert_eq!(p.update_available(), Some("9.9.10"));
         assert!(p.toast.is_some());
+    }
+
+    #[test]
+    fn first_panel_open_marks_onboarded() {
+        let mut p = pet();
+        assert!(!p.st.onboarded, "starts un-onboarded (first-run hint shown)");
+        assert!(p.show_hint());
+        p.toggle_panel(); // first open
+        assert!(p.st.onboarded, "opening the panel once retires the hint");
+        assert!(p.dirty, "the onboarding flag is persisted");
+        assert!(!p.show_hint(), "panel open => no under-pet hint");
+        p.toggle_panel(); // close again
+        assert!(!p.show_hint(), "still onboarded after closing");
+    }
+
+    #[test]
+    fn render_first_run_hint_smoke() {
+        let p = pet(); // default => not onboarded
+        assert!(p.show_hint());
+        let (w, h) = p.canvas_size();
+        let mut pm = Pixmap::new(w as u32, h as u32).unwrap();
+        p.render(&mut pm); // draws the hint banner; must not panic
+        p.render_card(&mut pm);
+        assert!(pm.data().chunks_exact(4).any(|px| px[3] > 0));
     }
 
     #[test]

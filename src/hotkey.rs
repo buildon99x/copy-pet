@@ -13,6 +13,22 @@ pub const DEFAULT: &str = "win+shift+v";
 /// Fallback when the default cannot be registered (clash with another app).
 pub const FALLBACK: &str = "ctrl+shift+v";
 
+/// Safe, always-parseable presets the settings menu cycles through (instead of
+/// a free-form rebind UI). The default leads, so cycling from a fresh install
+/// advances predictably. Every entry must parse via [`Hotkey::parse`].
+pub const PRESETS: &[&str] = &["win+shift+v", "ctrl+shift+v", "alt+shift+v", "ctrl+shift+c"];
+
+/// The preset after `current` (wrapping). Comparison is on the parsed chord, so
+/// case/spacing don't matter; a spec that isn't a preset (e.g. a hand-edited
+/// custom chord) cycles to the first preset.
+pub fn next_preset(current: &str) -> &'static str {
+    let cur = Hotkey::from_spec(current);
+    match PRESETS.iter().position(|p| Hotkey::from_spec(p) == cur) {
+        Some(i) => PRESETS[(i + 1) % PRESETS.len()],
+        None => PRESETS[0],
+    }
+}
+
 /// What the `win` modifier is called on this OS (display only).
 pub fn super_name() -> &'static str {
     if cfg!(target_os = "macos") {
@@ -124,6 +140,29 @@ mod tests {
         assert!(hk.win && hk.shift);
         assert_eq!(hk.key, 'B');
         assert_eq!(Hotkey::parse("ctrl+alt+9").unwrap().key, '9');
+    }
+
+    #[test]
+    fn presets_all_parse_and_display() {
+        for p in PRESETS {
+            let hk = Hotkey::parse(p).unwrap_or_else(|| panic!("preset {p:?} must parse"));
+            assert!(!hk.display().is_empty());
+        }
+        assert_eq!(PRESETS[0], DEFAULT, "the default leads the cycle");
+    }
+
+    #[test]
+    fn next_preset_cycles_and_wraps() {
+        // walk the whole ring and return to the start
+        let mut spec = PRESETS[0].to_string();
+        for expected in PRESETS.iter().skip(1).chain(std::iter::once(&PRESETS[0])) {
+            spec = next_preset(&spec).to_string();
+            assert_eq!(&spec.as_str(), expected);
+        }
+        // comparison is on the parsed chord, not the string spelling
+        assert_eq!(next_preset("Win+Shift+V"), PRESETS[1]);
+        // an unknown/custom chord jumps to the first preset
+        assert_eq!(next_preset("ctrl+alt+k"), PRESETS[0]);
     }
 
     #[test]

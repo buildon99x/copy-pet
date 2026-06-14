@@ -69,7 +69,7 @@ fn copy_filter_and_copy_back_flow() {
     assert_eq!(p.panel_nav(NavKey::Tab), None);
     assert_eq!(p.panel.source.as_deref(), Some("Code"));
     let text = p.panel_nav(NavKey::Enter);
-    assert_eq!(text.as_deref(), Some("fn main() {}"));
+    assert_eq!(text.map(|c| c.text).as_deref(), Some("fn main() {}"));
     assert!(!p.panel_open(), "picking a clip closes the panel for pasting");
     assert!(p.take_size_changed(), "backends shrink back to the cat canvas");
 
@@ -80,7 +80,7 @@ fn copy_filter_and_copy_back_flow() {
     p.panel_nav(NavKey::Tab);
     assert_eq!(p.panel.source.as_deref(), Some("Chrome"));
     let text = p.panel_nav(NavKey::Enter);
-    assert_eq!(text.as_deref(), Some("breaking news headline"));
+    assert_eq!(text.map(|c| c.text).as_deref(), Some("breaking news headline"));
 
     // Esc: filter first, panel second
     p.toggle_panel();
@@ -117,7 +117,7 @@ fn filter_button_and_row_clicks() {
     assert_eq!(p.panel.source.as_deref(), Some("Chrome"));
     p.panel_click(lt.btn_filter_x + 8.0, lt.btn_y + 8.0);
     assert_eq!(p.panel.source, None);
-    assert_eq!(p.panel_click(150.0, empty_y).as_deref(), Some("older from chrome"));
+    assert_eq!(p.panel_click(150.0, empty_y).map(|c| c.text).as_deref(), Some("older from chrome"));
     assert!(!p.panel_open(), "a row click copies and closes the panel");
 
     // reopened, filtering again and clicking the first row copies it back
@@ -126,7 +126,7 @@ fn filter_button_and_row_clicks() {
     assert_eq!(p.panel.source.as_deref(), Some("Code"));
     let row_y = lt.rows_y + panel::ROW_H / 2.0;
     let text = p.panel_click(150.0, row_y);
-    assert_eq!(text.as_deref(), Some("newest from code"));
+    assert_eq!(text.map(|c| c.text).as_deref(), Some("newest from code"));
 }
 
 /// Deleting is forgiving end-to-end: Del removes the selected clip, Ctrl+Z
@@ -184,7 +184,7 @@ fn search_combines_with_source_filter() {
         p.panel_char(c);
     }
     let text = p.panel_nav(NavKey::Enter);
-    assert_eq!(text.as_deref(), Some("안녕 from code"));
+    assert_eq!(text.map(|c| c.text).as_deref(), Some("안녕 from code"));
 
     // dropping the filter widens the same query to Chrome's clip too
     let visible = p.panel.visible(&p.clips);
@@ -387,17 +387,17 @@ fn quick_copy_hotkeys_copy_top_clips() {
         copy(&mut p, &format!("clip {i}"), Some(src));
     }
     p.toggle_panel();
-    assert_eq!(p.panel_nav(NavKey::Quick(0)).as_deref(), Some("clip 11"));
+    assert_eq!(p.panel_nav(NavKey::Quick(0)).map(|c| c.text).as_deref(), Some("clip 11"));
     assert!(!p.panel_open(), "quick copy closes the panel like Enter");
 
     p.toggle_panel();
-    assert_eq!(p.panel_nav(NavKey::Quick(9)).as_deref(), Some("clip 2"));
+    assert_eq!(p.panel_nav(NavKey::Quick(9)).map(|c| c.text).as_deref(), Some("clip 2"));
 
     // respects the source filter (most recent app first: Chrome)
     p.toggle_panel();
     p.panel_nav(NavKey::Tab);
     assert_eq!(p.panel.source.as_deref(), Some("Chrome"));
-    assert_eq!(p.panel_nav(NavKey::Quick(1)).as_deref(), Some("clip 9"));
+    assert_eq!(p.panel_nav(NavKey::Quick(1)).map(|c| c.text).as_deref(), Some("clip 9"));
 
     // respects the search query
     p.toggle_panel();
@@ -405,7 +405,7 @@ fn quick_copy_hotkeys_copy_top_clips() {
         p.panel_char(c);
     }
     // matches "clip 11", "clip 10", "clip 1" (newest first)
-    assert_eq!(p.panel_nav(NavKey::Quick(2)).as_deref(), Some("clip 1"));
+    assert_eq!(p.panel_nav(NavKey::Quick(2)).map(|c| c.text).as_deref(), Some("clip 1"));
 
     // out of range: nothing copied, panel stays open
     p.toggle_panel();
@@ -439,13 +439,13 @@ fn panel_autoclose_toggle_keeps_panel_open() {
 
     // with auto-close off, Enter / quick keys / row clicks keep the panel up
     p.toggle_panel();
-    assert_eq!(p.panel_nav(NavKey::Enter).as_deref(), Some("second"));
+    assert_eq!(p.panel_nav(NavKey::Enter).map(|c| c.text).as_deref(), Some("second"));
     assert!(p.panel_open(), "panel stays open for more copies");
-    assert_eq!(p.panel_nav(NavKey::Quick(1)).as_deref(), Some("first"));
+    assert_eq!(p.panel_nav(NavKey::Quick(1)).map(|c| c.text).as_deref(), Some("first"));
     assert!(p.panel_open());
     let lt = p.panel.layout();
     let row_y = lt.rows_y + panel::ROW_H / 2.0;
-    assert_eq!(p.panel_click(150.0, row_y).as_deref(), Some("second"));
+    assert_eq!(p.panel_click(150.0, row_y).map(|c| c.text).as_deref(), Some("second"));
     assert!(p.panel_open());
 
     // flipping it back restores the close-on-copy behavior
@@ -500,6 +500,7 @@ fn stats_bubble_renders_with_system_font() {
         bubble: None,
         bubble_alpha: 0.0,
         toast: None,
+        hotkey_hint: None,
         lang: Lang::Ko,
         origin: (0.0, 0.0),
     };

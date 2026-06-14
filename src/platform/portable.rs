@@ -43,7 +43,7 @@
 use crate::hotkey::Hotkey;
 use crate::input;
 use crate::panel::{fit_delta, NavKey, Rect};
-use crate::pet::Pet;
+use crate::pet::{ClipPick, Pet};
 use crate::state::{Persist, ACCESSORIES};
 #[cfg(not(target_os = "macos"))]
 use std::num::NonZeroU32;
@@ -69,6 +69,15 @@ const CLIP_POLL: Duration = Duration::from_millis(400);
 type Surface = softbuffer::Surface<Rc<Window>, Rc<Window>>;
 /// Text we just wrote to the clipboard ourselves; the watcher skips it once.
 type Suppress = Arc<Mutex<Option<String>>>;
+
+/// Cross-thread handles wired from the global-input listener into the app: the
+/// hotkey-fired and permission-needed flags it raises, plus the channel the app
+/// uses to push a newly cycled chord back to it.
+struct InputSignals {
+    panel_toggle: Arc<AtomicBool>,
+    perm_needed: Arc<AtomicBool>,
+    hk_tx: Sender<Hotkey>,
+}
 
 struct PortableApp {
     pet: Pet,
@@ -99,6 +108,9 @@ struct PortableApp {
     /// Panel-hotkey display label (e.g. "CMD+SHIFT+V") for the context menu.
     #[cfg(target_os = "macos")]
     hotkey_label: String,
+    /// Sends a new panel chord to the global-input thread when the user cycles
+    /// the hotkey preset, so the listener matches the new combo immediately.
+    hk_tx: Sender<Hotkey>,
     // interaction
     cursor: PhysicalPosition<f64>,
     mouse_down: bool,
@@ -125,12 +137,16 @@ impl PortableApp {
         clip_rx: Receiver<String>,
         suppress: Suppress,
         capture_flag: Arc<AtomicBool>,
-        panel_toggle: Arc<AtomicBool>,
-        perm_needed: Arc<AtomicBool>,
+        signals: InputSignals,
         hotkey_label: String,
     ) -> Self {
         let (w, h) = pet.canvas_size();
         let _ = &hotkey_label; // used only by the macOS context menu
+        let InputSignals {
+            panel_toggle,
+            perm_needed,
+            hk_tx,
+        } = signals;
         PortableApp {
             pet,
             window: None,
@@ -151,6 +167,7 @@ impl PortableApp {
             perm_needed,
             #[cfg(target_os = "macos")]
             hotkey_label,
+            hk_tx,
             cursor: PhysicalPosition::new(0.0, 0.0),
             mouse_down: false,
             dragging: false,
@@ -341,13 +358,42 @@ impl PortableApp {
     }
 
     /// Puts text on the OS clipboard (a clip picked from the panel).
-    fn set_clipboard(&self, text: String) {
+    /// Puts a panel-picked clip on the OS clipboard (our own change is
+    /// suppressed once by the watcher). When `pick.paste` (the `paste_on_select`
+    /// setting), it also synthesizes the paste shortcut. Focus restoration is
+    /// best-effort here: unlike the Windows-native backend, the portable stack
+    /// can't reliably re-focus the previous app, so the paste lands in whatever
+    /// is frontmost after the panel closes.
+    fn set_clipboard(&self, pick: ClipPick) {
         if let Ok(mut guard) = self.suppress.lock() {
-            *guard = Some(text.clone());
+            *guard = Some(pick.text.clone());
         }
         if let Ok(mut cb) = arboard::Clipboard::new() {
-            let _ = cb.set_text(text);
+            let _ = cb.set_text(pick.text);
         }
+        if pick.paste {
+            paste_synthesize();
+        }
+    }
+
+    /// Pushes a (already-persisted) hotkey spec to the global-input thread and
+    /// refreshes the visible labels. The portable chord matcher registers
+    /// exactly what it is given, so the displayed chord is always the new one.
+    fn apply_new_hotkey(&mut self, spec: &str) {
+        let hk = Hotkey::from_spec(spec);
+        let _ = self.hk_tx.send(hk);
+        self.pet.set_panel_hint(format!("{} / C", hk.display()));
+        #[cfg(target_os = "macos")]
+        {
+            self.hotkey_label = hk.display();
+        }
+    }
+
+    /// Cycles the panel hotkey to the next preset (the `K` shortcut / Windows
+    /// tray parity): advances the persisted spec in the core, then re-registers.
+    fn cycle_hotkey(&mut self) {
+        let spec = self.pet.cycle_hotkey();
+        self.apply_new_hotkey(&spec);
     }
 
     /// macOS right-click: build the platform-agnostic menu model, render it as
@@ -398,6 +444,7 @@ impl PortableApp {
             MenuOutcome::ToggleAutostart => {
                 super::mac_autostart::set(!autostart);
             }
+            MenuOutcome::ReregisterHotkey(spec) => self.apply_new_hotkey(&spec),
             MenuOutcome::ApplyWindowLevel => self.apply_window_level(),
             MenuOutcome::OpenGithub => crate::update::open_github(),
             MenuOutcome::InstallUpdate => crate::update::open_releases_page(),
@@ -442,6 +489,7 @@ impl PortableApp {
                 self.pet.dirty = true;
             }
             KeyCode::KeyC => self.pet.toggle_panel(),
+            KeyCode::KeyK => self.cycle_hotkey(),
             KeyCode::KeyO => self.pet.toggle_panel_autoclose(),
             KeyCode::KeyV => self.pet.toggle_panel_view(),
             KeyCode::KeyU => {
@@ -481,8 +529,8 @@ impl PortableApp {
             _ => None,
         };
         if let Some(key) = nav {
-            if let Some(text) = self.pet.panel_nav(key) {
-                self.set_clipboard(text);
+            if let Some(pick) = self.pet.panel_nav(key) {
+                self.set_clipboard(pick);
             }
             return;
         }
@@ -626,8 +674,8 @@ impl ApplicationHandler for PortableApp {
                         }
                         if self.pet.panel_hit(cx, cy) {
                             // panel interactions act on press; no drag/petting
-                            if let Some(text) = self.pet.panel_click(cx, cy) {
-                                self.set_clipboard(text);
+                            if let Some(pick) = self.pet.panel_click(cx, cy) {
+                                self.set_clipboard(pick);
                             }
                             self.mouse_down = false;
                             self.last_click = None;
@@ -817,6 +865,13 @@ impl ChordTracker {
         }
     }
 
+    /// Swaps the chord this tracker matches (the user cycled the panel hotkey).
+    /// Refreshes the cached `main` key so the new chord is recognised.
+    fn set_hotkey(&mut self, hk: Hotkey) {
+        self.main = rdev_key_of(hk.key);
+        self.hk = hk;
+    }
+
     /// Feeds one global key event; true when the chord fired (on the initial
     /// press only — OS auto-repeat while held does not re-fire).
     fn on_event(&mut self, event: &rdev::EventType) -> bool {
@@ -843,6 +898,26 @@ impl ChordTracker {
             _ => {}
         }
         false
+    }
+}
+
+/// Synthesizes the paste shortcut (Ctrl+V, or Cmd+V on macOS) into the focused
+/// app via `rdev::simulate` (auto-paste). Output-only: it injects keystrokes,
+/// never reads them, so the input-privacy guarantee is untouched (golden rule
+/// 1); and being a `simulate` call it avoids the macOS TIS *listen* crash path
+/// (LNR-0005).
+fn paste_synthesize() {
+    #[cfg(target_os = "macos")]
+    let modifier = rdev::Key::MetaLeft;
+    #[cfg(not(target_os = "macos"))]
+    let modifier = rdev::Key::ControlLeft;
+    for et in [
+        rdev::EventType::KeyPress(modifier),
+        rdev::EventType::KeyPress(rdev::Key::KeyV),
+        rdev::EventType::KeyRelease(rdev::Key::KeyV),
+        rdev::EventType::KeyRelease(modifier),
+    ] {
+        let _ = rdev::simulate(&et);
     }
 }
 
@@ -882,7 +957,20 @@ impl KeyGate {
 /// One global input event: bump the shared activity counters (key presses
 /// gated for auto-repeat) and feed the chord matcher (the only key
 /// inspection we permit; see [`ChordTracker`] / [`KeyGate`]).
-fn pump(et: rdev::EventType, chord: &mut ChordTracker, gate: &mut KeyGate, panel_toggle: &AtomicBool) {
+///
+/// `hk_rx` carries runtime hotkey changes (the user cycled the preset); we
+/// drain it with a cheap non-blocking `try_recv` so the swap happens off the
+/// hot path without locking on every keystroke.
+fn pump(
+    et: rdev::EventType,
+    chord: &mut ChordTracker,
+    gate: &mut KeyGate,
+    panel_toggle: &AtomicBool,
+    hk_rx: &Receiver<Hotkey>,
+) {
+    while let Ok(hk) = hk_rx.try_recv() {
+        chord.set_hotkey(hk);
+    }
     match et {
         rdev::EventType::KeyPress(k) => {
             if gate.fresh_press(k) {
@@ -907,13 +995,21 @@ fn pump(et: rdev::EventType, chord: &mut ChordTracker, gate: &mut KeyGate, panel
 /// tap can't be installed — Accessibility permission not granted —
 /// `perm_needed` is raised and the listener exits without crashing the app.
 /// Other platforms use `rdev::listen`.
+/// `hk_rx` receives runtime hotkey changes (preset cycling) and is drained
+/// inside [`pump`].
 #[cfg(target_os = "macos")]
-fn spawn_global_input(hk: Hotkey, panel_toggle: Arc<AtomicBool>, perm_needed: Arc<AtomicBool>) {
+fn spawn_global_input(
+    hk: Hotkey,
+    hk_rx: Receiver<Hotkey>,
+    panel_toggle: Arc<AtomicBool>,
+    perm_needed: Arc<AtomicBool>,
+) {
     std::thread::spawn(move || {
         let mut chord = ChordTracker::new(hk);
         let mut gate = KeyGate::new();
-        let res =
-            super::mac_input::listen(move |et| pump(et, &mut chord, &mut gate, &panel_toggle));
+        let res = super::mac_input::listen(move |et| {
+            pump(et, &mut chord, &mut gate, &panel_toggle, &hk_rx)
+        });
         if res.is_err() {
             perm_needed.store(true, Ordering::Relaxed);
         }
@@ -921,12 +1017,17 @@ fn spawn_global_input(hk: Hotkey, panel_toggle: Arc<AtomicBool>, perm_needed: Ar
 }
 
 #[cfg(not(target_os = "macos"))]
-fn spawn_global_input(hk: Hotkey, panel_toggle: Arc<AtomicBool>, _perm_needed: Arc<AtomicBool>) {
+fn spawn_global_input(
+    hk: Hotkey,
+    hk_rx: Receiver<Hotkey>,
+    panel_toggle: Arc<AtomicBool>,
+    _perm_needed: Arc<AtomicBool>,
+) {
     std::thread::spawn(move || {
         let mut chord = ChordTracker::new(hk);
         let mut gate = KeyGate::new();
         let _ = rdev::listen(move |event| {
-            pump(event.event_type, &mut chord, &mut gate, &panel_toggle)
+            pump(event.event_type, &mut chord, &mut gate, &panel_toggle, &hk_rx)
         });
     });
 }
@@ -989,12 +1090,18 @@ pub fn run() {
     let hk = Hotkey::from_spec(&st.hotkey);
     let panel_toggle = Arc::new(AtomicBool::new(false));
     let perm_needed = Arc::new(AtomicBool::new(false));
-    spawn_global_input(hk, panel_toggle.clone(), perm_needed.clone());
+    // Runtime hotkey changes (preset cycling) flow to the listener thread here.
+    let (hk_tx, hk_rx) = std::sync::mpsc::channel::<Hotkey>();
+    spawn_global_input(hk, hk_rx, panel_toggle.clone(), perm_needed.clone());
 
     let mut pet = Pet::new(st);
     pet.set_panel_hint(format!("{} / C", hk.display()));
-    let mut app =
-        PortableApp::new(pet, rx, suppress, capture_flag, panel_toggle, perm_needed, hk.display());
+    let signals = InputSignals {
+        panel_toggle,
+        perm_needed,
+        hk_tx,
+    };
+    let mut app = PortableApp::new(pet, rx, suppress, capture_flag, signals, hk.display());
 
     let event_loop = match EventLoop::new() {
         Ok(el) => el,
@@ -1054,6 +1161,30 @@ mod tests {
         t.on_event(&KeyPress(Key::AltGr)); // right alt counts too
         t.on_event(&KeyRelease(Key::Num9));
         assert!(t.on_event(&KeyPress(Key::Num9)));
+    }
+
+    #[test]
+    fn set_hotkey_swaps_the_matched_chord_at_runtime() {
+        // start matching Win+Shift+V
+        let mut t = tracker("win+shift+v");
+        t.on_event(&KeyPress(Key::MetaLeft));
+        t.on_event(&KeyPress(Key::ShiftLeft));
+        assert!(t.on_event(&KeyPress(Key::KeyV)), "old chord fires");
+        // user lifts the keys, then cycles the preset to Ctrl+Shift+C
+        t.on_event(&KeyRelease(Key::KeyV));
+        t.on_event(&KeyRelease(Key::ShiftLeft));
+        t.on_event(&KeyRelease(Key::MetaLeft));
+        t.set_hotkey(Hotkey::from_spec("ctrl+shift+c"));
+        // the new combo must now fire
+        t.on_event(&KeyPress(Key::ControlLeft));
+        t.on_event(&KeyPress(Key::ShiftLeft));
+        assert!(t.on_event(&KeyPress(Key::KeyC)), "new chord fires after swap");
+        // the previous chord no longer triggers
+        let mut t = tracker("win+shift+v");
+        t.set_hotkey(Hotkey::from_spec("ctrl+shift+c"));
+        t.on_event(&KeyPress(Key::MetaLeft));
+        t.on_event(&KeyPress(Key::ShiftLeft));
+        assert!(!t.on_event(&KeyPress(Key::KeyV)), "old chord is disarmed");
     }
 
     #[test]

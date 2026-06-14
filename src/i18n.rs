@@ -71,7 +71,10 @@ pub enum Msg {
     PanelNoMatch,
     FooterKeys,
     MenuAutoClose,
+    MenuPasteOnSelect,
     ToastCopied,
+    ToastPasteOn,
+    ToastPasteOff,
     ToastDeleted,
     ToastRestored,
     ToastClearConfirm,
@@ -164,8 +167,14 @@ pub fn t(lang: Lang, msg: Msg) -> &'static str {
         (FooterKeys, Lang::Ko) => "Enter 복사 | ^0-9 바로 복사 | Del 삭제 | ^Z 복구 | ^P 고정 | Tab 앱별",
         (MenuAutoClose, Lang::En) => "Close panel after copy",
         (MenuAutoClose, Lang::Ko) => "복사 후 패널 자동 닫기",
+        (MenuPasteOnSelect, Lang::En) => "Paste on select",
+        (MenuPasteOnSelect, Lang::Ko) => "선택 시 바로 붙여넣기",
         (ToastCopied, Lang::En) => "COPIED!",
         (ToastCopied, Lang::Ko) => "복사됨!",
+        (ToastPasteOn, Lang::En) => "AUTO-PASTE ON",
+        (ToastPasteOn, Lang::Ko) => "선택 시 붙여넣기 켜짐",
+        (ToastPasteOff, Lang::En) => "AUTO-PASTE OFF",
+        (ToastPasteOff, Lang::Ko) => "선택 시 붙여넣기 꺼짐",
         (ToastDeleted, Lang::En) => "DELETED - CTRL+Z TO UNDO",
         (ToastDeleted, Lang::Ko) => "삭제됨 - Ctrl+Z로 복구",
         (ToastRestored, Lang::En) => "RESTORED!",
@@ -207,6 +216,24 @@ pub fn menu_clipboard(lang: Lang, hotkey: &str) -> String {
     match lang {
         Lang::En => format!("Clipboard history\t{hotkey}"),
         Lang::Ko => format!("클립보드 히스토리\t{hotkey}"),
+    }
+}
+
+/// Settings-menu entry for the panel hotkey: shows the live chord; choosing it
+/// cycles to the next preset (see [`crate::hotkey::next_preset`]).
+pub fn menu_hotkey(lang: Lang, hotkey: &str) -> String {
+    match lang {
+        Lang::En => format!("Panel hotkey: {hotkey}"),
+        Lang::Ko => format!("패널 단축키: {hotkey}"),
+    }
+}
+
+/// First-run hint shown by the pet (until the panel is first opened): the live
+/// hotkey chord that opens the clipboard history.
+pub fn first_run_hint(lang: Lang, hotkey: &str) -> String {
+    match lang {
+        Lang::En => format!("Clipboard: {hotkey}"),
+        Lang::Ko => format!("클립보드: {hotkey}"),
     }
 }
 
@@ -254,6 +281,21 @@ pub fn cleared_clips(lang: Lang, n: usize) -> String {
     }
 }
 
+/// Toast shown when the configured panel hotkey could not be registered (e.g.
+/// Windows reserves Win+Shift+V for clipboard history) and the fallback chord
+/// took over — so the displayed label stops looking like a silent mismatch
+/// with the saved setting.
+pub fn hotkey_fallback(lang: Lang, wanted: &str, used: &str) -> String {
+    match lang {
+        Lang::En => {
+            format!("{wanted} unavailable — using {used} (clipboard history or another app owns it)")
+        }
+        Lang::Ko => format!(
+            "{wanted} 단축키를 사용할 수 없어 {used}로 대체했습니다 (클립보드 기록 또는 다른 앱이 사용 중)"
+        ),
+    }
+}
+
 /// Footer line of the panel: clip count and pinned count.
 pub fn clip_count(lang: Lang, total: usize, pinned: usize) -> String {
     match lang {
@@ -297,7 +339,8 @@ pub fn about_text(
              and grows with your typing.\n\nLevel: LV {lv}\nLifetime keys: {keys}\nStored \
              clips: {clips}\n\n- Copy anywhere: the cat eats a fish and saves the clip\n\
              - {hotkey} or middle-click: clipboard history\n- Click a clip: copy it \
-             back\n- Type/click: the cat taps along and earns XP\n- Double-click: pet the \
+             back as clean plain text (formatting stripped)\n- Type/click: the cat taps \
+             along and earns XP\n- Double-click: pet the \
              cat\n\nEverything stays on this PC; the only network use is an \
              optional daily GitHub check for new versions (toggle in this menu)."
         ),
@@ -305,7 +348,8 @@ pub fn about_text(
             "ClipCat v{version}\n\n클립보드를 관리하고 타이핑과 함께 자라는 데스크탑 \
              고양이.\n\n현재 레벨: LV {lv}\n누적 키 입력: {keys}\n저장된 클립: {clips}개\n\n\
              - 어디서든 복사 → 고양이가 생선을 먹고 클립을 저장\n- {hotkey} 또는 \
-             휠클릭 → 클립보드 히스토리\n- 클립 클릭 → 다시 복사\n- 타이핑/클릭 → \
+             휠클릭 → 클립보드 히스토리\n- 클립 클릭 → 서식 없는 깔끔한 평문으로 다시 \
+             복사\n- 타이핑/클릭 → \
              고양이가 따라 치고 XP 획득\n- 더블클릭 → 쓰다듬기\n\n모든 데이터는 이 PC에만 \
              저장됩니다. 네트워크는 GitHub 새 버전 확인에만 쓰입니다(이 메뉴에서 끌 수 \
              있음)."
@@ -335,7 +379,8 @@ mod tests {
             MenuLock, MenuLanguage, MenuAutostart, MenuLoginStart, MenuReset, Cancel, MenuAbout,
             MenuGithub, MenuExit, ResetTitle,
             ResetConfirm, PanelTitle, SearchHint, PanelEmpty, PanelNoMatch, FooterKeys,
-            MenuAutoClose, ToastCopied, ToastDeleted, ToastRestored, ToastClearConfirm,
+            MenuAutoClose, MenuPasteOnSelect, ToastCopied, ToastPasteOn, ToastPasteOff,
+            ToastDeleted, ToastRestored, ToastClearConfirm,
             ToastCapturePaused, ToastCaptureOn, ToastAutoCloseOn, ToastAutoCloseOff,
             MenuAutoUpdate, ToastUpdateDownloading,
             ToastUpdateFailed, ToastAccessibility, BubbleKeys, BubbleClicks, BubbleClips,
@@ -350,6 +395,8 @@ mod tests {
             assert!(about_text(lang, "2.1.0", "WIN+SHIFT+V", 3, 10, 4).contains("WIN+SHIFT+V"));
             assert!(update_available(lang, "2.1.0").contains("v2.1.0"));
             assert!(menu_update(lang, "2.1.0").contains("v2.1.0"));
+            let fb = hotkey_fallback(lang, "WIN+SHIFT+V", "CTRL+SHIFT+V");
+            assert!(fb.contains("WIN+SHIFT+V") && fb.contains("CTRL+SHIFT+V"));
         }
     }
 

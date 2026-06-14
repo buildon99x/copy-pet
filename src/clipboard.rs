@@ -149,6 +149,52 @@ fn contains_ci(hay: &str, needle: &str) -> bool {
     }
 }
 
+// Search-ranking weights (see [`match_score`] / [`ClipStore::filtered_indices`]).
+const PREFIX_BONUS: u32 = 2000; // match at the very start of the field
+const WORD_BONUS: u32 = 1000; // match right after a non-alphanumeric char
+const EARLY_SPAN: u32 = 500; // earlier matches score up to this much more
+const PHRASE_BONUS: i64 = 4000; // the whole multi-token query appears contiguously
+
+/// Allocation-free relevance score of `needle` within `hay` (higher is more
+/// relevant), or `None` when `needle` does not occur. Like [`contains_ci`] it
+/// folds char-by-char without allocating, but also reports *where* the first
+/// match lands so the panel can rank: a prefix beats a word-start beats a
+/// mid-word hit, and earlier positions beat later ones.
+fn match_score(hay: &str, needle: &str) -> Option<u32> {
+    if needle.is_empty() {
+        return Some(0);
+    }
+    let mut prev: Option<char> = None;
+    let mut start = hay.char_indices();
+    let mut pos: u32 = 0;
+    loop {
+        let mut h = fold(start.as_str());
+        let mut n = fold(needle);
+        let matched = loop {
+            match (n.next(), h.next()) {
+                (None, _) => break true,
+                (Some(nc), Some(hc)) if nc == hc => continue,
+                _ => break false,
+            }
+        };
+        if matched {
+            let boundary = match prev {
+                None => PREFIX_BONUS,
+                Some(p) if !p.is_alphanumeric() => WORD_BONUS,
+                _ => 0,
+            };
+            return Some(boundary + EARLY_SPAN.saturating_sub(pos));
+        }
+        match start.next() {
+            Some((_, c)) => {
+                prev = Some(c);
+                pos += 1;
+            }
+            None => return None,
+        }
+    }
+}
+
 fn clips_file() -> Option<PathBuf> {
     crate::state::config_dir().map(|d| d.join("clips.json"))
 }
@@ -339,27 +385,59 @@ impl ClipStore {
     /// The row order behind [`ClipStore::visible_filtered`], as indices into
     /// the store. The panel caches this (keyed on [`ClipStore::version`])
     /// so the filter doesn't re-run over every clip text each frame.
+    ///
+    /// The query is split on whitespace into tokens; a clip is shown only when
+    /// **every** token occurs in its text or source (AND), and the rows are
+    /// ranked by relevance (prefix/word-start and earlier hits first, with a
+    /// bonus when the whole query appears contiguously). Pinned clips always
+    /// come first; ties keep newest-first.
     pub fn filtered_indices(&self, query: &str, source: Option<&str>) -> Vec<usize> {
         let q = query.trim();
-        let matches = |c: &Clip| {
+        let tokens: Vec<&str> = q.split_whitespace().collect();
+
+        // Source-filter gate + all-tokens-match gate, returning a relevance
+        // score (higher is better) or `None` when the clip is filtered out.
+        let score = |c: &Clip| -> Option<i64> {
             if let Some(want) = source {
                 if !c.source.as_deref().is_some_and(|s| eq_ci(s, want)) {
-                    return false;
+                    return None;
                 }
             }
-            q.is_empty()
-                || contains_ci(&c.text, q)
-                || c.source.as_deref().is_some_and(|s| contains_ci(s, q))
+            if tokens.is_empty() {
+                return Some(0);
+            }
+            let mut total: i64 = 0;
+            for tok in &tokens {
+                // each token may land in the text or the source app name
+                let best =
+                    match_score(&c.text, tok).max(c.source.as_deref().and_then(|s| match_score(s, tok)));
+                match best {
+                    Some(s) => total += i64::from(s),
+                    None => return None, // a token matched nowhere => hide the clip
+                }
+            }
+            if tokens.len() > 1 && contains_ci(&c.text, q) {
+                total += PHRASE_BONUS;
+            }
+            Some(total)
         };
-        let row = |want_pinned: bool| {
-            self.items
+
+        // Ranked indices within one pin-group. `sort_by` is stable, so equal
+        // scores preserve the store's newest-first order.
+        let rank = |want_pinned: bool| -> Vec<usize> {
+            let mut v: Vec<(usize, i64)> = self
+                .items
                 .iter()
                 .enumerate()
-                .filter(move |(_, c)| c.pinned == want_pinned && matches(c))
-                .map(|(i, _)| i)
+                .filter(|(_, c)| c.pinned == want_pinned)
+                .filter_map(|(i, c)| score(c).map(|s| (i, s)))
+                .collect();
+            v.sort_by(|a, b| b.1.cmp(&a.1));
+            v.into_iter().map(|(i, _)| i).collect()
         };
-        let mut out: Vec<usize> = row(true).collect();
-        out.extend(row(false));
+
+        let mut out = rank(true);
+        out.extend(rank(false));
         out
     }
 
@@ -456,6 +534,87 @@ mod tests {
         assert_eq!(s.visible("chrome").len(), 1);
         assert_eq!(s.visible("zzz").len(), 0);
         assert_eq!(s.visible("").len(), 2);
+    }
+
+    #[test]
+    fn search_multi_token_requires_all_tokens() {
+        let mut s = ClipStore::default();
+        s.add_copy("git clone https://example.com".into(), None);
+        s.add_copy("git status".into(), None);
+        // both tokens occur only in the first clip
+        let v = s.visible("git clone");
+        assert_eq!(v.len(), 1);
+        assert_eq!(v[0].text, "git clone https://example.com");
+        // a token that matches nothing hides everything
+        assert_eq!(s.visible("git zzz").len(), 0);
+    }
+
+    #[test]
+    fn search_tokens_span_text_and_source() {
+        let mut s = ClipStore::default();
+        s.add_copy("clone the repo".into(), Some("Terminal".into()));
+        // "terminal" matches the source, "clone" matches the text
+        assert_eq!(s.visible("terminal clone").len(), 1);
+        assert_eq!(s.visible("terminal missing").len(), 0);
+    }
+
+    #[test]
+    fn search_multi_token_korean() {
+        let mut s = ClipStore::default();
+        s.add_copy("안녕 세계".into(), None);
+        s.add_copy("안녕하세요".into(), None);
+        // "세계" only occurs in the first clip; "안녕" in both
+        assert_eq!(s.visible("안녕 세계").len(), 1);
+        assert_eq!(s.visible("안녕").len(), 2);
+    }
+
+    #[test]
+    fn search_ranks_word_start_above_mid_word() {
+        let mut s = ClipStore::default();
+        s.add_copy("cat food".into(), None); // oldest: prefix match for "cat"
+        s.add_copy("scattered notes".into(), None); // newest: mid-word "cat"
+        let v = s.visible("cat");
+        assert_eq!(v.len(), 2);
+        // the prefix hit ranks first despite being older
+        assert_eq!(v[0].text, "cat food");
+    }
+
+    #[test]
+    fn search_ranks_phrase_above_scattered() {
+        let mut s = ClipStore::default();
+        s.add_copy("git clone the thing".into(), None); // contiguous phrase
+        s.add_copy("clone it from git".into(), None); // newest: scattered tokens
+        let v = s.visible("git clone");
+        assert_eq!(v.len(), 2);
+        assert_eq!(v[0].text, "git clone the thing");
+    }
+
+    #[test]
+    fn search_keeps_pinned_first_despite_score() {
+        let mut s = ClipStore::default();
+        s.add_copy("cat food".into(), None); // strong prefix match, unpinned
+        s.add_copy("a scattered cat".into(), None); // weaker match, pinned
+        let id = s
+            .visible("")
+            .iter()
+            .find(|c| c.text == "a scattered cat")
+            .unwrap()
+            .id;
+        s.toggle_pin(id);
+        let v = s.visible("cat");
+        assert_eq!(v.len(), 2);
+        assert!(v[0].pinned);
+        assert_eq!(v[0].text, "a scattered cat");
+    }
+
+    #[test]
+    fn match_score_rewards_prefix_and_word_start() {
+        let prefix = match_score("cat food", "cat").unwrap();
+        let word = match_score("a cat", "cat").unwrap();
+        let mid = match_score("scatter", "cat").unwrap();
+        assert!(prefix > word && word > mid);
+        assert_eq!(match_score("nope", "cat"), None);
+        assert_eq!(match_score("anything", ""), Some(0));
     }
 
     #[test]

@@ -14,7 +14,7 @@ use crate::hotkey::{self, Hotkey};
 use crate::i18n::{self, t, Lang, Msg};
 use crate::input;
 use crate::panel::{fit_delta, NavKey, Rect};
-use crate::pet::{window_size, Pet, SCALES};
+use crate::pet::{window_size, ClipPick, Pet, SCALES};
 use crate::render::{self, Badge};
 use crate::state::{Persist, ACCESSORIES};
 use crate::update;
@@ -34,14 +34,14 @@ use windows_sys::Win32::System::Memory::{
 };
 use windows_sys::Win32::System::Registry::*;
 use windows_sys::Win32::System::Threading::{
-    CreateMutexW, OpenProcess, QueryFullProcessImageNameW, Sleep,
-    PROCESS_QUERY_LIMITED_INFORMATION,
+    AttachThreadInput, CreateMutexW, GetCurrentThreadId, OpenProcess, QueryFullProcessImageNameW,
+    Sleep, PROCESS_QUERY_LIMITED_INFORMATION,
 };
 use windows_sys::Win32::UI::HiDpi::SetProcessDpiAwarenessContext;
 use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
-    GetKeyState, RegisterHotKey, ReleaseCapture, SetCapture, SetFocus, TrackMouseEvent,
-    UnregisterHotKey, MOD_ALT, MOD_CONTROL, MOD_NOREPEAT, MOD_SHIFT, MOD_WIN, TME_LEAVE,
-    TRACKMOUSEEVENT,
+    GetKeyState, RegisterHotKey, ReleaseCapture, SendInput, SetCapture, SetFocus, TrackMouseEvent,
+    UnregisterHotKey, INPUT, INPUT_KEYBOARD, KEYEVENTF_KEYUP, MOD_ALT, MOD_CONTROL, MOD_NOREPEAT,
+    MOD_SHIFT, MOD_WIN, TME_LEAVE, TRACKMOUSEEVENT, VK_CONTROL,
 };
 use windows_sys::Win32::UI::Shell::{
     ExtractIconExW, Shell_NotifyIconW, NIF_ICON, NIF_MESSAGE, NIF_TIP, NIM_ADD, NIM_DELETE,
@@ -78,6 +78,7 @@ const CMD_ACC0: usize = 40; // 40 = none, 41..=46 accessories
 const CMD_LANG_EN: usize = 50;
 const CMD_LANG_KO: usize = 51;
 const CMD_WINLEVEL0: usize = 52; // 52 top, 53 normal, 54 hide
+const CMD_HOTKEY: usize = 55;
 
 fn wz(s: &str) -> Vec<u16> {
     s.encode_utf16().chain(std::iter::once(0)).collect()
@@ -118,6 +119,9 @@ struct App {
     /// Display label of the actually registered panel hotkey (tray menu,
     /// About dialog); empty when no hotkey could be registered.
     hotkey_label: String,
+    /// The window that had focus when the panel was opened — where auto-paste
+    /// (`paste_on_select`) sends the synthesized Ctrl+V. Null until captured.
+    paste_target: HWND,
 }
 
 thread_local! {
@@ -158,10 +162,33 @@ impl App {
     }
 
     /// Puts panel-picked text on the OS clipboard; our own change is
-    /// suppressed once in WM_CLIPBOARDUPDATE.
-    fn copy_back(&mut self, text: String) {
-        self.suppress_clip = Some(text.clone());
-        unsafe { set_clipboard_text(self.hwnd, &text) };
+    /// suppressed once in WM_CLIPBOARDUPDATE. When `pick.paste` (the
+    /// `paste_on_select` setting), it then restores focus to the app that was
+    /// active when the panel opened and synthesizes Ctrl+V there.
+    fn copy_back(&mut self, pick: ClipPick) {
+        self.suppress_clip = Some(pick.text.clone());
+        unsafe { set_clipboard_text(self.hwnd, &pick.text) };
+        if pick.paste && !self.paste_target.is_null() && self.paste_target != self.hwnd {
+            unsafe {
+                // SetForegroundWindow is asynchronous and won't promote a
+                // window owned by another thread on demand, so a bare
+                // SetForegroundWindow + SendInput races: the Ctrl+V fires
+                // before focus actually lands on the target and is lost. Attach
+                // our input queue to the target thread first — that
+                // synchronizes the foreground/focus state across both threads,
+                // so the foreground switch takes effect before we synthesize
+                // the keystroke. Always detach afterwards.
+                let target = self.paste_target;
+                let tid = GetWindowThreadProcessId(target, null_mut());
+                let me = GetCurrentThreadId();
+                let attached = tid != 0 && tid != me && AttachThreadInput(me, tid, 1) != 0;
+                SetForegroundWindow(target);
+                send_ctrl_v();
+                if attached {
+                    AttachThreadInput(me, tid, 0);
+                }
+            }
+        }
     }
 
     // ---- per-frame update --------------------------------------------------
@@ -294,6 +321,9 @@ impl App {
         let ex = GetWindowLongPtrW(self.hwnd, GWL_EXSTYLE);
         let no_activate = ex & WS_EX_NOACTIVATE as isize != 0;
         if self.pet.panel_open() && no_activate {
+            // remember who had focus before we steal it, so auto-paste can
+            // send the clip back to that app
+            self.paste_target = GetForegroundWindow();
             SetWindowLongPtrW(self.hwnd, GWL_EXSTYLE, ex & !(WS_EX_NOACTIVATE as isize));
             SetForegroundWindow(self.hwnd);
             SetFocus(self.hwnd);
@@ -716,18 +746,65 @@ unsafe fn register_hotkey(hwnd: HWND, hk: &Hotkey) -> bool {
     RegisterHotKey(hwnd, HOTKEY_ID, mods, hk.key as u32) != 0
 }
 
-/// Tries the configured hotkey, then the Ctrl+Shift+V fallback. Returns the
-/// display label of whichever stuck (empty: tray/middle-click only).
-unsafe fn register_panel_hotkey(hwnd: HWND, spec: &str) -> String {
+/// Outcome of trying to register the global panel hotkey.
+enum HotkeyReg {
+    /// The configured chord registered; carries its display label.
+    Configured(String),
+    /// The configured chord was unavailable (a clash, or a combo Windows
+    /// reserves like Win+Shift+V); the Ctrl+Shift+V fallback registered
+    /// instead. Carries the wanted and the used display labels.
+    Fallback { wanted: String, used: String },
+    /// Nothing registered (tray/middle-click still open the panel).
+    None,
+}
+
+impl HotkeyReg {
+    /// Display label of whichever chord stuck (empty when none did).
+    fn label(&self) -> String {
+        match self {
+            HotkeyReg::Configured(s) | HotkeyReg::Fallback { used: s, .. } => s.clone(),
+            HotkeyReg::None => String::new(),
+        }
+    }
+}
+
+/// Tries the configured hotkey, then the Ctrl+Shift+V fallback, reporting
+/// which one stuck so the caller can flag a silent fallback to the user.
+unsafe fn register_panel_hotkey(hwnd: HWND, spec: &str) -> HotkeyReg {
     let configured = Hotkey::from_spec(spec);
     if register_hotkey(hwnd, &configured) {
-        return configured.display();
+        return HotkeyReg::Configured(configured.display());
     }
     let fallback = Hotkey::from_spec(hotkey::FALLBACK);
     if fallback != configured && register_hotkey(hwnd, &fallback) {
-        return fallback.display();
+        return HotkeyReg::Fallback {
+            wanted: configured.display(),
+            used: fallback.display(),
+        };
     }
-    String::new()
+    HotkeyReg::None
+}
+
+/// Synthesizes a Ctrl+V keystroke into the foreground window (auto-paste).
+/// Output-only: we never read keystrokes, so this does not touch the input
+/// privacy guarantee (golden rule 1). The modifiers are released in reverse.
+unsafe fn send_ctrl_v() {
+    let mut inputs: [INPUT; 4] = std::mem::zeroed();
+    for inp in &mut inputs {
+        inp.r#type = INPUT_KEYBOARD;
+    }
+    const VK_V: u16 = 0x56;
+    inputs[0].Anonymous.ki.wVk = VK_CONTROL; // Ctrl down
+    inputs[1].Anonymous.ki.wVk = VK_V; // V down
+    inputs[2].Anonymous.ki.wVk = VK_V; // V up
+    inputs[2].Anonymous.ki.dwFlags = KEYEVENTF_KEYUP;
+    inputs[3].Anonymous.ki.wVk = VK_CONTROL; // Ctrl up
+    inputs[3].Anonymous.ki.dwFlags = KEYEVENTF_KEYUP;
+    SendInput(
+        inputs.len() as u32,
+        inputs.as_ptr(),
+        std::mem::size_of::<INPUT>() as i32,
+    );
 }
 
 // ---- hooks -------------------------------------------------------------------
@@ -908,6 +985,13 @@ unsafe fn show_menu(hwnd: HWND, ms: &MenuSnapshot) -> usize {
         MF_STRING | chk(ms.autoclose),
         CMD_AUTOCLOSE,
         wz(t(lang, Msg::MenuAutoClose)).as_ptr(),
+    );
+    // Panel hotkey: one click cycles to the next preset (no rebind dialog).
+    AppendMenuW(
+        menu,
+        MF_STRING,
+        CMD_HOTKEY,
+        wz(&i18n::menu_hotkey(lang, &ms.hotkey_label)).as_ptr(),
     );
     AppendMenuW(menu, MF_SEPARATOR, 0, null());
 
@@ -1182,6 +1266,26 @@ unsafe fn open_menu(hwnd: HWND) {
             CMD_AUTOCLOSE => {
                 with_app(|a| a.pet.toggle_panel_autoclose());
             }
+            CMD_HOTKEY => {
+                with_app(|a| {
+                    // core advances + persists the spec; we re-register the OS
+                    // hotkey (which may fall back on a clash) and show the label
+                    // that actually stuck.
+                    let spec = a.pet.cycle_hotkey();
+                    let reg = unsafe {
+                        UnregisterHotKey(hwnd, HOTKEY_ID);
+                        register_panel_hotkey(hwnd, &spec)
+                    };
+                    let label = reg.label();
+                    a.pet.set_panel_hint(label.clone());
+                    a.hotkey_label = label;
+                    // If this preset is OS-reserved, replace cycle_hotkey's
+                    // chord toast with the explicit fallback explanation.
+                    if let HotkeyReg::Fallback { wanted, used } = &reg {
+                        a.pet.notify_hotkey_fallback(wanted, used);
+                    }
+                });
+            }
             CMD_BUBBLE => {
                 with_app(|a| {
                     a.pet.st.bubble_pinned = !a.pet.st.bubble_pinned;
@@ -1301,8 +1405,8 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
                 }
                 if a.pet.panel_hit(cx, cy) {
                     // panel interactions act on press; no dragging from there
-                    if let Some(text) = a.pet.panel_click(cx, cy) {
-                        a.copy_back(text);
+                    if let Some(pick) = a.pet.panel_click(cx, cy) {
+                        a.copy_back(pick);
                     }
                     return;
                 }
@@ -1422,8 +1526,8 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
                 }
                 if a.pet.panel_hit(cx, cy) {
                     // fast row clicks arrive as double-clicks; treat as click
-                    if let Some(text) = a.pet.panel_click(cx, cy) {
-                        a.copy_back(text);
+                    if let Some(pick) = a.pet.panel_click(cx, cy) {
+                        a.copy_back(pick);
                     }
                 } else {
                     a.pet.pet();
@@ -1480,8 +1584,8 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
                     _ => None,
                 };
                 if let Some(key) = key {
-                    if let Some(text) = a.pet.panel_nav(key) {
-                        a.copy_back(text);
+                    if let Some(pick) = a.pet.panel_nav(key) {
+                        a.copy_back(pick);
                     }
                     true
                 } else {
@@ -1702,10 +1806,16 @@ pub fn run() {
 
         // global panel hotkey (best-effort: a clash with another app falls
         // back to Ctrl+Shift+V; failing that, tray/middle-click still work)
-        let hotkey_label = register_panel_hotkey(hwnd, &st.hotkey);
+        let reg = register_panel_hotkey(hwnd, &st.hotkey);
+        let hotkey_label = reg.label();
 
         let mut pet = Pet::new(st);
         pet.set_panel_hint(hotkey_label.clone());
+        // Tell the user when the configured chord was unavailable, so the
+        // displayed fallback label is not a silent mismatch with state.json.
+        if let HotkeyReg::Fallback { wanted, used } = &reg {
+            pet.notify_hotkey_fallback(wanted, used);
+        }
 
         let app = App {
             hwnd,
@@ -1730,6 +1840,7 @@ pub fn run() {
             icon,
             taskbar_created: RegisterWindowMessageW(wz("TaskbarCreated").as_ptr()),
             hotkey_label,
+            paste_target: null_mut(),
         };
 
         APP.with(|cell| *cell.borrow_mut() = Some(app));

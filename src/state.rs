@@ -44,6 +44,12 @@ pub struct Persist {
     pub panel_off_y: f32,
     /// When true (default), picking a clip closes the panel for pasting.
     pub panel_autoclose: bool,
+    /// True once the user has opened the clipboard panel at least once. Gates
+    /// the first-run under-pet hotkey hint, which shows only until then.
+    pub onboarded: bool,
+    /// When true, picking a clip also pastes it into the previously focused app
+    /// (synthesized Ctrl/Cmd+V). Off by default — some users want copy-only.
+    pub paste_on_select: bool,
     /// Panel list style: 0 = compact list (default), 1 = roomier rounded-box
     /// "thumbnail" cards that show more of each clip.
     pub panel_view: u8,
@@ -81,6 +87,8 @@ impl Default for Persist {
             panel_off_x: crate::panel::DEFAULT_OFF.0,
             panel_off_y: crate::panel::DEFAULT_OFF.1,
             panel_autoclose: true,
+            onboarded: false,
+            paste_on_select: false,
             panel_view: 0,
             total_keys: 0,
             total_clicks: 0,

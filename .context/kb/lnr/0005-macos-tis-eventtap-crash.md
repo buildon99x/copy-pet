@@ -63,3 +63,8 @@ raw CoreGraphics field reads only. When a dependency does more than you need on
 a privileged hot path, owning a tiny slice of it can be safer than patching it
 — and here it also tightened the privacy boundary (no key text is ever
 produced; ADR-0008).
+
+Note: this crash is specific to the *listen* path (rdev translating keys to
+text). `rdev::simulate` — used for opt-in auto-paste ([ADR-0012](../adr/0012-auto-paste.md))
+— is output-only (it posts a CGEvent, doesn't read or translate input), so it
+does **not** go through the crashing TIS path and is safe on macOS.

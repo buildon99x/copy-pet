@@ -17,6 +17,22 @@ versions follow [SemVer](https://semver.org/). Maintenance rules:
 ## [Unreleased]
 
 ### Added
+- **Auto-paste on select** (off by default): a new "Paste on select" setting
+  (tray/right-click menu) makes picking a clip paste it straight into the app
+  you were just in, instead of only copying it. On Windows it returns focus to
+  that app and sends Ctrl+V; on macOS/Linux it's best-effort (pastes into
+  whatever is frontmost after the panel closes). Leave it off for copy-only.
+- **Change the panel hotkey from the menu**: the tray/right-click menu now has
+  a "Panel hotkey" entry showing the current combo — click it to cycle through
+  safe presets (Win/Cmd+Shift+V → Ctrl+Shift+V → Alt+Shift+V → Ctrl+Shift+C).
+  It re-registers instantly and a toast confirms the new combo. (On Linux/
+  portable, press **K** while the pet is focused.)
+- **First-run hint**: until you open the clipboard panel for the first time,
+  the cat shows a small banner with the exact hotkey (e.g. "Clipboard:
+  WIN+SHIFT+V"), so the history is discoverable from the very first launch.
+  It disappears for good once you've opened the panel.
+- The **About box** now spells out that clips are pasted back as clean plain
+  text (formatting stripped) — a strength ClipCat always had but never said.
 - A **GitHub** entry in the context menu (just below "About ClipCat") opens
   the project page in your browser.
 - The clipboard panel has a new **Thumbnail view**, toggled by a button in
@@ -40,6 +56,10 @@ versions follow [SemVer](https://semver.org/). Maintenance rules:
   can grab several clips in a row. On by default.
 
 ### Changed
+- **Smarter panel search**: type several words and only clips matching
+  *every* word are shown (the words can match the text or the source app),
+  and results are ranked by relevance — matches at the start of a word, or
+  where your whole phrase appears together, float to the top.
 - The **clipboard hotkey (Win+Shift+V / ⌘+Shift+V) now always brings the panel
   to the front** instead of toggling it shut. If the pet is set to *Normal* and
   sitting behind other windows, or *Hidden*, pressing it reveals and focuses the
@@ -69,6 +89,13 @@ versions follow [SemVer](https://semver.org/). Maintenance rules:
   monitor — the panel now slides itself fully into view as it opens, with the
   cat staying exactly where it is. You can still drag the panel partly off the
   edge yourself; it just won't get stuck there next time you open it.
+- **The shown panel hotkey now matches what actually works.** When Windows
+  reserves your configured combo (Win+Shift+V belongs to Windows' own
+  clipboard history) ClipCat falls back to Ctrl+Shift+V — it used to do this
+  silently, so the menu and hint showed one combo while a different one
+  opened the panel. ClipCat now pops a short toast explaining the swap, and
+  keeps your chosen combo saved so it works again once whatever holds it is
+  freed (e.g. you turn off Windows clipboard history).
 
 ## [2.1.0] - 2026-06-12
 
