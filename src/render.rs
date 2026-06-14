@@ -871,6 +871,8 @@ pub struct PanelView<'a> {
     /// Short hotkey hint shown in the footer (backend-specific).
     pub hint: &'a str,
     pub caret: bool,
+    /// When true the global "paste as plain text" toggle is on.
+    pub paste_plain_text: bool,
 }
 
 /// Draws the clipboard panel card (geometry from [`crate::panel::Layout`]).
@@ -929,6 +931,38 @@ pub fn draw_panel(pm: &mut Pixmap, v: &PanelView) {
     draw_btn(&mut cv, lt.btn_clear_x, lt.btn_y, BtnIcon::Trash(v.panel.clear_armed));
     draw_btn(&mut cv, lt.btn_lang_x, lt.btn_y, BtnIcon::Lang(lang));
     draw_btn(&mut cv, lt.btn_close_x, lt.btn_y, BtnIcon::Close);
+
+    // header button tooltips: show a small label below the hovered button
+    if let Some((cx, cy)) = v.panel.cursor {
+        let on_header = (lt.btn_y - 4.0..=lt.btn_y + pl::BTN + 4.0).contains(&cy);
+        if on_header {
+            let btn_defs: &[(f32, Msg)] = &[
+                (lt.btn_view_x, Msg::TtView),
+                (lt.btn_filter_x, Msg::TtFilter),
+                (lt.btn_pause_x, Msg::TtPause),
+                (lt.btn_clear_x, Msg::TtClear),
+                (lt.btn_lang_x, Msg::TtLang),
+                (lt.btn_close_x, Msg::TtClose),
+            ];
+            for &(bx, msg) in btn_defs {
+                if cx >= bx - 2.0 && cx <= bx + pl::BTN + 2.0 {
+                    let label = t(lang, msg);
+                    let tw = sysfont::measure(label, 1.3);
+                    let tx = (bx + pl::BTN / 2.0 - tw / 2.0)
+                        .max(lt.card_x + 4.0)
+                        .min(lt.card_x + lt.card_w - tw - 4.0);
+                    let ty = lt.btn_y + pl::BTN + 4.0;
+                    let pad = 3.0;
+                    cv.fill(
+                        &round_rect(tx - pad, ty - 1.0, tw + pad * 2.0, 10.0, 3.0),
+                        (50, 50, 50, 220),
+                    );
+                    cv.ui_text(label, tx, ty, 1.3, (255, 255, 255, 230));
+                    break;
+                }
+            }
+        }
+    }
 
     // search box
     let (sx, sy, sw, sh) = (lt.search_x, lt.search_y, lt.search_w, lt.search_h);
@@ -1001,7 +1035,7 @@ pub fn draw_panel(pm: &mut Pixmap, v: &PanelView) {
     // two list styles share this loop: the compact "list" (one body line, thin
     // separators) and the roomier "thumbnail" cards (a rounded box per clip
     // with the body wrapped onto two lines). Only a few y-offsets and the
-    // background differ; the click zones (pin | body | delete) are identical.
+    // background differ; the click zones (body | pin | delete) are identical.
     let thumb = v.panel.view == 1;
     const BODY_PX: f32 = 1.75;
     const BODY_BOLD: usize = 10;
@@ -1011,6 +1045,7 @@ pub fn draw_panel(pm: &mut Pixmap, v: &PanelView) {
         let ry = lt.rows_y + i as f32 * lt.row_h;
         let selected = idx == v.panel.sel;
         let hovered = hover_row == Some(idx);
+        let ctx_open = v.panel.context_id == Some(clip.id);
         // a vertical center for the row's left/right gadgets (pin, delete)
         let mid = if thumb { ry + 13.0 } else { ry + lt.row_h / 2.0 };
 
@@ -1030,24 +1065,24 @@ pub fn draw_panel(pm: &mut Pixmap, v: &PanelView) {
             cv.fill(&round_rect(lt.row_x, ry + 1.0, lt.row_w, lt.row_h - 2.0, 7.0), bg);
         }
 
-        // pin star
-        let star = star_path(lt.row_x + 12.0, mid, 6.5, 0.0);
-        if clip.pinned {
-            cv.fill(&star, PIN_GOLD);
-            cv.stroke(&star, (180, 140, 30, 255), 1.4);
-        } else {
-            cv.stroke(&star, fade(TEXT_DIM, 0.55), 1.4);
-        }
-
         // quick-copy badge: the first ten rows answer to Ctrl+0..9
         let quick = idx < pl::QUICK_KEYS;
         let badge_w = if quick { 18.0 } else { 0.0 };
 
-        // body (the whole clip flattened to one line so more of its content
-        // shows; the first few characters are bolded for scannability). The
-        // thumbnail view wraps it onto a second line for even more.
-        let tx = lt.row_x + 28.0;
-        let tmax = lt.row_x + lt.row_w - pl::DEL_ZONE - tx - 4.0 - badge_w;
+        // right-side reserved width: [ctx buttons or (pin + del)] + badge
+        // When context menu is open: CTX_BTN_W(plain) + DEL_ZONE(delete)
+        // Normal: PIN_ZONE_R(star) + DEL_ZONE(delete), plus optional "⋯" on selected
+        let right_w = if ctx_open {
+            pl::CTX_BTN_W + pl::DEL_ZONE
+        } else if selected {
+            pl::PIN_ZONE_R + pl::DEL_ZONE + pl::CTX_ZONE
+        } else {
+            pl::PIN_ZONE_R + pl::DEL_ZONE
+        };
+
+        // body text starts near the left edge (no more left pin-zone)
+        let tx = lt.row_x + 10.0;
+        let tmax = lt.row_x + lt.row_w - right_w - badge_w - tx - 4.0;
         let flat = clip.flattened();
         let (line1, line2) = if thumb {
             sysfont::wrap_two(&flat, BODY_PX, tmax)
@@ -1081,7 +1116,7 @@ pub fn draw_panel(pm: &mut Pixmap, v: &PanelView) {
         cv.ui_text(&meta, mx, meta_y, 1.35, TEXT_DIM);
 
         if quick {
-            let qx = lt.row_x + lt.row_w - pl::DEL_ZONE - 16.0;
+            let qx = lt.row_x + lt.row_w - right_w - badge_w;
             let chip = round_rect(qx, ry + 4.0, 13.0, 13.0, 4.0);
             cv.fill(&chip, (243, 240, 235, 255));
             cv.stroke(&chip, fade(OUTLINE, 0.35), 1.2);
@@ -1090,17 +1125,60 @@ pub fn draw_panel(pm: &mut Pixmap, v: &PanelView) {
             cv.ui_text(&d, qx + (13.0 - dw) / 2.0, ry + 6.0, 1.3, fade(TEXT_DIM, 0.9));
         }
 
-        // delete x (red halo while hovered, so a destructive click is obvious)
-        let dx = lt.row_x + lt.row_w - 14.0;
-        let on_del = hovered && hover.is_some_and(|(x, _)| x > lt.row_x + lt.row_w - pl::DEL_ZONE);
-        let xc = if on_del {
-            cv.fill(&oval(dx, mid, 8.0, 8.0), (250, 224, 224, 255));
-            (217, 79, 79, 255)
+        if ctx_open {
+            // Inline context menu: [텍스트로 붙여넣기][삭제] on the right
+            // — "Plain paste" button (left of delete)
+            let pp_x = lt.row_x + lt.row_w - pl::DEL_ZONE - pl::CTX_BTN_W;
+            let pp_btn = round_rect(pp_x + 2.0, ry + 3.0, pl::CTX_BTN_W - 4.0, lt.row_h - 6.0, 5.0);
+            cv.fill(&pp_btn, (208, 228, 248, 255));
+            cv.stroke(&pp_btn, (91, 141, 217, 255), 1.4);
+            let pp_label = t(lang, Msg::BtnPastePlain);
+            let pp_lw = sysfont::measure(pp_label, 1.3);
+            cv.ui_text(pp_label, pp_x + (pl::CTX_BTN_W - pp_lw) / 2.0, ry + (lt.row_h - 7.0) / 2.0, 1.3, (50, 100, 180, 255));
+
+            // — "Delete" button (rightmost)
+            let del_x = lt.row_x + lt.row_w - pl::DEL_ZONE;
+            let del_btn = round_rect(del_x + 2.0, ry + 3.0, pl::DEL_ZONE - 4.0, lt.row_h - 6.0, 5.0);
+            cv.fill(&del_btn, (250, 224, 224, 255));
+            cv.stroke(&del_btn, (217, 79, 79, 255), 1.4);
+            let del_label = t(lang, Msg::BtnDelete);
+            let del_lw = sysfont::measure(del_label, 1.3);
+            cv.ui_text(del_label, del_x + (pl::DEL_ZONE - del_lw) / 2.0, ry + (lt.row_h - 7.0) / 2.0, 1.3, (180, 50, 50, 255));
         } else {
-            fade(TEXT_DIM, 0.7)
-        };
-        cv.line(&[(dx - 3.4, mid - 3.4), (dx + 3.4, mid + 3.4)], xc, 1.8);
-        cv.line(&[(dx - 3.4, mid + 3.4), (dx + 3.4, mid - 3.4)], xc, 1.8);
+            // Normal right-side gadgets: [⋯] [★] [✕]
+            // "⋯" trigger (selected rows only, just left of star zone)
+            if selected {
+                let ctx_x = lt.row_x + lt.row_w - pl::DEL_ZONE - pl::PIN_ZONE_R - pl::CTX_ZONE + 2.0;
+                let on_ctx = hovered && hover.is_some_and(|(x, _)| {
+                    x > lt.row_x + lt.row_w - pl::DEL_ZONE - pl::PIN_ZONE_R - pl::CTX_ZONE
+                        && x <= lt.row_x + lt.row_w - pl::DEL_ZONE - pl::PIN_ZONE_R
+                });
+                let ctx_c = if on_ctx { TEXT } else { fade(TEXT_DIM, 0.55) };
+                cv.ui_text("⋯", ctx_x, mid - 3.5, 1.6, ctx_c);
+            }
+
+            // pin star (right side, left of delete zone)
+            let star_cx = lt.row_x + lt.row_w - pl::DEL_ZONE - pl::PIN_ZONE_R / 2.0;
+            let star = star_path(star_cx, mid, 6.5, 0.0);
+            if clip.pinned {
+                cv.fill(&star, PIN_GOLD);
+                cv.stroke(&star, (180, 140, 30, 255), 1.4);
+            } else {
+                cv.stroke(&star, fade(TEXT_DIM, 0.55), 1.4);
+            }
+
+            // delete x (red halo while hovered, so a destructive click is obvious)
+            let dx = lt.row_x + lt.row_w - 14.0;
+            let on_del = hovered && hover.is_some_and(|(x, _)| x > lt.row_x + lt.row_w - pl::DEL_ZONE);
+            let xc = if on_del {
+                cv.fill(&oval(dx, mid, 8.0, 8.0), (250, 224, 224, 255));
+                (217, 79, 79, 255)
+            } else {
+                fade(TEXT_DIM, 0.7)
+            };
+            cv.line(&[(dx - 3.4, mid - 3.4), (dx + 3.4, mid + 3.4)], xc, 1.8);
+            cv.line(&[(dx - 3.4, mid + 3.4), (dx + 3.4, mid - 3.4)], xc, 1.8);
+        }
 
         // thin separator between compact rows (cards have their own gap/border)
         if !thumb && i + 1 < lt.rows {

@@ -784,7 +784,7 @@ impl ApplicationHandler for PortableApp {
             self.capture_flag
                 .store(self.pet.st.clip_capture, Ordering::Relaxed);
             while let Ok(text) = self.clip_rx.try_recv() {
-                self.pet.on_copy(text, None, None);
+                self.pet.on_copy(text, None, None, None);
             }
             let (k, c, wh) = input::drain();
             let redraw = self.pet.advance(k, c, wh);

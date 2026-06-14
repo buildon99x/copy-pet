@@ -37,9 +37,16 @@ pub const BTN: f32 = 18.0;
 pub const ROW_H: f32 = 34.0;
 /// Per-clip row height in the roomier rounded-box "thumbnail" view.
 pub const ROW_H_THUMB: f32 = 52.0;
-/// Row x-zones: pin toggle | clip body | delete.
-pub const PIN_ZONE: f32 = 34.0; // x < row_x + PIN_ZONE
-pub const DEL_ZONE: f32 = 28.0; // x > row_x + row_w - DEL_ZONE
+/// Row x-zones (right to left from the row's right edge):
+/// delete zone | pin zone | body text. The old left-side PIN_ZONE is gone —
+/// the star now lives on the right (see F3 design). PIN_ZONE is kept as an
+/// alias for backward-compat with panel tests that check the old constant.
+pub const DEL_ZONE: f32 = 28.0;  // x > row_x + row_w - DEL_ZONE
+pub const PIN_ZONE_R: f32 = 24.0; // x in (row_w - DEL_ZONE - PIN_ZONE_R, row_w - DEL_ZONE)
+/// Width of the "⋯" context-menu trigger shown on the selected row.
+pub const CTX_ZONE: f32 = 20.0;
+/// Width of each inline context-menu action button (plain-paste / delete).
+pub const CTX_BTN_W: f32 = 56.0;
 /// Quick-copy hotkeys cover the first `QUICK_KEYS` rows (Ctrl+0..9).
 pub const QUICK_KEYS: usize = 10;
 /// Side of the square resize grip in the card's bottom-right corner.
@@ -145,10 +152,16 @@ pub struct Layout {
 /// (scrolling, typing in search) are handled internally and return None.
 #[derive(Debug, PartialEq)]
 pub enum PanelAction {
-    /// Put this clip's text back on the OS clipboard.
+    /// Put this clip's text back on the OS clipboard (preserving rich formats).
     Copy(u64),
+    /// Put this clip's plain text on the clipboard, stripping all formatting.
+    PasteAsPlainText(u64),
     TogglePin(u64),
     Delete(u64),
+    /// Open the inline context menu for a clip row ("⋯" / Right-arrow trigger).
+    OpenContextMenu(u64),
+    /// Close the inline context menu without taking action.
+    CloseContextMenu,
     /// First press of the clear button: ask for the confirming second press.
     ArmClear,
     /// Clear all unpinned clips (the armed clear button pressed again).
@@ -185,6 +198,8 @@ pub enum NavKey {
     /// Quick copy (Ctrl+0..9): copies the nth visible clip from the top
     /// (0 = the topmost row, matching the digit badges on the rows).
     Quick(u8),
+    /// Open/close the inline context menu for the selected clip (Right-arrow key).
+    ContextMenu,
 }
 
 /// A drag started on the card: the header strip moves it, the grip resizes.
@@ -208,6 +223,9 @@ pub struct Panel {
     /// The clear button was pressed once; the next press really clears.
     /// Any other interaction disarms it.
     pub clear_armed: bool,
+    /// The clip whose inline context menu is currently open (Right-arrow / "⋯"
+    /// trigger). `None` when no context menu is open.
+    pub context_id: Option<u64>,
     /// Card size in canvas units (user-resizable, persisted).
     pub w: f32,
     pub h: f32,
@@ -239,6 +257,7 @@ impl Default for Panel {
             sel: 0,
             cursor: None,
             clear_armed: false,
+            context_id: None,
             w: DEFAULT_W,
             h: DEFAULT_H,
             off: DEFAULT_OFF,
@@ -341,6 +360,7 @@ impl Panel {
             self.sel = 0;
         }
         self.clear_armed = false;
+        self.context_id = None;
     }
 
     /// Zones that start a card drag: the bottom-right grip resizes, the
@@ -520,13 +540,41 @@ impl Panel {
         if let Some(i) = self.row_at(y, visible.len()) {
             let id = visible[i].id;
             self.sel = i;
-            if x < l.row_x + PIN_ZONE {
-                return Some(PanelAction::TogglePin(id));
-            }
+
+            // Right-most zone: delete
             if x > l.row_x + l.row_w - DEL_ZONE {
+                // If the context menu is open for this clip the right button is "Delete"
+                if self.context_id == Some(id) {
+                    return Some(PanelAction::Delete(id));
+                }
                 return Some(PanelAction::Delete(id));
             }
+
+            // Context menu is open → left button is "Paste as plain text"; clicking
+            // elsewhere outside the context-menu buttons closes it.
+            if self.context_id == Some(id) {
+                if x > l.row_x + l.row_w - DEL_ZONE - CTX_BTN_W {
+                    return Some(PanelAction::PasteAsPlainText(id));
+                }
+                return Some(PanelAction::CloseContextMenu);
+            }
+
+            // Pin star zone (right side, left of delete)
+            if x > l.row_x + l.row_w - DEL_ZONE - PIN_ZONE_R {
+                return Some(PanelAction::TogglePin(id));
+            }
+
+            // "⋯" context-menu trigger zone (only on the selected row)
+            if i == self.sel && x > l.row_x + l.row_w - DEL_ZONE - PIN_ZONE_R - CTX_ZONE {
+                return Some(PanelAction::OpenContextMenu(id));
+            }
+
             return Some(PanelAction::Copy(id));
+        }
+
+        // Click outside the clip rows closes any open context menu.
+        if self.context_id.is_some() {
+            self.context_id = None;
         }
         None
     }
@@ -550,11 +598,26 @@ impl Panel {
         let total = self.visible(store).len();
         let rows = self.visible_rows();
         match key {
+            NavKey::ContextMenu => {
+                let visible = self.visible(store);
+                if let Some(c) = visible.get(self.sel) {
+                    let id = c.id;
+                    if self.context_id == Some(id) {
+                        self.context_id = None;
+                        return Some(PanelAction::CloseContextMenu);
+                    } else {
+                        return Some(PanelAction::OpenContextMenu(id));
+                    }
+                }
+                return None;
+            }
             NavKey::Up => {
+                self.context_id = None; // close context menu on navigation
                 self.sel = self.sel.saturating_sub(1);
                 self.keep_sel_visible();
             }
             NavKey::Down => {
+                self.context_id = None; // close context menu on navigation
                 if self.sel + 1 < total {
                     self.sel += 1;
                 }
@@ -613,7 +676,11 @@ impl Panel {
                 return None;
             }
             NavKey::Esc => {
-                // peel back one layer at a time: armed clear, query, filter, close
+                // peel back one layer at a time: context menu, armed clear, query, filter, close
+                if self.context_id.is_some() {
+                    self.context_id = None;
+                    return Some(PanelAction::CloseContextMenu);
+                }
                 if armed {
                     return None;
                 }
@@ -641,7 +708,7 @@ mod tests {
     fn store(n: usize) -> ClipStore {
         let mut s = ClipStore::default();
         for i in 0..n {
-            s.add_copy(format!("clip number {i}"), None);
+            s.add_copy(format!("clip number {i}"), None, None);
         }
         s
     }
@@ -677,12 +744,13 @@ mod tests {
         let mut p = open_panel();
         let l = p.layout();
         let ids: Vec<u64> = s.visible("").iter().map(|c| c.id).collect();
-        // middle of first row copies
+        // middle of first row copies (body zone)
         let y0 = l.rows_y + ROW_H / 2.0;
         assert_eq!(p.click(150.0, y0, &s), Some(PanelAction::Copy(ids[0])));
-        // pin zone
-        assert_eq!(p.click(l.row_x + 5.0, y0, &s), Some(PanelAction::TogglePin(ids[0])));
-        // delete zone
+        // pin zone is now on the RIGHT (left of delete zone)
+        let pin_x = l.row_x + l.row_w - DEL_ZONE - PIN_ZONE_R / 2.0;
+        assert_eq!(p.click(pin_x, y0, &s), Some(PanelAction::TogglePin(ids[0])));
+        // delete zone (rightmost)
         assert_eq!(
             p.click(l.row_x + l.row_w - 5.0, y0, &s),
             Some(PanelAction::Delete(ids[0]))
@@ -703,6 +771,50 @@ mod tests {
         assert_eq!(p.drag_hit(l.btn_view_x + 8.0, l.btn_y + 8.0), None);
         // the header strip left of it still moves the card
         assert_eq!(p.drag_hit(l.btn_view_x - 12.0, l.btn_y + 8.0), Some(PanelDrag::Move));
+    }
+
+    #[test]
+    fn context_menu_opens_and_closes() {
+        let s = store(2);
+        let mut p = open_panel();
+        let l = p.layout();
+        let ids: Vec<u64> = s.visible("").iter().map(|c| c.id).collect();
+        let y0 = l.rows_y + ROW_H / 2.0;
+
+        // "⋯" zone opens the context menu for the selected (first) row
+        let ctx_x = l.row_x + l.row_w - DEL_ZONE - PIN_ZONE_R - CTX_ZONE / 2.0;
+        assert_eq!(p.click(ctx_x, y0, &s), Some(PanelAction::OpenContextMenu(ids[0])));
+
+        // Right-arrow key also toggles it (ContextMenu nav key)
+        assert_eq!(p.nav(NavKey::ContextMenu, &s), Some(PanelAction::OpenContextMenu(ids[0])));
+        // pressing again closes it
+        p.context_id = Some(ids[0]);
+        assert_eq!(p.nav(NavKey::ContextMenu, &s), Some(PanelAction::CloseContextMenu));
+
+        // When context menu is open: right zone = Delete, inner zone = PasteAsPlainText
+        p.context_id = Some(ids[0]);
+        assert_eq!(
+            p.click(l.row_x + l.row_w - 5.0, y0, &s),
+            Some(PanelAction::Delete(ids[0]))
+        );
+        p.context_id = Some(ids[0]);
+        let paste_x = l.row_x + l.row_w - DEL_ZONE - CTX_BTN_W / 2.0;
+        assert_eq!(
+            p.click(paste_x, y0, &s),
+            Some(PanelAction::PasteAsPlainText(ids[0]))
+        );
+
+        // Esc closes the context menu first (before clearing query)
+        p.context_id = Some(ids[0]);
+        p.input_char('a');
+        assert_eq!(p.nav(NavKey::Esc, &s), Some(PanelAction::CloseContextMenu));
+        assert!(!p.query.is_empty(), "query should still be there after ctx close");
+        assert!(p.context_id.is_none());
+
+        // Navigation (Up/Down) also closes it
+        p.context_id = Some(ids[0]);
+        p.nav(NavKey::Down, &s);
+        assert!(p.context_id.is_none());
     }
 
     #[test]
@@ -900,7 +1012,7 @@ mod tests {
     #[test]
     fn esc_clears_query_then_filter_then_closes() {
         let mut s = store(2);
-        s.add_copy("from chrome".into(), Some("Chrome".into()));
+        s.add_copy("from chrome".into(), Some("Chrome".into()), None);
         let mut p = open_panel();
         p.input_char('a');
         p.cycle_source(&s);
@@ -915,10 +1027,10 @@ mod tests {
 
     fn store_with_sources() -> ClipStore {
         let mut s = ClipStore::default();
-        s.add_copy("alpha".into(), Some("Chrome".into()));
-        s.add_copy("beta".into(), Some("Code".into()));
-        s.add_copy("gamma".into(), None);
-        s.add_copy("delta".into(), Some("Chrome".into()));
+        s.add_copy("alpha".into(), Some("Chrome".into()), None);
+        s.add_copy("beta".into(), Some("Code".into()), None);
+        s.add_copy("gamma".into(), None, None);
+        s.add_copy("delta".into(), Some("Chrome".into()), None);
         s
     }
 
@@ -1005,7 +1117,7 @@ mod tests {
         let p = open_panel();
         assert_eq!(p.visible(&s).len(), 3);
         // store mutations invalidate the cached view immediately
-        s.add_copy("clip number 99".into(), None);
+        s.add_copy("clip number 99".into(), None, None);
         assert_eq!(p.visible(&s).len(), 4);
         let id = p.visible(&s)[0].id;
         s.delete(id);

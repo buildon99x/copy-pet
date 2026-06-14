@@ -15,8 +15,88 @@ pub const MAX_PINNED: usize = 100;
 /// Clips larger than this many bytes are ignored entirely (a clipboard pet
 /// is not a paste-bin; truncating would corrupt a later paste).
 pub const MAX_TEXT: usize = 256 * 1024;
+/// Rich-format sidecar cap (HTML + RTF combined). If a copy exceeds this,
+/// the formats are silently dropped but the plain-text clip is kept.
+pub const MAX_RICH: usize = 1024 * 1024;
 /// Most delete operations kept for undo (session-only, not persisted).
 const MAX_UNDO: usize = 20;
+
+/// Rich clipboard formats captured alongside the plain-text clip. Optional
+/// sidecar on [`Clip`]; opaque to the core — backends encode and decode.
+/// RTF is stored as base64 to avoid `serde_json`'s integer-array encoding
+/// for `Vec<u8>` (bloated, hard to read). The inline base64 helper below
+/// avoids a new crate dependency.
+#[derive(Serialize, Deserialize, Clone, Default, PartialEq, Eq, Debug)]
+pub struct RichFormats {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub html: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rtf_b64: Option<String>,
+}
+
+impl RichFormats {
+    pub fn is_empty(&self) -> bool {
+        self.html.is_none() && self.rtf_b64.is_none()
+    }
+
+    /// Returns the total byte size of all stored rich data (UTF-8 lengths).
+    pub fn byte_len(&self) -> usize {
+        self.html.as_deref().map(str::len).unwrap_or(0)
+            + self.rtf_b64.as_deref().map(str::len).unwrap_or(0)
+    }
+}
+
+/// Encode raw bytes to a base64 string (RFC 4648, no padding).
+pub fn b64_encode(bytes: &[u8]) -> String {
+    const CHARS: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut out = String::with_capacity(bytes.len().div_ceil(3) * 4);
+    for chunk in bytes.chunks(3) {
+        let b0 = chunk[0] as u32;
+        let b1 = chunk.get(1).copied().unwrap_or(0) as u32;
+        let b2 = chunk.get(2).copied().unwrap_or(0) as u32;
+        let n = (b0 << 16) | (b1 << 8) | b2;
+        out.push(CHARS[((n >> 18) & 63) as usize] as char);
+        out.push(CHARS[((n >> 12) & 63) as usize] as char);
+        if chunk.len() > 1 {
+            out.push(CHARS[((n >> 6) & 63) as usize] as char);
+        }
+        if chunk.len() > 2 {
+            out.push(CHARS[(n & 63) as usize] as char);
+        }
+    }
+    out
+}
+
+/// Decode a base64 string back to bytes (tolerates missing padding).
+pub fn b64_decode(s: &str) -> Vec<u8> {
+    let val = |c: u8| -> u8 {
+        match c {
+            b'A'..=b'Z' => c - b'A',
+            b'a'..=b'z' => c - b'a' + 26,
+            b'0'..=b'9' => c - b'0' + 52,
+            b'+' => 62,
+            b'/' => 63,
+            _ => 0,
+        }
+    };
+    let bytes: Vec<u8> = s.bytes().filter(|&b| b != b'=').collect();
+    let mut out = Vec::with_capacity(bytes.len() * 3 / 4);
+    for chunk in bytes.chunks(4) {
+        let v0 = val(chunk[0]) as u32;
+        let v1 = val(*chunk.get(1).unwrap_or(&0)) as u32;
+        let v2 = val(*chunk.get(2).unwrap_or(&0)) as u32;
+        let v3 = val(*chunk.get(3).unwrap_or(&0)) as u32;
+        let n = (v0 << 18) | (v1 << 12) | (v2 << 6) | v3;
+        out.push(((n >> 16) & 0xFF) as u8);
+        if chunk.len() > 2 {
+            out.push(((n >> 8) & 0xFF) as u8);
+        }
+        if chunk.len() > 3 {
+            out.push((n & 0xFF) as u8);
+        }
+    }
+    out
+}
 
 #[derive(Serialize, Deserialize, Clone)]
 pub struct Clip {
@@ -28,6 +108,11 @@ pub struct Clip {
     pub pinned: bool,
     /// Unix seconds of the last copy of this text.
     pub ts: u64,
+    /// Rich clipboard formats (HTML + RTF) captured alongside the text.
+    /// `None` for plain-text clips or when capture/restore is not supported.
+    /// Omitted from JSON when absent to keep `clips.json` compact.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub formats: Option<RichFormats>,
 }
 
 impl Clip {
@@ -242,18 +327,29 @@ impl ClipStore {
 
     /// Records a copy event. Returns `true` when it was accepted (new clip or
     /// an existing one bumped to the top) so the pet can react.
-    pub fn add_copy(&mut self, text: String, source: Option<String>) -> bool {
+    ///
+    /// `formats` carries optional HTML/RTF alongside the plain text. When the
+    /// combined rich-format size exceeds [`MAX_RICH`] the formats are silently
+    /// dropped but the plain-text clip is kept.
+    pub fn add_copy(
+        &mut self,
+        text: String,
+        source: Option<String>,
+        formats: Option<RichFormats>,
+    ) -> bool {
         if text.trim().is_empty() || text.len() > MAX_TEXT {
             return false;
         }
+        let formats = formats.filter(|f| !f.is_empty() && f.byte_len() <= MAX_RICH);
         let ts = now_ts();
         if let Some(i) = self.items.iter().position(|c| c.text == text) {
-            // same text copied again: bump to top, refresh meta
+            // same text copied again: bump to top, refresh meta and formats
             let mut clip = self.items.remove(i);
             clip.ts = ts;
             if source.is_some() {
                 clip.source = source;
             }
+            clip.formats = formats;
             self.items.insert(0, clip);
         } else {
             let clip = Clip {
@@ -262,6 +358,7 @@ impl ClipStore {
                 source,
                 pinned: false,
                 ts,
+                formats,
             };
             self.next_id += 1;
             self.items.insert(0, clip);
@@ -470,7 +567,7 @@ mod tests {
         let mut s = ClipStore::default();
         s.next_id = 1;
         for t in texts {
-            s.add_copy(t.to_string(), None);
+            s.add_copy(t.to_string(), None, None);
         }
         s
     }
@@ -486,7 +583,7 @@ mod tests {
     #[test]
     fn duplicate_copy_bumps_to_top() {
         let mut s = store_with(&["one", "two"]);
-        assert!(s.add_copy("one".into(), Some("editor".into())));
+        assert!(s.add_copy("one".into(), Some("editor".into()), None));
         let v = s.visible("");
         assert_eq!(v.len(), 2);
         assert_eq!(v[0].text, "one");
@@ -496,19 +593,19 @@ mod tests {
     #[test]
     fn rejects_empty_and_huge() {
         let mut s = ClipStore::default();
-        assert!(!s.add_copy("   \n ".into(), None));
-        assert!(!s.add_copy("x".repeat(MAX_TEXT + 1), None));
+        assert!(!s.add_copy("   \n ".into(), None, None));
+        assert!(!s.add_copy("x".repeat(MAX_TEXT + 1), None, None));
         assert!(s.is_empty());
     }
 
     #[test]
     fn eviction_spares_pinned() {
         let mut s = ClipStore::default();
-        s.add_copy("keep me".into(), None);
+        s.add_copy("keep me".into(), None, None);
         let id = s.visible("")[0].id;
         s.toggle_pin(id);
         for i in 0..(MAX_HISTORY + 20) {
-            s.add_copy(format!("clip {i}"), None);
+            s.add_copy(format!("clip {i}"), None, None);
         }
         assert!(s.get(id).is_some(), "pinned clip evicted");
         assert_eq!(s.len(), MAX_HISTORY + 1);
@@ -527,8 +624,8 @@ mod tests {
     #[test]
     fn search_filters_text_and_source() {
         let mut s = ClipStore::default();
-        s.add_copy("Hello World".into(), Some("Chrome".into()));
-        s.add_copy("안녕하세요".into(), Some("Code".into()));
+        s.add_copy("Hello World".into(), Some("Chrome".into()), None);
+        s.add_copy("안녕하세요".into(), Some("Code".into()), None);
         assert_eq!(s.visible("hello").len(), 1);
         assert_eq!(s.visible("안녕").len(), 1);
         assert_eq!(s.visible("chrome").len(), 1);
@@ -539,8 +636,8 @@ mod tests {
     #[test]
     fn search_multi_token_requires_all_tokens() {
         let mut s = ClipStore::default();
-        s.add_copy("git clone https://example.com".into(), None);
-        s.add_copy("git status".into(), None);
+        s.add_copy("git clone https://example.com".into(), None, None);
+        s.add_copy("git status".into(), None, None);
         // both tokens occur only in the first clip
         let v = s.visible("git clone");
         assert_eq!(v.len(), 1);
@@ -552,7 +649,7 @@ mod tests {
     #[test]
     fn search_tokens_span_text_and_source() {
         let mut s = ClipStore::default();
-        s.add_copy("clone the repo".into(), Some("Terminal".into()));
+        s.add_copy("clone the repo".into(), Some("Terminal".into()), None);
         // "terminal" matches the source, "clone" matches the text
         assert_eq!(s.visible("terminal clone").len(), 1);
         assert_eq!(s.visible("terminal missing").len(), 0);
@@ -561,8 +658,8 @@ mod tests {
     #[test]
     fn search_multi_token_korean() {
         let mut s = ClipStore::default();
-        s.add_copy("안녕 세계".into(), None);
-        s.add_copy("안녕하세요".into(), None);
+        s.add_copy("안녕 세계".into(), None, None);
+        s.add_copy("안녕하세요".into(), None, None);
         // "세계" only occurs in the first clip; "안녕" in both
         assert_eq!(s.visible("안녕 세계").len(), 1);
         assert_eq!(s.visible("안녕").len(), 2);
@@ -571,8 +668,8 @@ mod tests {
     #[test]
     fn search_ranks_word_start_above_mid_word() {
         let mut s = ClipStore::default();
-        s.add_copy("cat food".into(), None); // oldest: prefix match for "cat"
-        s.add_copy("scattered notes".into(), None); // newest: mid-word "cat"
+        s.add_copy("cat food".into(), None, None); // oldest: prefix match for "cat"
+        s.add_copy("scattered notes".into(), None, None); // newest: mid-word "cat"
         let v = s.visible("cat");
         assert_eq!(v.len(), 2);
         // the prefix hit ranks first despite being older
@@ -582,8 +679,8 @@ mod tests {
     #[test]
     fn search_ranks_phrase_above_scattered() {
         let mut s = ClipStore::default();
-        s.add_copy("git clone the thing".into(), None); // contiguous phrase
-        s.add_copy("clone it from git".into(), None); // newest: scattered tokens
+        s.add_copy("git clone the thing".into(), None, None); // contiguous phrase
+        s.add_copy("clone it from git".into(), None, None); // newest: scattered tokens
         let v = s.visible("git clone");
         assert_eq!(v.len(), 2);
         assert_eq!(v[0].text, "git clone the thing");
@@ -592,8 +689,8 @@ mod tests {
     #[test]
     fn search_keeps_pinned_first_despite_score() {
         let mut s = ClipStore::default();
-        s.add_copy("cat food".into(), None); // strong prefix match, unpinned
-        s.add_copy("a scattered cat".into(), None); // weaker match, pinned
+        s.add_copy("cat food".into(), None, None); // strong prefix match, unpinned
+        s.add_copy("a scattered cat".into(), None, None); // weaker match, pinned
         let id = s
             .visible("")
             .iter()
@@ -620,10 +717,10 @@ mod tests {
     #[test]
     fn source_filter_and_distinct_sources() {
         let mut s = ClipStore::default();
-        s.add_copy("one".into(), Some("Chrome".into()));
-        s.add_copy("two".into(), Some("Code".into()));
-        s.add_copy("three".into(), Some("chrome".into())); // dup, different case
-        s.add_copy("four".into(), None);
+        s.add_copy("one".into(), Some("Chrome".into()), None);
+        s.add_copy("two".into(), Some("Code".into()), None);
+        s.add_copy("three".into(), Some("chrome".into()), None); // dup, different case
+        s.add_copy("four".into(), None, None);
         // distinct, most recent first, first spelling kept per app
         assert_eq!(s.sources(), vec!["chrome", "Code"]);
         // filter is case-insensitive equality on the source
@@ -696,6 +793,7 @@ mod tests {
             source: None,
             pinned: false,
             ts: 0,
+            formats: None,
         };
         assert_eq!(c.preview(), "fn main() {");
         // flattened folds *every* line in (newlines -> single spaces), so the

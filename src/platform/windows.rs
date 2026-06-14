@@ -10,6 +10,7 @@
 //! `WS_EX_NOACTIVATE` and takes focus so the search box can receive
 //! keyboard input (incl. IME-composed Hangul via WM_CHAR).
 
+use crate::clipboard::{b64_decode, b64_encode, RichFormats, MAX_RICH};
 use crate::hotkey::{self, Hotkey};
 use crate::i18n::{self, t, Lang, Msg};
 use crate::input;
@@ -21,16 +22,18 @@ use crate::update;
 use std::cell::RefCell;
 use std::ffi::c_void;
 use std::ptr::{null, null_mut};
+use std::sync::OnceLock;
 
 use windows_sys::Win32::Foundation::*;
 use windows_sys::Win32::Graphics::Gdi::*;
 use windows_sys::Win32::System::DataExchange::{
     AddClipboardFormatListener, CloseClipboard, EmptyClipboard, GetClipboardData,
-    GetClipboardOwner, OpenClipboard, RemoveClipboardFormatListener, SetClipboardData,
+    GetClipboardOwner, OpenClipboard, RegisterClipboardFormatW, RemoveClipboardFormatListener,
+    SetClipboardData,
 };
 use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows_sys::Win32::System::Memory::{
-    GlobalAlloc, GlobalLock, GlobalSize, GlobalUnlock, GMEM_MOVEABLE,
+    GlobalAlloc, GlobalFree, GlobalLock, GlobalSize, GlobalUnlock, GMEM_MOVEABLE,
 };
 use windows_sys::Win32::System::Registry::*;
 use windows_sys::Win32::System::Threading::{
@@ -55,6 +58,24 @@ const WM_MOUSELEAVE: u32 = 0x02A3;
 /// Standard clipboard format CF_UNICODETEXT (avoids the Win32_System_Ole
 /// feature for one constant).
 const CF_UNICODETEXT: u32 = 13;
+
+/// Returns the registered format id for `"HTML Format"` (lazy, thread-safe).
+fn cf_html_id() -> u32 {
+    static ID: OnceLock<u32> = OnceLock::new();
+    *ID.get_or_init(|| {
+        let n = wz("HTML Format");
+        unsafe { RegisterClipboardFormatW(n.as_ptr()) }
+    })
+}
+
+/// Returns the registered format id for `"Rich Text Format"` (lazy, thread-safe).
+fn cf_rtf_id() -> u32 {
+    static ID: OnceLock<u32> = OnceLock::new();
+    *ID.get_or_init(|| {
+        let n = wz("Rich Text Format");
+        unsafe { RegisterClipboardFormatW(n.as_ptr()) }
+    })
+}
 const TIMER_ID: usize = 1;
 const TICK_MS: u32 = 33;
 const HOTKEY_ID: i32 = 1;
@@ -167,7 +188,7 @@ impl App {
     /// active when the panel opened and synthesizes Ctrl+V there.
     fn copy_back(&mut self, pick: ClipPick) {
         self.suppress_clip = Some(pick.text.clone());
-        unsafe { set_clipboard_text(self.hwnd, &pick.text) };
+        unsafe { set_clipboard_pick(self.hwnd, &pick) };
         if pick.paste && !self.paste_target.is_null() && self.paste_target != self.hwnd {
             unsafe {
                 // SetForegroundWindow is asynchronous and won't promote a
@@ -499,11 +520,12 @@ unsafe fn make_icon() -> HICON {
 
 // ---- clipboard --------------------------------------------------------------
 
-/// Reads CF_UNICODETEXT from the clipboard, retrying briefly: the copying
-/// app may still hold the clipboard open when WM_CLIPBOARDUPDATE arrives.
-/// SAFETY: handles returned by GetClipboardData are owned by the clipboard;
-/// we only read between GlobalLock/GlobalUnlock and never free them.
-unsafe fn read_clipboard_text(hwnd: HWND) -> Option<String> {
+/// Reads CF_UNICODETEXT + CF_HTML + RTF from the clipboard in one open/close.
+/// Retries briefly: the copying app may still hold the clipboard when
+/// WM_CLIPBOARDUPDATE arrives.
+/// SAFETY: handles from GetClipboardData are owned by the clipboard; we only
+/// read between GlobalLock/GlobalUnlock and never free them.
+unsafe fn read_clipboard_rich(hwnd: HWND) -> Option<(String, Option<RichFormats>)> {
     for attempt in 0..5 {
         if attempt > 0 {
             Sleep(15);
@@ -511,36 +533,107 @@ unsafe fn read_clipboard_text(hwnd: HWND) -> Option<String> {
         if OpenClipboard(hwnd) == 0 {
             continue;
         }
-        let h = GetClipboardData(CF_UNICODETEXT);
-        let result = if h.is_null() {
+        // ---- plain text (required) ------------------------------------------
+        let ht = GetClipboardData(CF_UNICODETEXT);
+        let text_opt = if ht.is_null() {
             None
         } else {
-            let p = GlobalLock(h) as *const u16;
+            let p = GlobalLock(ht) as *const u16;
             if p.is_null() {
                 None
             } else {
-                let max = GlobalSize(h) / 2;
+                let max = GlobalSize(ht) / 2;
                 let mut len = 0usize;
                 while len < max && *p.add(len) != 0 {
                     len += 1;
                 }
                 let s = String::from_utf16_lossy(std::slice::from_raw_parts(p, len));
-                GlobalUnlock(h);
+                GlobalUnlock(ht);
                 Some(s)
             }
         };
+        // ---- HTML Format (optional, UTF-8 bytes) ----------------------------
+        let html = read_bytes_format(cf_html_id()).and_then(|b| {
+            // CF_HTML is null-terminated UTF-8; trim the trailing null if present
+            let trimmed = b.split(|&c| c == 0).next().unwrap_or(&b);
+            if trimmed.len() <= MAX_RICH {
+                std::str::from_utf8(trimmed).ok().map(|s| s.to_string())
+            } else {
+                None
+            }
+        });
+        // ---- Rich Text Format (optional, raw bytes → base64) ----------------
+        let rtf_b64 = read_bytes_format(cf_rtf_id()).and_then(|b| {
+            if b.len() <= MAX_RICH {
+                Some(b64_encode(&b))
+            } else {
+                None
+            }
+        });
         CloseClipboard();
-        return result;
+        let text = text_opt?;
+        let formats = if html.is_some() || rtf_b64.is_some() {
+            Some(RichFormats { html, rtf_b64 })
+        } else {
+            None
+        };
+        return Some((text, formats));
     }
     None
 }
 
-/// Replaces the clipboard with `text` (CF_UNICODETEXT).
-/// SAFETY: the GlobalAlloc'd buffer is handed to the clipboard on success
-/// (which then owns it); on failure we free it ourselves.
-unsafe fn set_clipboard_text(hwnd: HWND, text: &str) -> bool {
-    let wide: Vec<u16> = text.encode_utf16().chain(std::iter::once(0)).collect();
-    let bytes = wide.len() * 2;
+/// Reads raw bytes for a registered clipboard format without closing the clipboard.
+/// SAFETY: clipboard must already be open; handle is owned by the clipboard.
+unsafe fn read_bytes_format(fmt: u32) -> Option<Vec<u8>> {
+    if fmt == 0 {
+        return None;
+    }
+    let h = GetClipboardData(fmt);
+    if h.is_null() {
+        return None;
+    }
+    let p = GlobalLock(h) as *const u8;
+    if p.is_null() {
+        return None;
+    }
+    let len = GlobalSize(h);
+    let bytes = std::slice::from_raw_parts(p, len).to_vec();
+    GlobalUnlock(h);
+    Some(bytes)
+}
+
+/// Writes bytes to a clipboard format (clipboard must already be open and empty).
+/// Returns `true` on success; the clipboard takes ownership of the handle.
+/// SAFETY: clipboard must be open; `GlobalAlloc`'d handle is transferred on success.
+unsafe fn write_clip_bytes(fmt: u32, data: &[u8]) -> bool {
+    if fmt == 0 || data.is_empty() {
+        return false;
+    }
+    let h = GlobalAlloc(GMEM_MOVEABLE, data.len());
+    if h.is_null() {
+        return false;
+    }
+    let p = GlobalLock(h) as *mut u8;
+    if p.is_null() {
+        GlobalFree(h);
+        return false;
+    }
+    std::ptr::copy_nonoverlapping(data.as_ptr(), p, data.len());
+    GlobalUnlock(h);
+    let ok = !SetClipboardData(fmt, h).is_null();
+    if !ok {
+        GlobalFree(h);
+    }
+    ok
+}
+
+/// Replaces the clipboard with the given pick.  When `plain_only` is false and
+/// `formats` is `Some`, also writes CF_HTML and/or RTF alongside the text so
+/// the target app receives the original rich content.
+/// SAFETY: GlobalAlloc'd buffers are transferred to the clipboard on success.
+unsafe fn set_clipboard_pick(hwnd: HWND, pick: &ClipPick) -> bool {
+    let wide: Vec<u16> = pick.text.encode_utf16().chain(std::iter::once(0)).collect();
+    let text_bytes = wide.len() * 2;
     for attempt in 0..5 {
         if attempt > 0 {
             Sleep(15);
@@ -549,17 +642,20 @@ unsafe fn set_clipboard_text(hwnd: HWND, text: &str) -> bool {
             continue;
         }
         EmptyClipboard();
-        let h = GlobalAlloc(GMEM_MOVEABLE, bytes);
-        let mut ok = false;
-        if !h.is_null() {
-            let p = GlobalLock(h) as *mut u8;
-            if !p.is_null() {
-                std::ptr::copy_nonoverlapping(wide.as_ptr() as *const u8, p, bytes);
-                GlobalUnlock(h);
-                ok = !SetClipboardData(CF_UNICODETEXT, h).is_null();
-            }
-            if !ok {
-                GlobalFree(h);
+        let wide_bytes = std::slice::from_raw_parts(wide.as_ptr() as *const u8, text_bytes);
+        let ok = write_clip_bytes(CF_UNICODETEXT, wide_bytes);
+        if ok && !pick.plain_only {
+            if let Some(fmt) = &pick.formats {
+                if let Some(html) = &fmt.html {
+                    // CF_HTML is UTF-8 with a null terminator
+                    let mut html_bytes = html.as_bytes().to_vec();
+                    html_bytes.push(0);
+                    write_clip_bytes(cf_html_id(), &html_bytes);
+                }
+                if let Some(rtf_b64) = &fmt.rtf_b64 {
+                    let rtf_bytes = b64_decode(rtf_b64);
+                    write_clip_bytes(cf_rtf_id(), &rtf_bytes);
+                }
             }
         }
         CloseClipboard();
@@ -1365,14 +1461,14 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
             })
             .unwrap_or(false);
             if capture {
-                if let Some(text) = read_clipboard_text(hwnd) {
+                if let Some((text, formats)) = read_clipboard_rich(hwnd) {
                     with_app(|a| {
                         if a.suppress_clip.as_deref() == Some(text.as_str()) {
                             a.suppress_clip = None;
                             return;
                         }
                         let (source, badge) = clipboard_source();
-                        a.pet.on_copy(text, source, badge);
+                        a.pet.on_copy(text, source, badge, formats);
                     });
                 }
             }

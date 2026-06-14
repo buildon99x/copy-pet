@@ -22,6 +22,9 @@ pub enum MenuAction {
     TogglePanelAutoClose,
     /// Paste the picked clip into the previous app automatically (on/off).
     TogglePasteOnSelect,
+    /// Paste clips as plain text (strip formatting) when on; preserve rich
+    /// formats (HTML/RTF) when off (the default). Orthogonal to PasteOnSelect.
+    TogglePastePlainText,
     ToggleStats,
     SetSize(usize),
     SetAccessory(usize),

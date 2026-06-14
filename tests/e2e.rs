@@ -7,11 +7,11 @@
 //! What cannot run headless (real Win32 hotkey registration, OS clipboard,
 //! system tray) is covered by the unit-tested seams these tests drive.
 
-use clipcat::clipboard::ClipStore;
+use clipcat::clipboard::{ClipStore, RichFormats};
 use clipcat::hotkey::{self, Hotkey};
 use clipcat::i18n::Lang;
 use clipcat::menu::{MenuAction, MenuEntry, MenuItem, MenuOutcome};
-use clipcat::panel::{self, NavKey};
+use clipcat::panel::{self, NavKey, DEL_ZONE, CTX_BTN_W, CTX_ZONE, PIN_ZONE_R};
 use clipcat::pet::Pet;
 use clipcat::render::{self, Accessory, BubbleData, Scene};
 use clipcat::state::Persist;
@@ -46,7 +46,12 @@ fn menu_find(entries: &[MenuEntry], action: MenuAction) -> Option<&MenuItem> {
 }
 
 fn copy(p: &mut Pet, text: &str, source: Option<&str>) {
-    p.on_copy(text.to_string(), source.map(str::to_string), None);
+    p.on_copy(text.to_string(), source.map(str::to_string), None, None);
+}
+
+fn copy_rich(p: &mut Pet, text: &str, html: &str) {
+    let formats = RichFormats { html: Some(html.to_string()), rtf_b64: None };
+    p.on_copy(text.to_string(), Some("TestApp".to_string()), None, Some(formats));
 }
 
 /// The headline flow: copies arrive from several apps, the panel opens (as
@@ -553,4 +558,131 @@ fn context_menu_unlocks_accessories_by_level() {
     let prev = high.st.accessory;
     high.apply_menu_action(MenuAction::SetAccessory(9999));
     assert_eq!(high.st.accessory, prev);
+}
+
+/// F1: Rich clipboard format round-trip.  Copies arrive with HTML/RTF, are
+/// stored in the clip model, and flow back into `ClipPick` for the backend
+/// to write to the OS clipboard.  The `paste_plain_text` flag and the
+/// `PasteAsPlainText` action both suppress the rich payload.
+#[test]
+fn rich_format_stored_and_returned_in_pick() {
+    let mut p = pet();
+    copy_rich(&mut p, "hello world", "<b>hello world</b>");
+    copy(&mut p, "plain only", Some("Code")); // no rich formats
+
+    // the HTML was stored alongside the text
+    let stored = p.clips.get(p.clips.visible("").first().unwrap().id);
+    assert_eq!(stored.unwrap().text, "plain only"); // newest is first
+
+    let rich_id = p.clips.visible("").iter().nth(1).unwrap().id;
+    let rich_clip = p.clips.get(rich_id).unwrap();
+    assert_eq!(rich_clip.formats.as_ref().unwrap().html.as_deref(), Some("<b>hello world</b>"));
+
+    // normal copy-back: formats included, plain_only = false (default)
+    p.toggle_panel();
+    p.panel.sel = 1; // select the rich clip
+    let pick = p.panel_nav(NavKey::Enter).unwrap();
+    assert_eq!(pick.text, "hello world");
+    assert!(!pick.plain_only);
+    assert!(pick.formats.as_ref().unwrap().html.is_some());
+
+    // with paste_plain_text enabled, the same pick has plain_only = true
+    p.toggle_panel();
+    p.apply_menu_action(MenuAction::TogglePastePlainText);
+    assert!(p.paste_plain_text());
+    p.toggle_panel();
+    p.panel.sel = 1;
+    let pick = p.panel_nav(NavKey::Enter).unwrap();
+    assert!(pick.plain_only, "paste_plain_text flag forces plain-only");
+
+    // JSON round-trip: paste_plain_text persists
+    let json = serde_json::to_string(&p.st).unwrap();
+    let back: Persist = serde_json::from_str(&json).unwrap();
+    assert!(back.paste_plain_text);
+}
+
+/// F1: Rich format size cap — formats over MAX_RICH (1 MiB) are silently
+/// dropped; the text itself is still captured and stored normally.
+#[test]
+fn rich_format_size_cap() {
+    use clipcat::clipboard::MAX_RICH;
+    let mut p = pet();
+    // Construct a format just over the cap
+    let big_html = "x".repeat(MAX_RICH + 1);
+    let formats = RichFormats { html: Some(big_html.clone()), rtf_b64: None };
+    p.on_copy("some text".to_string(), None, None, Some(formats));
+
+    let id = p.clips.visible("").first().unwrap().id;
+    let clip = p.clips.get(id).unwrap();
+    assert_eq!(clip.text, "some text", "text still captured");
+    assert!(clip.formats.is_none(), "oversized formats are silently dropped");
+}
+
+/// F2: Inline context menu on a panel row.  "⋯" click opens it; the
+/// resulting `PasteAsPlainText` action from the left button always carries
+/// `plain_only = true` regardless of the global flag; Esc closes the menu
+/// before closing the panel.
+#[test]
+fn context_menu_paste_plain_and_esc_order() {
+    let mut p = pet();
+    copy_rich(&mut p, "rich text", "<i>rich text</i>");
+    copy(&mut p, "plain text", Some("Code"));
+    p.toggle_panel();
+
+    let lt = p.panel.layout();
+    // click the "⋯" zone on the selected (top) row to open the context menu
+    let ctx_trigger_x = lt.row_x + lt.row_w - DEL_ZONE - PIN_ZONE_R - CTX_ZONE / 2.0;
+    let row0_y = lt.rows_y + panel::ROW_H / 2.0;
+    let pick = p.panel_click(ctx_trigger_x, row0_y);
+    assert!(pick.is_none(), "opening the context menu returns no pick");
+    assert!(p.panel.context_id.is_some(), "context menu is now open");
+    assert!(p.panel_open(), "opening the context menu does not close the panel");
+
+    // click the "Paste Plain" button zone (left of Delete)
+    let paste_plain_x = lt.row_x + lt.row_w - DEL_ZONE - CTX_BTN_W / 2.0;
+    let pick = p.panel_click(paste_plain_x, row0_y).unwrap();
+    assert_eq!(pick.text, "plain text");
+    assert!(pick.plain_only, "PasteAsPlainText always sets plain_only = true");
+    assert!(pick.formats.is_none());
+
+    // Esc while the context menu is open should close the menu first, not the panel
+    p.toggle_panel();
+    let ctx_trigger_x = lt.row_x + lt.row_w - DEL_ZONE - PIN_ZONE_R - CTX_ZONE / 2.0;
+    p.panel_click(ctx_trigger_x, row0_y);
+    assert!(p.panel.context_id.is_some());
+    let action = p.panel_nav(NavKey::Esc);
+    assert!(action.is_none(), "first Esc closes the context menu");
+    assert!(p.panel.context_id.is_none());
+    assert!(p.panel_open(), "panel stays open after context menu close");
+
+    // Right-arrow keyboard shortcut also opens/closes the context menu
+    p.panel_nav(NavKey::ContextMenu);
+    assert!(p.panel.context_id.is_some());
+    p.panel_nav(NavKey::ContextMenu);
+    assert!(p.panel.context_id.is_none());
+}
+
+/// F2: Context menu Delete button removes the clip from the store.
+#[test]
+fn context_menu_delete_removes_clip() {
+    let mut p = pet();
+    copy(&mut p, "first", None);
+    copy(&mut p, "second", None);
+    copy(&mut p, "third", None);
+    assert_eq!(p.clips.len(), 3);
+    p.toggle_panel();
+
+    let lt = p.panel.layout();
+    let row0_y = lt.rows_y + panel::ROW_H / 2.0;
+    // Open context menu on the top row ("third")
+    let ctx_trigger_x = lt.row_x + lt.row_w - DEL_ZONE - PIN_ZONE_R - CTX_ZONE / 2.0;
+    p.panel_click(ctx_trigger_x, row0_y);
+    assert!(p.panel.context_id.is_some());
+
+    // Click the Delete zone
+    let del_x = lt.row_x + lt.row_w - DEL_ZONE / 2.0;
+    let pick = p.panel_click(del_x, row0_y);
+    assert!(pick.is_none(), "delete returns no clip to paste");
+    assert_eq!(p.clips.len(), 2, "the clip was removed");
+    assert!(p.panel.context_id.is_none(), "context menu closed after delete");
 }

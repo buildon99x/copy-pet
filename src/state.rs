@@ -50,6 +50,10 @@ pub struct Persist {
     /// When true, picking a clip also pastes it into the previously focused app
     /// (synthesized Ctrl/Cmd+V). Off by default — some users want copy-only.
     pub paste_on_select: bool,
+    /// When true, the clip is pasted as plain text (formatting stripped).
+    /// Default false: preserve the original rich formats (HTML/RTF).
+    /// Orthogonal to `paste_on_select` — all 4 combinations work.
+    pub paste_plain_text: bool,
     /// Panel list style: 0 = compact list (default), 1 = roomier rounded-box
     /// "thumbnail" cards that show more of each clip.
     pub panel_view: u8,
@@ -89,6 +93,7 @@ impl Default for Persist {
             panel_autoclose: true,
             onboarded: false,
             paste_on_select: false,
+            paste_plain_text: false,
             panel_view: 0,
             total_keys: 0,
             total_clicks: 0,

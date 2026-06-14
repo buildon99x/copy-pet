@@ -42,17 +42,17 @@ fn save(pm: &Pixmap, dir: &str, name: &str) {
 
 fn demo_store() -> ClipStore {
     let mut store = ClipStore::default();
-    store.add_copy("fn main() {\n    println!(\"hello\");\n}".into(), Some("Code".into()));
-    store.add_copy("안녕하세요! 클립캣입니다. 이 줄은 길어서 잘리는지 확인합니다 — 아주 아주 길게".into(), Some("브라우저".into()));
-    store.add_copy("https://example.com/some/long/path?q=clipboard&lang=ko".into(), Some("chrome".into()));
-    store.add_copy("두 번째 클립".into(), None);
-    store.add_copy("short".into(), Some("terminal".into()));
-    store.add_copy("일곱 번째 줄까지 스크롤 테스트".into(), Some("notes".into()));
-    store.add_copy("and one more to overflow the list".into(), Some("mail".into()));
-    store.add_copy("a big clip ".repeat(100), Some("Code".into())); // shows the size meta
-    store.add_copy("아홉 번째 클립".into(), Some("터미널".into()));
-    store.add_copy("tenth clip scrolls the list".into(), Some("Chrome".into()));
-    store.add_copy("eleventh clip - no quick badge".into(), Some("Code".into()));
+    store.add_copy("fn main() {\n    println!(\"hello\");\n}".into(), Some("Code".into()), None);
+    store.add_copy("안녕하세요! 클립캣입니다. 이 줄은 길어서 잘리는지 확인합니다 — 아주 아주 길게".into(), Some("브라우저".into()), None);
+    store.add_copy("https://example.com/some/long/path?q=clipboard&lang=ko".into(), Some("chrome".into()), None);
+    store.add_copy("두 번째 클립".into(), None, None);
+    store.add_copy("short".into(), Some("terminal".into()), None);
+    store.add_copy("일곱 번째 줄까지 스크롤 테스트".into(), Some("notes".into()), None);
+    store.add_copy("and one more to overflow the list".into(), Some("mail".into()), None);
+    store.add_copy("a big clip ".repeat(100), Some("Code".into()), None); // shows the size meta
+    store.add_copy("아홉 번째 클립".into(), Some("터미널".into()), None);
+    store.add_copy("tenth clip scrolls the list".into(), Some("Chrome".into()), None);
+    store.add_copy("eleventh clip - no quick badge".into(), Some("Code".into()), None);
     let pins: Vec<u64> = store.visible("").iter().rev().take(1).map(|c| c.id).collect();
     for id in pins {
         store.toggle_pin(id);
@@ -167,6 +167,7 @@ fn main() {
                 capture,
                 hint: "WIN+SHIFT+V",
                 caret: true,
+                paste_plain_text: false,
             };
             render::draw_panel(&mut pm, &view);
             save(&pm, &dir, name);
@@ -189,6 +190,7 @@ fn main() {
             capture: true,
             hint: "WIN+SHIFT+V",
             caret: true,
+            paste_plain_text: false,
         };
         render::draw_panel(&mut pm, &view);
         save(&pm, &dir, "4-panel-thumbnail");

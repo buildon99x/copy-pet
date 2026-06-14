@@ -93,6 +93,20 @@ pub enum Msg {
     BubbleClicks,
     BubbleClips,
     BubbleActive,
+    // plain-text paste toggle (F1)
+    MenuPastePlainText,
+    ToastPlainOn,
+    ToastPlainOff,
+    // inline context-menu buttons on clip rows (F2)
+    BtnPastePlain,
+    BtnDelete,
+    // header-button tooltips (F4)
+    TtView,
+    TtFilter,
+    TtPause,
+    TtClear,
+    TtLang,
+    TtClose,
 }
 
 /// Looks up a fixed string for the language.
@@ -205,6 +219,28 @@ pub fn t(lang: Lang, msg: Msg) -> &'static str {
         (BubbleClips, Lang::Ko) => "복사",
         (BubbleActive, Lang::En) => "ACTIVE",
         (BubbleActive, Lang::Ko) => "활동",
+        (MenuPastePlainText, Lang::En) => "Paste as plain text",
+        (MenuPastePlainText, Lang::Ko) => "서식 없이 붙여넣기",
+        (ToastPlainOn, Lang::En) => "PLAIN TEXT PASTE ON",
+        (ToastPlainOn, Lang::Ko) => "평문 붙여넣기 켜짐",
+        (ToastPlainOff, Lang::En) => "RICH FORMAT PASTE ON",
+        (ToastPlainOff, Lang::Ko) => "서식 보존 붙여넣기 켜짐",
+        (BtnPastePlain, Lang::En) => "Paste Plain",
+        (BtnPastePlain, Lang::Ko) => "텍스트로",
+        (BtnDelete, Lang::En) => "Delete",
+        (BtnDelete, Lang::Ko) => "삭제",
+        (TtView, Lang::En) => "List / Card view",
+        (TtView, Lang::Ko) => "목록 / 카드 보기",
+        (TtFilter, Lang::En) => "Filter by app",
+        (TtFilter, Lang::Ko) => "앱별 필터",
+        (TtPause, Lang::En) => "Pause capture",
+        (TtPause, Lang::Ko) => "수집 일시정지",
+        (TtClear, Lang::En) => "Clear all",
+        (TtClear, Lang::Ko) => "모두 지우기",
+        (TtLang, Lang::En) => "Language",
+        (TtLang, Lang::Ko) => "언어",
+        (TtClose, Lang::En) => "Close",
+        (TtClose, Lang::Ko) => "닫기",
     }
 }
 
@@ -385,6 +421,9 @@ mod tests {
             MenuAutoUpdate, ToastUpdateDownloading,
             ToastUpdateFailed, ToastAccessibility, BubbleKeys, BubbleClicks, BubbleClips,
             BubbleActive,
+            MenuPastePlainText, ToastPlainOn, ToastPlainOff,
+            BtnPastePlain, BtnDelete,
+            TtView, TtFilter, TtPause, TtClear, TtLang, TtClose,
         ];
         for msg in all {
             assert!(!t(Lang::En, msg).is_empty());

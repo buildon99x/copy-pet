@@ -4,7 +4,7 @@
 //! trays — the platform backends drive it by feeding input counts and copy
 //! events, calling [`Pet::advance`] each tick and presenting [`Pet::render`].
 
-use crate::clipboard::ClipStore;
+use crate::clipboard::{ClipStore, RichFormats};
 use crate::i18n::{self, t, Lang, Msg};
 use crate::menu::{MenuAction, MenuEntry, MenuItem, MenuOutcome};
 use crate::panel::{NavKey, Panel, PanelAction, PanelDrag};
@@ -24,10 +24,17 @@ pub const XP_PER_COPY: u64 = 5;
 /// A clip the user picked from the panel, handed to the backend to put on the
 /// OS clipboard. `paste` additionally asks the backend to paste it into the
 /// previously focused app (synthesized Ctrl/Cmd+V; see `paste_on_select`).
+/// `plain_only` requests plain-text-only restore (strip formatting); the
+/// backend writes CF_UNICODETEXT / UTTypeUTF8PlainText only, ignoring `formats`.
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct ClipPick {
     pub text: String,
     pub paste: bool,
+    /// Rich formats to restore alongside the text (None = plain clip).
+    /// Ignored when `plain_only` is true.
+    pub formats: Option<RichFormats>,
+    /// When true the backend must only write the plain-text portion.
+    pub plain_only: bool,
 }
 
 /// Flight time of one fish, in seconds.
@@ -411,13 +418,20 @@ impl Pet {
 
     /// A copy was observed system-wide. Stores the clip, feeds the cat a
     /// fish and grants XP. `badge` lets the backend attach a real app icon;
-    /// when None one is derived from the source app name.
-    pub fn on_copy(&mut self, text: String, source: Option<String>, badge: Option<Badge>) {
+    /// when None one is derived from the source app name. `formats` carries
+    /// optional rich-clipboard data (HTML/RTF) captured by the backend.
+    pub fn on_copy(
+        &mut self,
+        text: String,
+        source: Option<String>,
+        badge: Option<Badge>,
+        formats: Option<RichFormats>,
+    ) {
         if !self.st.clip_capture {
             return;
         }
         let badge = badge.unwrap_or_else(|| Badge::from_source(source.as_deref()));
-        if !self.clips.add_copy(text, source) {
+        if !self.clips.add_copy(text, source, formats) {
             return;
         }
         if self.fish_queue.len() >= FISH_QUEUE_MAX {
@@ -547,8 +561,8 @@ impl Pet {
     fn run_action(&mut self, action: PanelAction) -> Option<ClipPick> {
         match action {
             PanelAction::Copy(id) => {
-                let text = self.clips.get(id).map(|c| c.text.clone());
-                if let Some(text) = text {
+                let pick = self.clips.get(id).map(|c| (c.text.clone(), c.formats.clone()));
+                if let Some((text, formats)) = pick {
                     self.set_toast(t(self.lang(), Msg::ToastCopied).to_string(), 1.6);
                     self.happy = (self.happy + 0.4).min(1.0);
                     if self.st.sound_mode >= 1 {
@@ -562,8 +576,39 @@ impl Pet {
                     return Some(ClipPick {
                         text,
                         paste: self.st.paste_on_select,
+                        formats,
+                        plain_only: self.st.paste_plain_text,
                     });
                 }
+                return None;
+            }
+            PanelAction::PasteAsPlainText(id) => {
+                let text = self.clips.get(id).map(|c| c.text.clone());
+                if let Some(text) = text {
+                    self.panel.context_id = None;
+                    self.set_toast(t(self.lang(), Msg::ToastCopied).to_string(), 1.6);
+                    self.happy = (self.happy + 0.4).min(1.0);
+                    if self.st.sound_mode >= 1 {
+                        sound::play_pop();
+                    }
+                    if self.st.panel_autoclose {
+                        self.toggle_panel();
+                    }
+                    return Some(ClipPick {
+                        text,
+                        paste: self.st.paste_on_select,
+                        formats: None,
+                        plain_only: true, // always plain for this action
+                    });
+                }
+                return None;
+            }
+            PanelAction::OpenContextMenu(id) => {
+                self.panel.context_id = Some(id);
+                return None;
+            }
+            PanelAction::CloseContextMenu => {
+                self.panel.context_id = None;
                 return None;
             }
             PanelAction::TogglePin(id) => {
@@ -572,6 +617,7 @@ impl Pet {
                 self.panel.focus_id(&self.clips, id);
             }
             PanelAction::Delete(id) => {
+                self.panel.context_id = None;
                 if self.clips.delete(id) {
                     self.panel.refresh(&self.clips);
                     self.set_toast(t(self.lang(), Msg::ToastDeleted).to_string(), 2.2);
@@ -642,6 +688,24 @@ impl Pet {
             Msg::ToastPasteOn
         } else {
             Msg::ToastPasteOff
+        };
+        self.set_toast(t(self.lang(), msg).to_string(), 2.2);
+    }
+
+    /// Whether clips are pasted as plain text (formatting stripped).
+    pub fn paste_plain_text(&self) -> bool {
+        self.st.paste_plain_text
+    }
+
+    /// Flips "paste clips as plain text (strip formatting)" and confirms via
+    /// toast. Default off = preserve rich formats (HTML/RTF).
+    pub fn toggle_paste_plain_text(&mut self) {
+        self.st.paste_plain_text = !self.st.paste_plain_text;
+        self.dirty = true;
+        let msg = if self.st.paste_plain_text {
+            Msg::ToastPlainOn
+        } else {
+            Msg::ToastPlainOff
         };
         self.set_toast(t(self.lang(), msg).to_string(), 2.2);
     }
@@ -978,6 +1042,7 @@ impl Pet {
                 capture: self.st.clip_capture,
                 hint: &self.panel_hint,
                 caret: (t * 1.6).fract() < 0.65,
+                paste_plain_text: self.st.paste_plain_text,
             };
             render::draw_panel(pm, &view);
         }
@@ -1067,6 +1132,11 @@ impl Pet {
             t(lang, Msg::MenuPasteOnSelect),
             MenuAction::TogglePasteOnSelect,
             self.st.paste_on_select,
+        ));
+        m.push(MenuItem::leaf(
+            t(lang, Msg::MenuPastePlainText),
+            MenuAction::TogglePastePlainText,
+            self.st.paste_plain_text,
         ));
         // Panel hotkey: a one-click cycle through safe presets (no rebind UI);
         // the label shows the live chord and a click advances to the next.
@@ -1182,6 +1252,7 @@ impl Pet {
             }
             MenuAction::TogglePanelAutoClose => self.toggle_panel_autoclose(),
             MenuAction::TogglePasteOnSelect => self.toggle_paste_on_select(),
+            MenuAction::TogglePastePlainText => self.toggle_paste_plain_text(),
             MenuAction::ToggleStats => {
                 self.st.bubble_pinned = !self.st.bubble_pinned;
                 self.dirty = true;
@@ -1354,7 +1425,7 @@ mod tests {
     fn copy_event_stores_clip_grants_xp_and_queues_fish() {
         let mut p = pet();
         let xp0 = p.st.total_xp;
-        p.on_copy("hello".into(), Some("Code".into()), None);
+        p.on_copy("hello".into(), Some("Code".into()), None, None);
         assert_eq!(p.clips.len(), 1);
         assert_eq!(p.st.total_xp, xp0 + XP_PER_COPY);
         assert_eq!(p.st.copies_today, 1);
@@ -1366,7 +1437,7 @@ mod tests {
     fn capture_pause_ignores_copies() {
         let mut p = pet();
         p.st.clip_capture = false;
-        p.on_copy("secret".into(), None, None);
+        p.on_copy("secret".into(), None, None, None);
         assert!(p.clips.is_empty());
         assert!(p.fish_queue.is_empty());
         assert_eq!(p.st.total_xp, 0);
@@ -1445,7 +1516,7 @@ mod tests {
     fn paste_on_select_flag_flows_into_pick() {
         let mut p = pet();
         p.st.panel_autoclose = false; // keep the panel state simple
-        p.on_copy("hello".into(), None, None);
+        p.on_copy("hello".into(), None, None, None);
         let id = p.clips.visible("")[0].id;
         p.toggle_panel();
         // default: copy only, no auto-paste
@@ -1457,6 +1528,42 @@ mod tests {
         assert!(p.paste_on_select());
         let pick = p.run_action(PanelAction::Copy(id)).expect("a pick");
         assert!(pick.paste, "now the pick also asks the backend to paste");
+    }
+
+    #[test]
+    fn paste_plain_text_flag_flows_into_pick() {
+        let mut p = pet();
+        p.st.panel_autoclose = false;
+        p.on_copy("hello".into(), None, None, None);
+        let id = p.clips.visible("")[0].id;
+        p.toggle_panel();
+        // default: rich formats preserved
+        let pick = p.run_action(PanelAction::Copy(id)).expect("a pick");
+        assert!(!pick.plain_only, "plain-text mode is off by default");
+        // turning it on forces plain_only = true
+        p.toggle_paste_plain_text();
+        assert!(p.paste_plain_text());
+        let pick = p.run_action(PanelAction::Copy(id)).expect("a pick");
+        assert!(pick.plain_only, "pick carries plain_only when toggle is on");
+        // PasteAsPlainText always forces plain regardless of the toggle
+        p.st.paste_plain_text = false;
+        let pick = p.run_action(PanelAction::PasteAsPlainText(id)).expect("plain pick");
+        assert!(pick.plain_only, "PasteAsPlainText always plain");
+    }
+
+    #[test]
+    fn menu_toggle_paste_plain_text() {
+        let mut p = pet();
+        let menu = p.build_menu("HK", false);
+        assert!(!find(&menu, MenuAction::TogglePastePlainText).unwrap().checked);
+        assert_eq!(
+            p.apply_menu_action(MenuAction::TogglePastePlainText),
+            MenuOutcome::Handled
+        );
+        assert!(p.paste_plain_text());
+        assert!(p.toast.is_some(), "the toggle is confirmed via toast");
+        let menu = p.build_menu("HK", false);
+        assert!(find(&menu, MenuAction::TogglePastePlainText).unwrap().checked);
     }
 
     #[test]
@@ -1563,7 +1670,7 @@ mod tests {
     fn fish_queue_is_capped() {
         let mut p = pet();
         for i in 0..10 {
-            p.on_copy(format!("clip {i}"), None, None);
+            p.on_copy(format!("clip {i}"), None, None, None);
         }
         assert!(p.fish_queue.len() <= FISH_QUEUE_MAX);
     }
@@ -1571,7 +1678,7 @@ mod tests {
     #[test]
     fn fish_flies_and_gets_eaten() {
         let mut p = pet();
-        p.on_copy("fish food".into(), None, None);
+        p.on_copy("fish food".into(), None, None, None);
         // simulate ~1.5s of ticks
         for _ in 0..50 {
             p.last_tick -= std::time::Duration::from_millis(33);
@@ -1585,7 +1692,7 @@ mod tests {
     #[test]
     fn panel_copy_returns_text_and_closes_panel() {
         let mut p = pet();
-        p.on_copy("copy me back".into(), None, None);
+        p.on_copy("copy me back".into(), None, None, None);
         p.toggle_panel();
         assert!(p.panel_open());
         let got = p.panel_nav(NavKey::Enter);
@@ -1596,8 +1703,8 @@ mod tests {
     #[test]
     fn panel_delete_is_undoable_and_keeps_selection_sane() {
         let mut p = pet();
-        p.on_copy("one".into(), None, None);
-        p.on_copy("two".into(), None, None);
+        p.on_copy("one".into(), None, None, None);
+        p.on_copy("two".into(), None, None, None);
         p.toggle_panel();
         assert_eq!(p.panel_nav(NavKey::Delete), None); // deletes "two"
         assert_eq!(p.clips.len(), 1);
@@ -1610,8 +1717,8 @@ mod tests {
     #[test]
     fn panel_pin_key_keeps_selection_on_the_clip() {
         let mut p = pet();
-        p.on_copy("old".into(), None, None);
-        p.on_copy("new".into(), None, None);
+        p.on_copy("old".into(), None, None, None);
+        p.on_copy("new".into(), None, None, None);
         p.toggle_panel();
         p.panel_nav(NavKey::Down); // select "old"
         assert_eq!(p.panel_nav(NavKey::Pin), None);
@@ -1785,8 +1892,8 @@ mod tests {
     #[test]
     fn render_panel_open_smoke() {
         let mut p = pet();
-        p.on_copy("첫 번째 클립".into(), Some("브라우저".into()), None);
-        p.on_copy("second clip".into(), Some("Code".into()), None);
+        p.on_copy("첫 번째 클립".into(), Some("브라우저".into()), None, None);
+        p.on_copy("second clip".into(), Some("Code".into()), None, None);
         p.toggle_panel();
         let (w, h) = p.canvas_size();
         let mut pm = Pixmap::new(w as u32, h as u32).unwrap();

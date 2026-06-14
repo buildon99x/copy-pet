@@ -19,3 +19,4 @@ rather than rewrite.
 | [0010](0010-movable-resizable-panel.md) | Movable, resizable clipboard panel on a dynamic union canvas | Accepted |
 | [0011](0011-remove-pixel-font.md) | Remove the built-in pixel font and vector Hangul; system fonts everywhere | Accepted |
 | [0012](0012-auto-paste.md) | Opt-in auto-paste on clip select via synthesized Ctrl/Cmd+V (no new dependency) | Accepted |
+| [0013](0013-rich-clipboard-formats.md) | Rich clipboard format preservation (HTML + RTF): default paste with plain-text escape | Accepted |
