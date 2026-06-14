@@ -10,7 +10,8 @@ use crate::panel::Panel;
 use crate::sysfont;
 use tiny_skia::{
     Color, FillRule, FilterQuality, GradientStop, LineCap, LineJoin, LinearGradient, Paint, Path,
-    PathBuilder, Pixmap, PixmapPaint, Point, Rect, Shader, SpreadMode, Stroke, Transform,
+    PathBuilder, Pixmap, PixmapPaint, Point, RadialGradient, Rect, Shader, SpreadMode, Stroke,
+    Transform,
 };
 
 pub const CANVAS_W: f32 = 240.0;
@@ -22,6 +23,7 @@ const OUTLINE: (u8, u8, u8, u8) = (84, 72, 58, 255); // desk/panel soft strokes 
 const FUR: (u8, u8, u8, u8) = (255, 244, 234, 255); // furBase
 const FUR_TOP: (u8, u8, u8, u8) = (255, 250, 245, 255); // soft top of the fur gradient
 const FUR_SH: (u8, u8, u8, u8) = (226, 200, 182, 255); // furShadow (a touch deeper for form)
+const FUR_SH2: (u8, u8, u8, u8) = (214, 184, 162, 255); // deeper rim shadow for round volume
 const EAR_PINK: (u8, u8, u8, u8) = (247, 196, 200, 255);
 const BLUSH: (u8, u8, u8, u8) = (255, 168, 178, 255);
 const EYE: (u8, u8, u8, u8) = (23, 23, 23, 255); // eye
@@ -263,6 +265,33 @@ fn vgrad(
     .unwrap_or_else(|| Shader::SolidColor(col(mid)))
 }
 
+/// A soft round (matte) shade: light toward an upper-center focus, falling to a
+/// deeper rim shadow — gives the flat forms real volume without any specular
+/// highlight. `r` is the circle radius (use the form's larger half-axis).
+fn rgrad(
+    cx: f32,
+    cy: f32,
+    focal_dy: f32,
+    r: f32,
+    inner: (u8, u8, u8, u8),
+    mid: (u8, u8, u8, u8),
+    outer: (u8, u8, u8, u8),
+) -> Shader<'static> {
+    RadialGradient::new(
+        Point::from_xy(cx, cy + focal_dy),
+        Point::from_xy(cx, cy),
+        r,
+        vec![
+            GradientStop::new(0.0, col(inner)),
+            GradientStop::new(0.62, col(mid)),
+            GradientStop::new(1.0, col(outer)),
+        ],
+        SpreadMode::Pad,
+        Transform::identity(),
+    )
+    .unwrap_or_else(|| Shader::SolidColor(col(mid)))
+}
+
 fn oval(cx: f32, cy: f32, rx: f32, ry: f32) -> Option<Path> {
     let mut pb = PathBuilder::new();
     pb.push_oval(Rect::from_xywh(cx - rx, cy - ry, rx * 2.0, ry * 2.0)?);
@@ -423,9 +452,9 @@ fn draw_scene(pm: &mut Pixmap, sc: &Scene, scale: f32) {
         cv.stroke_t(&p, FUR, 9.0, body_t);
     }
 
-    // body — matte vertical gradient, no outline
+    // body — soft round matte shade (light upper-center → deeper rim), no outline
     let body = oval(120.0, 182.0, 64.0, 44.0);
-    cv.fill_grad_t(&body, vgrad(120.0, 138.0, 226.0, FUR_TOP, FUR, FUR_SH), body_t);
+    cv.fill_grad_t(&body, rgrad(120.0, 182.0, -16.0, 64.0, FUR_TOP, FUR, FUR_SH2), body_t);
 
     // ears (under head) — soft fur fill + pink inner, no outline
     {
@@ -458,9 +487,9 @@ fn draw_scene(pm: &mut Pixmap, sc: &Scene, scale: f32) {
         cv.fill_t(&ri.finish(), EAR_PINK, head_t);
     }
 
-    // head — matte vertical gradient, no outline
+    // head — soft round matte shade, no outline
     let head = oval(120.0, 128.0, 66.0, 52.0);
-    cv.fill_grad_t(&head, vgrad(120.0, 76.0, 184.0, FUR_TOP, FUR, FUR_SH), head_t);
+    cv.fill_grad_t(&head, rgrad(120.0, 128.0, -18.0, 66.0, FUR_TOP, FUR, FUR_SH2), head_t);
 
     // face
     draw_face(&mut cv, sc, head_t);
@@ -468,28 +497,36 @@ fn draw_scene(pm: &mut Pixmap, sc: &Scene, scale: f32) {
     // accessory (on head, over ears)
     draw_accessory(&mut cv, sc.accessory, head_t);
 
-    // desk — soft warm wood, no hard outline
-    cv.fill(&round_rect(16.0, 222.0, 208.0, 20.0, 6.0), DESK_FRONT);
+    // desk — soft warm wood with a gentle front bevel, no hard outline
+    let desk_rgb = (DESK_FRONT.0, DESK_FRONT.1, DESK_FRONT.2);
+    cv.fill_grad_t(
+        &round_rect(16.0, 222.0, 208.0, 20.0, 6.0),
+        vgrad(120.0, 222.0, 244.0, DESK_FRONT, DESK_FRONT, darken(desk_rgb, 0.20)),
+        Transform::identity(),
+    );
     let top = round_rect(12.0, 212.0, 216.0, 14.0, 7.0);
     cv.fill(&top, DESK_TOP);
     cv.fill(&round_rect(14.0, 212.5, 212.0, 3.0, 2.0), DESK_TOP_HI); // soft front-edge sheen
-    cv.stroke(&top, darken((DESK_TOP.0, DESK_TOP.1, DESK_TOP.2), 0.16), 1.4);
+    cv.fill(&round_rect(14.0, 224.0, 212.0, 1.6, 0.8), darken((DESK_TOP.0, DESK_TOP.1, DESK_TOP.2), 0.22)); // seam
 
-    // keyboard — soft slate, rounded, no hard outline
+    // keyboard — soft slate with a slight bevel and key highlights
     {
-        let base = round_rect(74.0, 200.0, 92.0, 18.0, 5.0);
-        cv.fill(&base, KEY_BASE);
-        cv.stroke(&base, darken((KEY_BASE.0, KEY_BASE.1, KEY_BASE.2), 0.22), 1.4);
+        let key_rgb = (KEY_BASE.0, KEY_BASE.1, KEY_BASE.2);
+        let cap_rgb = (KEY_CAP.0, KEY_CAP.1, KEY_CAP.2);
+        cv.fill_grad_t(
+            &round_rect(74.0, 200.0, 92.0, 18.0, 5.0),
+            vgrad(120.0, 200.0, 218.0, lighten(key_rgb, 0.14), KEY_BASE, darken(key_rgb, 0.14)),
+            Transform::identity(),
+        );
         for row in 0..2 {
             let y = 203.5 + row as f32 * 7.0;
             let n = 7 - row; // 7 keys then 6
             let total = n as f32 * 12.0;
             let x0 = 120.0 - total / 2.0 + 1.0;
             for i in 0..n {
-                cv.fill(
-                    &round_rect(x0 + i as f32 * 12.0, y, 10.0, 5.0, 1.5),
-                    KEY_CAP,
-                );
+                let kx = x0 + i as f32 * 12.0;
+                cv.fill(&round_rect(kx, y, 10.0, 5.0, 1.5), KEY_CAP);
+                cv.fill(&round_rect(kx + 0.6, y + 0.4, 8.8, 1.4, 0.7), lighten(cap_rgb, 0.28)); // top sheen
             }
         }
     }
