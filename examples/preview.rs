@@ -168,9 +168,30 @@ fn main() {
                 hint: "WIN+SHIFT+V",
                 caret: true,
             };
-            render::draw_panel(&mut pm, &view, 1.0);
+            render::draw_panel(&mut pm, &view);
             save(&pm, &dir, name);
         }
+
+        // the roomy "thumbnail" card view (two wrapped lines per clip)
+        let mut panel = Panel::default();
+        panel.toggle();
+        panel.view = 1;
+        panel.sel = 1;
+        let lt = panel.layout();
+        let mut sc = base_scene(Lang::Ko);
+        sc.origin = lt.cat;
+        let mut pm = Pixmap::new(lt.canvas_w as u32, lt.canvas_h as u32).unwrap();
+        render::render_card(&mut pm, &sc, 1.0);
+        let view = PanelView {
+            panel: &panel,
+            store: &store,
+            lang: Lang::Ko,
+            capture: true,
+            hint: "WIN+SHIFT+V",
+            caret: true,
+        };
+        render::draw_panel(&mut pm, &view);
+        save(&pm, &dir, "4-panel-thumbnail");
     }
 
     // 5. the app icon (64 px)

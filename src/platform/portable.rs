@@ -16,7 +16,7 @@
 //! Settings have no system tray here; when the window is focused
 //! these keys apply: S size · A accessory · M sound · B stats bubble ·
 //! L lock · G language · C clipboard panel · O auto-close after copy ·
-//! U update download page · Q/Esc quit. While the panel is open the
+//! V list/thumbnail view · U update download page · Q/Esc quit. While the panel is open the
 //! keyboard drives it instead (type to search, arrows/Home/End + Enter,
 //! Ctrl+0..9 quick-copies the badged top rows, Del deletes, Ctrl+Z undoes,
 //! Ctrl+P pins — Cmd works too on macOS — Tab cycles the source-app
@@ -42,7 +42,7 @@
 
 use crate::hotkey::Hotkey;
 use crate::input;
-use crate::panel::NavKey;
+use crate::panel::{fit_delta, NavKey, Rect};
 use crate::pet::{ClipPick, Pet};
 use crate::state::{Persist, ACCESSORIES};
 #[cfg(not(target_os = "macos"))]
@@ -119,6 +119,10 @@ struct PortableApp {
     /// are tracked in *screen* coordinates because the window itself moves
     /// and resizes under the pointer while the card is dragged.
     panel_dragging: bool,
+    /// A cat-body drag while the panel is open: the cat slides and the card
+    /// stays pixel-fixed. Tracked in screen coordinates (`drag_screen`), like
+    /// the card drag, since the window moves under the pointer.
+    cat_drag: bool,
     drag_screen: (f64, f64),
     press_pos: PhysicalPosition<f64>,
     last_click: Option<Instant>,
@@ -168,6 +172,7 @@ impl PortableApp {
             mouse_down: false,
             dragging: false,
             panel_dragging: false,
+            cat_drag: false,
             drag_screen: (0.0, 0.0),
             press_pos: PhysicalPosition::new(0.0, 0.0),
             last_click: None,
@@ -183,6 +188,7 @@ impl PortableApp {
         let Some(window) = self.window.clone() else {
             return;
         };
+        let fit = self.pet.take_fit_panel();
         let (nw, nh) = self.pet.canvas_size();
         let (nw, nh) = (nw as u32, nh as u32);
 
@@ -202,6 +208,46 @@ impl PortableApp {
             self.resize_surface();
         }
         self.paint();
+
+        // The panel just opened: if the card landed off the monitor (the pet
+        // sits near an edge, or a persisted offset put it offscreen), slide
+        // the card — not the cat — back into view and re-apply once. `fit` is
+        // already drained, so the recursive call can't loop.
+        if fit && self.pet.panel_open() {
+            if let Some((sdx, sdy)) = self.panel_fit_shift(&window) {
+                self.pet.shift_panel(sdx, sdy);
+                self.apply_size();
+            }
+        }
+    }
+
+    /// Canvas-unit shift that brings the open panel card fully onto the
+    /// monitor it sits on, or None when it already fits. winit exposes the
+    /// full monitor rect (not the taskbar-excluded work area), so the panel
+    /// can still sit under a taskbar — acceptable; the win is keeping it on
+    /// the screen at all.
+    fn panel_fit_shift(&self, window: &Window) -> Option<(f32, f32)> {
+        let win = window.outer_position().ok()?;
+        // layout() is already in physical pixels (card at scale 1.0), so the
+        // card's screen rect is just the window origin plus the card offset.
+        let l = self.pet.panel.layout();
+        let card = Rect {
+            x: win.x as f32 + l.card_x,
+            y: win.y as f32 + l.card_y,
+            w: l.card_w,
+            h: l.card_h,
+        };
+        let mon = window.current_monitor()?;
+        let mp = mon.position();
+        let ms = mon.size();
+        let vis = Rect {
+            x: mp.x as f32,
+            y: mp.y as f32,
+            w: ms.width as f32,
+            h: ms.height as f32,
+        };
+        let (dx, dy) = fit_delta(card, vis);
+        (dx.abs() >= 0.5 || dy.abs() >= 0.5).then_some((dx, dy))
     }
 
     /// Cursor position in screen coordinates (window position + local
@@ -262,9 +308,11 @@ impl PortableApp {
         let _ = buf.present();
     }
 
-    fn canvas_xy(&self) -> (f32, f32) {
-        let s = self.pet.scale();
-        (self.cursor.x as f32 / s, self.cursor.y as f32 / s)
+    /// Cursor in window-client physical pixels. The panel is hit-tested at
+    /// scale 1.0 (its coords are physical) and `Pet::cat_point` divides by the
+    /// cat scale itself, so neither needs pre-division here.
+    fn client_xy(&self) -> (f32, f32) {
+        (self.cursor.x as f32, self.cursor.y as f32)
     }
 
     fn save_position(&mut self) {
@@ -275,6 +323,38 @@ impl PortableApp {
             }
         }
         self.pet.save();
+    }
+
+    /// Applies the persisted window level: 0 = always on top, 1 = normal (can
+    /// go behind other windows), 2 = hidden (restored from the tray on macOS
+    /// or the global panel hotkey). Surfaced via the menu on macOS only.
+    fn apply_window_level(&self) {
+        let Some(window) = &self.window else {
+            return;
+        };
+        match self.pet.window_level() {
+            2 => window.set_visible(false),
+            level => {
+                window.set_visible(true);
+                window.set_window_level(if level == 0 {
+                    WindowLevel::AlwaysOnTop
+                } else {
+                    WindowLevel::Normal
+                });
+            }
+        }
+    }
+
+    /// Brings the (possibly obscured or hidden) window to the front and gives
+    /// it focus — the panel hotkey's "reveal". Un-hides first; `focus_window`
+    /// raises it above other windows (Normal mode) and activates it on macOS.
+    fn reveal(&mut self) {
+        if self.pet.show_window() {
+            self.apply_window_level(); // was hidden -> show
+        }
+        if let Some(window) = &self.window {
+            window.focus_window();
+        }
     }
 
     /// Puts text on the OS clipboard (a clip picked from the panel).
@@ -365,6 +445,8 @@ impl PortableApp {
                 super::mac_autostart::set(!autostart);
             }
             MenuOutcome::ReregisterHotkey(spec) => self.apply_new_hotkey(&spec),
+            MenuOutcome::ApplyWindowLevel => self.apply_window_level(),
+            MenuOutcome::OpenGithub => crate::update::open_github(),
             MenuOutcome::InstallUpdate => crate::update::open_releases_page(),
         }
     }
@@ -409,6 +491,7 @@ impl PortableApp {
             KeyCode::KeyC => self.pet.toggle_panel(),
             KeyCode::KeyK => self.cycle_hotkey(),
             KeyCode::KeyO => self.pet.toggle_panel_autoclose(),
+            KeyCode::KeyV => self.pet.toggle_panel_view(),
             KeyCode::KeyU => {
                 // only meaningful once the update toast announced a version
                 if self.pet.update_available().is_some() {
@@ -520,6 +603,7 @@ impl ApplicationHandler for PortableApp {
         self.resize_surface();
         self.last_frame = Instant::now();
         self.paint();
+        self.apply_window_level(); // enforce a persisted level/hide
     }
 
     fn window_event(&mut self, event_loop: &ActiveEventLoop, _id: WindowId, event: WindowEvent) {
@@ -537,16 +621,24 @@ impl ApplicationHandler for PortableApp {
             }
             WindowEvent::CursorMoved { position, .. } => {
                 self.cursor = position;
-                let (cx, cy) = self.canvas_xy();
+                let (cx, cy) = self.client_xy();
                 self.pet.set_cursor(cx, cy);
                 if self.panel_dragging {
-                    // card drag: screen-pixel deltas as canvas units; the
+                    // card drag: screen-pixel deltas are panel units (1.0); the
                     // tick applies the new layout (resize + window shift)
                     let sc = self.screen_cursor();
-                    let s = self.pet.scale();
                     let (dx, dy) = (sc.0 - self.drag_screen.0, sc.1 - self.drag_screen.1);
                     if dx != 0.0 || dy != 0.0 {
-                        self.pet.panel_drag_update(dx as f32 / s, dy as f32 / s);
+                        self.pet.panel_drag_update(dx as f32, dy as f32);
+                        self.drag_screen = sc;
+                    }
+                } else if self.cat_drag {
+                    // cat-body drag with the panel open: slide the cat, keep
+                    // the card pixel-fixed (the mirror of a card drag)
+                    let sc = self.screen_cursor();
+                    let (dx, dy) = (sc.0 - self.drag_screen.0, sc.1 - self.drag_screen.1);
+                    if dx != 0.0 || dy != 0.0 {
+                        self.pet.drag_pet(dx as f32, dy as f32);
                         self.drag_screen = sc;
                     }
                 } else if self.mouse_down && !self.dragging && !self.pet.st.locked {
@@ -555,7 +647,13 @@ impl ApplicationHandler for PortableApp {
                     if dx * dx + dy * dy > 9.0 {
                         self.dragging = true;
                         self.mouse_down = false;
-                        if let Some(window) = &self.window {
+                        if self.pet.panel_open() {
+                            // keep the card fixed; move the cat incrementally
+                            // (drag_window() is a one-shot whole-window move,
+                            // which would drag the card along — not wanted here)
+                            self.cat_drag = true;
+                            self.drag_screen = self.screen_cursor();
+                        } else if let Some(window) = &self.window {
                             let _ = window.drag_window();
                         }
                     }
@@ -564,7 +662,7 @@ impl ApplicationHandler for PortableApp {
             WindowEvent::MouseInput { state, button, .. } => match button {
                 MouseButton::Left => match state {
                     ElementState::Pressed => {
-                        let (cx, cy) = self.canvas_xy();
+                        let (cx, cy) = self.client_xy();
                         // header strip / resize grip start a card drag (the
                         // grip pokes slightly past the card edge)
                         if self.pet.panel_drag_start(cx, cy) {
@@ -603,8 +701,10 @@ impl ApplicationHandler for PortableApp {
                         if self.panel_dragging {
                             self.panel_dragging = false;
                             self.pet.panel_drag_end();
+                        } else if self.cat_drag {
+                            self.cat_drag = false;
                         } else if self.mouse_down && !self.dragging {
-                            let (cx, cy) = self.canvas_xy();
+                            let (cx, cy) = self.client_xy();
                             let (lx, ly) = self.pet.cat_point(cx, cy);
                             self.pet.click_bounce(lx, ly);
                         }
@@ -630,7 +730,7 @@ impl ApplicationHandler for PortableApp {
                     MouseScrollDelta::LineDelta(_, y) => y,
                     MouseScrollDelta::PixelDelta(p) => p.y as f32,
                 };
-                let (cx, cy) = self.canvas_xy();
+                let (cx, cy) = self.client_xy();
                 if self.pet.panel_hit(cx, cy) {
                     if dy != 0.0 {
                         self.pet.panel_wheel(if dy < 0.0 { 1 } else { -1 });
@@ -667,7 +767,10 @@ impl ApplicationHandler for PortableApp {
             self.last_frame = now;
             // the global panel hotkey fired on the input thread
             if self.panel_toggle.swap(false, Ordering::Relaxed) {
-                self.pet.toggle_panel();
+                // the hotkey always *shows* the panel (never toggles closed)
+                // and reveals the window so an obscured or hidden panel reappears
+                self.pet.open_panel();
+                self.reveal();
             }
             // the macOS event tap couldn't start (Accessibility not granted)
             if self.perm_needed.swap(false, Ordering::Relaxed) {

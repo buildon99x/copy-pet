@@ -26,6 +26,8 @@ pub enum MenuAction {
     SetSize(usize),
     SetAccessory(usize),
     SetSound(u8),
+    /// Window stacking: 0 = always on top, 1 = normal, 2 = hidden.
+    SetWindowLevel(u8),
     ToggleLock,
     SetLang(Lang),
     ToggleAutostart,
@@ -36,6 +38,8 @@ pub enum MenuAction {
     InstallUpdate,
     ResetStats,
     About,
+    /// Open the project's GitHub page in the browser.
+    OpenGithub,
     Quit,
 }
 
@@ -94,11 +98,16 @@ pub enum MenuOutcome {
     ShowAbout,
     /// Flip the platform autostart registration.
     ToggleAutostart,
+    /// Apply the just-set window stacking level (`st.window_level`): topmost,
+    /// normal or hidden. OS work, so the backend does it.
+    ApplyWindowLevel,
     /// Open the releases page / start the update.
     InstallUpdate,
     /// Re-register the OS panel hotkey from this (new) spec; the core already
     /// updated the persisted spec via [`Pet::cycle_hotkey`](crate::pet::Pet::cycle_hotkey).
     ReregisterHotkey(String),
+    /// Open the project's GitHub page in the browser.
+    OpenGithub,
     /// Save and exit.
     Quit,
 }

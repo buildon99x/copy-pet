@@ -21,6 +21,10 @@ pub struct Persist {
     pub sound_mode: u8,    // 0 off, 1 events only, 2 taps + events
     pub bubble_pinned: bool,
     pub locked: bool,
+    /// Window stacking: 0 = always on top (default), 1 = normal (can go behind
+    /// other windows), 2 = hidden (restored from the tray or the panel hotkey).
+    /// Surfaced on Windows (tray) and macOS (tray); Linux keeps always-on-top.
+    pub window_level: u8,
     /// "en" / "ko"; empty means "not chosen yet" -> detected from the OS.
     pub lang: String,
     /// When false, copy events are ignored (privacy pause).
@@ -46,6 +50,9 @@ pub struct Persist {
     /// When true, picking a clip also pastes it into the previously focused app
     /// (synthesized Ctrl/Cmd+V). Off by default — some users want copy-only.
     pub paste_on_select: bool,
+    /// Panel list style: 0 = compact list (default), 1 = roomier rounded-box
+    /// "thumbnail" cards that show more of each clip.
+    pub panel_view: u8,
     // lifetime
     pub total_keys: u64,
     pub total_clicks: u64,
@@ -70,6 +77,7 @@ impl Default for Persist {
             sound_mode: 1,
             bubble_pinned: false,
             locked: false,
+            window_level: 0,
             lang: String::new(),
             clip_capture: true,
             hotkey: crate::hotkey::DEFAULT.to_string(),
@@ -81,6 +89,7 @@ impl Default for Persist {
             panel_autoclose: true,
             onboarded: false,
             paste_on_select: false,
+            panel_view: 0,
             total_keys: 0,
             total_clicks: 0,
             total_copies: 0,
@@ -128,8 +137,9 @@ pub(crate) fn write_atomic(path: &std::path::Path, contents: &str) {
         let _ = std::fs::create_dir_all(dir);
     }
     let tmp = path.with_extension("json.tmp");
-    if std::fs::write(&tmp, contents).is_ok() {
-        let _ = std::fs::rename(&tmp, path);
+    if std::fs::write(&tmp, contents).is_ok() && std::fs::rename(&tmp, path).is_err() {
+        // rename failed: don't leave the temp file orphaned in the config dir
+        let _ = std::fs::remove_file(&tmp);
     }
 }
 

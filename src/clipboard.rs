@@ -53,6 +53,34 @@ impl Clip {
         }
         out
     }
+
+    /// One-line view of the **whole** clip for the panel list: every line is
+    /// joined and all whitespace runs (newlines included) collapse to single
+    /// spaces, so a multi-line clip shows content past its first line — you
+    /// see more of what a clip actually holds. Capped generously; the row
+    /// truncates it to the available width.
+    pub fn flattened(&self) -> String {
+        let mut out = String::new();
+        let mut last_space = false;
+        let mut n = 0usize;
+        for c in self.text.trim().chars() {
+            if n >= 200 {
+                break;
+            }
+            if c.is_whitespace() {
+                if !last_space {
+                    out.push(' ');
+                    n += 1;
+                }
+                last_space = true;
+            } else {
+                out.push(c);
+                n += 1;
+                last_space = false;
+            }
+        }
+        out
+    }
 }
 
 pub fn now_ts() -> u64 {
@@ -670,6 +698,9 @@ mod tests {
             ts: 0,
         };
         assert_eq!(c.preview(), "fn main() {");
+        // flattened folds *every* line in (newlines -> single spaces), so the
+        // row shows more than just the first line
+        assert_eq!(c.flattened(), "fn main() { body }");
     }
 
     #[test]
