@@ -196,6 +196,14 @@ pub enum PanelDrag {
 
 pub struct Panel {
     pub open: bool,
+    /// The panel is rendered in its own flyout window (hotkey path), so its
+    /// geometry comes from the card-only [`layout_standalone`] canvas rather
+    /// than the cat-union [`layout`]. Set by `Pet::open_flyout`, cleared by
+    /// `Pet::close_flyout`; the embedded middle-click panel leaves it false.
+    ///
+    /// [`layout`]: Panel::layout
+    /// [`layout_standalone`]: Panel::layout_standalone
+    pub standalone: bool,
     pub query: String,
     /// Active source-app filter; None shows clips from every app.
     pub source: Option<String>,
@@ -233,6 +241,7 @@ impl Default for Panel {
     fn default() -> Panel {
         Panel {
             open: false,
+            standalone: false,
             query: String::new(),
             source: None,
             scroll: 0,
@@ -298,10 +307,60 @@ impl Panel {
         let cat = (-left, -top);
         let card_x = cat.0 + off_x;
         let card_y = cat.1 + off_y;
+        self.card_fields(right - left, bottom - top, cat, card_x, card_y)
+    }
+
+    /// Card-only layout for the flyout window (hotkey path): the card sits at
+    /// `(MARGIN, MARGIN)` in its own canvas, sized to the card plus a margin
+    /// on every side. The resize grip pokes ~2px past the card's bottom-right
+    /// (`drag_hit`), which the 4px margin covers. The cat block is not part of
+    /// this canvas; `cat` is set to the card origin and is unused here.
+    pub fn layout_standalone(&self) -> Layout {
+        let (w, h) = (self.w, self.h);
+        let (card_x, card_y) = (MARGIN, MARGIN);
+        self.card_fields(
+            w + 2.0 * MARGIN,
+            h + 2.0 * MARGIN,
+            (card_x, card_y),
+            card_x,
+            card_y,
+        )
+    }
+
+    /// The layout the panel is currently using: the card-only flyout canvas
+    /// when it owns a separate window ([`standalone`]), else the cat-union
+    /// canvas. Hit-testing, drawing and row math all go through this so the
+    /// flyout's own client coords route exactly like the embedded panel.
+    ///
+    /// [`standalone`]: Panel::standalone
+    pub fn active_layout(&self) -> Layout {
+        if self.standalone {
+            self.layout_standalone()
+        } else {
+            self.layout()
+        }
+    }
+
+    /// The card-relative field block shared by [`layout`] (cat-union canvas)
+    /// and [`layout_standalone`] (card-only flyout canvas): each computes the
+    /// canvas size, cat origin and card origin its own way, then fills the
+    /// rest here so the two geometries can never drift.
+    ///
+    /// [`layout`]: Panel::layout
+    /// [`layout_standalone`]: Panel::layout_standalone
+    fn card_fields(
+        &self,
+        canvas_w: f32,
+        canvas_h: f32,
+        cat: (f32, f32),
+        card_x: f32,
+        card_y: f32,
+    ) -> Layout {
+        let (w, h) = (self.w, self.h);
         let btn_close_x = card_x + w - 26.0;
         Layout {
-            canvas_w: right - left,
-            canvas_h: bottom - top,
+            canvas_w,
+            canvas_h,
             cat,
             card_x,
             card_y,
@@ -329,7 +388,7 @@ impl Panel {
 
     /// Clip rows that fit on screen with the current card height.
     pub fn visible_rows(&self) -> usize {
-        self.layout().rows
+        self.active_layout().rows
     }
 
     pub fn toggle(&mut self) {
@@ -349,7 +408,7 @@ impl Panel {
         if !self.open {
             return None;
         }
-        let l = self.layout();
+        let l = self.active_layout();
         let (x1, y1) = (l.card_x + l.card_w, l.card_y + l.card_h);
         if x >= x1 - GRIP && x <= x1 + 2.0 && y >= y1 - GRIP && y <= y1 + 2.0 {
             return Some(PanelDrag::Resize);
@@ -435,7 +494,7 @@ impl Panel {
         if !self.open {
             return false;
         }
-        let l = self.layout();
+        let l = self.active_layout();
         (l.card_x..=l.card_x + l.card_w).contains(&x)
             && (l.card_y..=l.card_y + l.card_h).contains(&y)
     }
@@ -457,7 +516,7 @@ impl Panel {
 
     /// Row index (into the filtered list) under the y coordinate, if any.
     pub fn row_at(&self, y: f32, total: usize) -> Option<usize> {
-        let l = self.layout();
+        let l = self.active_layout();
         if y < l.rows_y || y >= l.rows_y + l.row_h * l.rows as f32 {
             return None;
         }
@@ -481,7 +540,7 @@ impl Panel {
         if !self.hit(x, y) {
             return None;
         }
-        let l = self.layout();
+        let l = self.active_layout();
         // header buttons
         let on_btn = |bx: f32| {
             x >= bx - 2.0
@@ -1029,5 +1088,50 @@ mod tests {
         p.input_char('7');
         assert_eq!(p.scroll, 0);
         assert_eq!(s.visible(&p.query).len(), 2); // "clip number 7", "...17"
+    }
+
+    #[test]
+    fn standalone_layout_is_card_only_at_margin() {
+        let p = open_panel();
+        let l = p.layout_standalone();
+        // card sits at MARGIN; canvas is just the card plus a margin all round
+        assert_eq!((l.card_x, l.card_y), (MARGIN, MARGIN));
+        assert_eq!((l.card_w, l.card_h), (DEFAULT_W, DEFAULT_H));
+        assert_eq!((l.canvas_w, l.canvas_h), (DEFAULT_W + 8.0, DEFAULT_H + 8.0));
+        // the resize grip pokes ~2px past the card's bottom-right; the margin
+        // must cover it so it stays inside the flyout canvas
+        let (gx, gy) = (l.card_x + l.card_w, l.card_y + l.card_h);
+        assert!(gx + 2.0 <= l.canvas_w && gy + 2.0 <= l.canvas_h);
+        // rows count only depends on the card height, so it matches the union
+        assert_eq!(l.rows, p.layout().rows);
+    }
+
+    #[test]
+    fn active_layout_follows_standalone_flag() {
+        let mut p = open_panel();
+        assert_eq!(p.active_layout(), p.layout());
+        p.standalone = true;
+        assert_eq!(p.active_layout(), p.layout_standalone());
+    }
+
+    #[test]
+    fn standalone_hit_test_and_click_route_like_the_union() {
+        // a click at the same *card-relative* point must hit the same row in
+        // either layout, since both feed the same card_fields math
+        let s = store(3);
+        let ids: Vec<u64> = s.visible("").iter().map(|c| c.id).collect();
+
+        let mut flo = open_panel();
+        flo.standalone = true;
+        let l = flo.active_layout();
+        assert!(flo.hit(l.card_x + 5.0, l.card_y + 5.0));
+        assert!(!flo.hit(0.0, 0.0)); // the margin around the card is not the card
+        let y0 = l.rows_y + ROW_H / 2.0;
+        assert_eq!(flo.click(l.row_x + l.row_w / 2.0, y0, &s), Some(PanelAction::Copy(ids[0])));
+        // the grip is still reachable in the flyout's own coords
+        assert_eq!(
+            flo.drag_hit(l.card_x + l.card_w - 2.0, l.card_y + l.card_h - 2.0),
+            Some(PanelDrag::Resize)
+        );
     }
 }

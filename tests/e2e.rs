@@ -93,6 +93,50 @@ fn copy_filter_and_copy_back_flow() {
     assert!(!p.panel_open(), "second Esc closes the panel");
 }
 
+/// The hotkey flyout: opens the panel in its own caret-anchored window
+/// without moving the cat. The cat window keeps its plain size and is told
+/// nothing changed, while the flyout reports its own card-sized canvas; a
+/// pick still hands back the clip text and dismisses the flyout.
+#[test]
+fn hotkey_flyout_leaves_the_cat_window_untouched() {
+    let mut p = pet();
+    copy(&mut p, "from chrome", Some("Chrome"));
+    copy(&mut p, "from code", Some("Code"));
+
+    let cat_size = p.canvas_size(); // cat-only, panel closed
+    let _ = p.take_size_changed(); // drain anything from setup/copies
+
+    p.open_flyout(); // = WM_HOTKEY on the native backend
+    assert!(p.flyout_open());
+    assert!(p.panel_open());
+    assert!(
+        !p.take_size_changed(),
+        "the cat window must not resize for the flyout"
+    );
+    assert_eq!(
+        p.canvas_size(),
+        cat_size,
+        "the cat window keeps its plain cat-only size while the flyout is up"
+    );
+
+    // the flyout window is just the card plus margins, not the union canvas
+    assert_eq!(
+        p.flyout_size(),
+        (panel::DEFAULT_W as i32 + 8, panel::DEFAULT_H as i32 + 8)
+    );
+
+    // a pick still returns the clip text and (autoclose) dismisses the flyout,
+    // again without ever touching the cat window
+    let pick = p.panel_nav(NavKey::Enter);
+    assert_eq!(pick.map(|c| c.text).as_deref(), Some("from code"));
+    assert!(!p.flyout_open(), "autoclose dismisses the flyout");
+    assert!(!p.panel_open());
+    assert!(
+        !p.take_size_changed(),
+        "dismissing the flyout never resizes the cat window"
+    );
+}
+
 /// The same filter driven by the mouse, through real panel coordinates —
 /// the path both backends' click handlers take.
 #[test]
