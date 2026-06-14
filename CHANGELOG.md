@@ -17,6 +17,11 @@ versions follow [SemVer](https://semver.org/). Maintenance rules:
 ## [Unreleased]
 
 ### Added
+- **Change the panel hotkey from the menu**: the tray/right-click menu now has
+  a "Panel hotkey" entry showing the current combo — click it to cycle through
+  safe presets (Win/Cmd+Shift+V → Ctrl+Shift+V → Alt+Shift+V → Ctrl+Shift+C).
+  It re-registers instantly and a toast confirms the new combo. (On Linux/
+  portable, press **K** while the pet is focused.)
 - **First-run hint**: until you open the clipboard panel for the first time,
   the cat shows a small banner with the exact hotkey (e.g. "Clipboard:
   WIN+SHIFT+V"), so the history is discoverable from the very first launch.

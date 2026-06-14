@@ -71,6 +71,7 @@ const CMD_CAPTURE: usize = 17;
 const CMD_UPDATE: usize = 18;
 const CMD_AUTOUPDATE: usize = 19;
 const CMD_AUTOCLOSE: usize = 23;
+const CMD_HOTKEY: usize = 24;
 const CMD_SIZE0: usize = 20; // ..=22
 const CMD_SOUND0: usize = 30; // ..=32
 const CMD_ACC0: usize = 40; // 40 = none, 41..=46 accessories
@@ -843,6 +844,13 @@ unsafe fn show_menu(hwnd: HWND, ms: &MenuSnapshot) -> usize {
         CMD_AUTOCLOSE,
         wz(t(lang, Msg::MenuAutoClose)).as_ptr(),
     );
+    // Panel hotkey: one click cycles to the next preset (no rebind dialog).
+    AppendMenuW(
+        menu,
+        MF_STRING,
+        CMD_HOTKEY,
+        wz(&i18n::menu_hotkey(lang, &ms.hotkey_label)).as_ptr(),
+    );
     AppendMenuW(menu, MF_SEPARATOR, 0, null());
 
     AppendMenuW(
@@ -1087,6 +1095,20 @@ unsafe fn open_menu(hwnd: HWND) {
             }
             CMD_AUTOCLOSE => {
                 with_app(|a| a.pet.toggle_panel_autoclose());
+            }
+            CMD_HOTKEY => {
+                with_app(|a| {
+                    // core advances + persists the spec; we re-register the OS
+                    // hotkey (which may fall back on a clash) and show the label
+                    // that actually stuck.
+                    let spec = a.pet.cycle_hotkey();
+                    let label = unsafe {
+                        UnregisterHotKey(hwnd, HOTKEY_ID);
+                        register_panel_hotkey(hwnd, &spec)
+                    };
+                    a.pet.set_panel_hint(label.clone());
+                    a.hotkey_label = label;
+                });
             }
             CMD_BUBBLE => {
                 with_app(|a| {

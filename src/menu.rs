@@ -28,6 +28,8 @@ pub enum MenuAction {
     SetLang(Lang),
     ToggleAutostart,
     ToggleAutoUpdate,
+    /// Advance the global panel hotkey to the next preset (see [`crate::hotkey`]).
+    CycleHotkey,
     /// macOS opens the releases page (no in-app self-replace there).
     InstallUpdate,
     ResetStats,
@@ -81,7 +83,7 @@ impl MenuItem {
 /// The backend's follow-up after [`Pet::apply_menu_action`](crate::pet::Pet::apply_menu_action).
 /// Pure state changes return `Handled`; the rest need OS / dialog / lifecycle work
 /// the platform-agnostic core must not do itself.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(Clone, PartialEq, Eq, Debug)]
 pub enum MenuOutcome {
     Handled,
     /// Confirm with the user, then call [`Pet::reset_stats`](crate::pet::Pet::reset_stats).
@@ -92,6 +94,9 @@ pub enum MenuOutcome {
     ToggleAutostart,
     /// Open the releases page / start the update.
     InstallUpdate,
+    /// Re-register the OS panel hotkey from this (new) spec; the core already
+    /// updated the persisted spec via [`Pet::cycle_hotkey`](crate::pet::Pet::cycle_hotkey).
+    ReregisterHotkey(String),
     /// Save and exit.
     Quit,
 }

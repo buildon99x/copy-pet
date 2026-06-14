@@ -457,6 +457,20 @@ impl Pet {
         None
     }
 
+    /// Advances the global panel hotkey to the next preset (see
+    /// [`crate::hotkey::next_preset`]), persists it, and toasts the new chord.
+    /// Returns the new spec so the backend can re-register the OS hotkey; the
+    /// backend also sets the precise panel hint (Windows may fall back on a
+    /// clash, so the displayed label is the backend's to confirm).
+    pub fn cycle_hotkey(&mut self) -> String {
+        let next = crate::hotkey::next_preset(&self.st.hotkey).to_string();
+        self.st.hotkey = next.clone();
+        self.dirty = true;
+        let chord = crate::hotkey::Hotkey::from_spec(&next).display();
+        self.set_toast(chord, 2.2);
+        next
+    }
+
     /// Flips "close the panel after copying a clip" and confirms via toast.
     pub fn toggle_panel_autoclose(&mut self) {
         self.st.panel_autoclose = !self.st.panel_autoclose;
@@ -864,6 +878,14 @@ impl Pet {
             MenuAction::TogglePanelAutoClose,
             self.st.panel_autoclose,
         ));
+        // Panel hotkey: a one-click cycle through safe presets (no rebind UI);
+        // the label shows the live chord and a click advances to the next.
+        let chord = crate::hotkey::Hotkey::from_spec(&self.st.hotkey).display();
+        m.push(MenuItem::leaf(
+            i18n::menu_hotkey(lang, &chord),
+            MenuAction::CycleHotkey,
+            false,
+        ));
         m.push(MenuEntry::Separator);
 
         m.push(MenuItem::leaf(
@@ -986,6 +1008,7 @@ impl Pet {
                 crate::update::set_enabled(self.st.auto_update);
                 self.dirty = true;
             }
+            MenuAction::CycleHotkey => return MenuOutcome::ReregisterHotkey(self.cycle_hotkey()),
             MenuAction::ToggleAutostart => return MenuOutcome::ToggleAutostart,
             MenuAction::InstallUpdate => return MenuOutcome::InstallUpdate,
             MenuAction::ResetStats => return MenuOutcome::ConfirmReset,
@@ -1180,6 +1203,32 @@ mod tests {
         assert_eq!(p.apply_menu_action(MenuAction::ToggleCapture), MenuOutcome::Handled);
         assert_eq!(p.st.clip_capture, !on);
         assert!(p.toast.is_some(), "capture toggle shows a toast");
+    }
+
+    #[test]
+    fn cycle_hotkey_advances_persists_and_toasts() {
+        let mut p = pet();
+        let before = p.st.hotkey.clone();
+        let returned = p.cycle_hotkey();
+        assert_eq!(p.st.hotkey, returned, "returns the new spec it persisted");
+        assert_ne!(p.st.hotkey, before, "the spec advanced to the next preset");
+        assert_eq!(p.st.hotkey, crate::hotkey::PRESETS[1]);
+        assert!(p.dirty, "the new spec is persisted");
+        assert!(p.toast.is_some(), "the new chord is confirmed via toast");
+    }
+
+    #[test]
+    fn menu_cycle_hotkey_reregisters_with_new_spec() {
+        let mut p = pet();
+        // the menu carries a CycleHotkey leaf labelled with the live chord
+        let menu = p.build_menu("HK", false);
+        let item = find(&menu, MenuAction::CycleHotkey).unwrap();
+        assert!(item.label.contains(&crate::hotkey::Hotkey::from_spec(&p.st.hotkey).display()));
+        // applying it advances the spec and hands the backend the new one to register
+        match p.apply_menu_action(MenuAction::CycleHotkey) {
+            MenuOutcome::ReregisterHotkey(spec) => assert_eq!(spec, p.st.hotkey),
+            other => panic!("expected ReregisterHotkey, got {other:?}"),
+        }
     }
 
     #[test]

@@ -196,6 +196,15 @@ pub fn menu_clipboard(lang: Lang, hotkey: &str) -> String {
     }
 }
 
+/// Settings-menu entry for the panel hotkey: shows the live chord; choosing it
+/// cycles to the next preset (see [`crate::hotkey::next_preset`]).
+pub fn menu_hotkey(lang: Lang, hotkey: &str) -> String {
+    match lang {
+        Lang::En => format!("Panel hotkey: {hotkey}"),
+        Lang::Ko => format!("패널 단축키: {hotkey}"),
+    }
+}
+
 /// First-run hint shown by the pet (until the panel is first opened): the live
 /// hotkey chord that opens the clipboard history.
 pub fn first_run_hint(lang: Lang, hotkey: &str) -> String {
