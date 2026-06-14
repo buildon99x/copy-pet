@@ -89,6 +89,13 @@ versions follow [SemVer](https://semver.org/). Maintenance rules:
   monitor — the panel now slides itself fully into view as it opens, with the
   cat staying exactly where it is. You can still drag the panel partly off the
   edge yourself; it just won't get stuck there next time you open it.
+- **The shown panel hotkey now matches what actually works.** When Windows
+  reserves your configured combo (Win+Shift+V belongs to Windows' own
+  clipboard history) ClipCat falls back to Ctrl+Shift+V — it used to do this
+  silently, so the menu and hint showed one combo while a different one
+  opened the panel. ClipCat now pops a short toast explaining the swap, and
+  keeps your chosen combo saved so it works again once whatever holds it is
+  freed (e.g. you turn off Windows clipboard history).
 
 ## [2.1.0] - 2026-06-12
 

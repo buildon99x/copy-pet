@@ -281,6 +281,21 @@ pub fn cleared_clips(lang: Lang, n: usize) -> String {
     }
 }
 
+/// Toast shown when the configured panel hotkey could not be registered (e.g.
+/// Windows reserves Win+Shift+V for clipboard history) and the fallback chord
+/// took over — so the displayed label stops looking like a silent mismatch
+/// with the saved setting.
+pub fn hotkey_fallback(lang: Lang, wanted: &str, used: &str) -> String {
+    match lang {
+        Lang::En => {
+            format!("{wanted} unavailable — using {used} (clipboard history or another app owns it)")
+        }
+        Lang::Ko => format!(
+            "{wanted} 단축키를 사용할 수 없어 {used}로 대체했습니다 (클립보드 기록 또는 다른 앱이 사용 중)"
+        ),
+    }
+}
+
 /// Footer line of the panel: clip count and pinned count.
 pub fn clip_count(lang: Lang, total: usize, pinned: usize) -> String {
     match lang {
@@ -380,6 +395,8 @@ mod tests {
             assert!(about_text(lang, "2.1.0", "WIN+SHIFT+V", 3, 10, 4).contains("WIN+SHIFT+V"));
             assert!(update_available(lang, "2.1.0").contains("v2.1.0"));
             assert!(menu_update(lang, "2.1.0").contains("v2.1.0"));
+            let fb = hotkey_fallback(lang, "WIN+SHIFT+V", "CTRL+SHIFT+V");
+            assert!(fb.contains("WIN+SHIFT+V") && fb.contains("CTRL+SHIFT+V"));
         }
     }
 

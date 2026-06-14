@@ -34,8 +34,8 @@ use windows_sys::Win32::System::Memory::{
 };
 use windows_sys::Win32::System::Registry::*;
 use windows_sys::Win32::System::Threading::{
-    CreateMutexW, OpenProcess, QueryFullProcessImageNameW, Sleep,
-    PROCESS_QUERY_LIMITED_INFORMATION,
+    AttachThreadInput, CreateMutexW, GetCurrentThreadId, OpenProcess, QueryFullProcessImageNameW,
+    Sleep, PROCESS_QUERY_LIMITED_INFORMATION,
 };
 use windows_sys::Win32::UI::HiDpi::SetProcessDpiAwarenessContext;
 use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
@@ -170,8 +170,23 @@ impl App {
         unsafe { set_clipboard_text(self.hwnd, &pick.text) };
         if pick.paste && !self.paste_target.is_null() && self.paste_target != self.hwnd {
             unsafe {
-                SetForegroundWindow(self.paste_target);
+                // SetForegroundWindow is asynchronous and won't promote a
+                // window owned by another thread on demand, so a bare
+                // SetForegroundWindow + SendInput races: the Ctrl+V fires
+                // before focus actually lands on the target and is lost. Attach
+                // our input queue to the target thread first — that
+                // synchronizes the foreground/focus state across both threads,
+                // so the foreground switch takes effect before we synthesize
+                // the keystroke. Always detach afterwards.
+                let target = self.paste_target;
+                let tid = GetWindowThreadProcessId(target, null_mut());
+                let me = GetCurrentThreadId();
+                let attached = tid != 0 && tid != me && AttachThreadInput(me, tid, 1) != 0;
+                SetForegroundWindow(target);
                 send_ctrl_v();
+                if attached {
+                    AttachThreadInput(me, tid, 0);
+                }
             }
         }
     }
@@ -731,18 +746,43 @@ unsafe fn register_hotkey(hwnd: HWND, hk: &Hotkey) -> bool {
     RegisterHotKey(hwnd, HOTKEY_ID, mods, hk.key as u32) != 0
 }
 
-/// Tries the configured hotkey, then the Ctrl+Shift+V fallback. Returns the
-/// display label of whichever stuck (empty: tray/middle-click only).
-unsafe fn register_panel_hotkey(hwnd: HWND, spec: &str) -> String {
+/// Outcome of trying to register the global panel hotkey.
+enum HotkeyReg {
+    /// The configured chord registered; carries its display label.
+    Configured(String),
+    /// The configured chord was unavailable (a clash, or a combo Windows
+    /// reserves like Win+Shift+V); the Ctrl+Shift+V fallback registered
+    /// instead. Carries the wanted and the used display labels.
+    Fallback { wanted: String, used: String },
+    /// Nothing registered (tray/middle-click still open the panel).
+    None,
+}
+
+impl HotkeyReg {
+    /// Display label of whichever chord stuck (empty when none did).
+    fn label(&self) -> String {
+        match self {
+            HotkeyReg::Configured(s) | HotkeyReg::Fallback { used: s, .. } => s.clone(),
+            HotkeyReg::None => String::new(),
+        }
+    }
+}
+
+/// Tries the configured hotkey, then the Ctrl+Shift+V fallback, reporting
+/// which one stuck so the caller can flag a silent fallback to the user.
+unsafe fn register_panel_hotkey(hwnd: HWND, spec: &str) -> HotkeyReg {
     let configured = Hotkey::from_spec(spec);
     if register_hotkey(hwnd, &configured) {
-        return configured.display();
+        return HotkeyReg::Configured(configured.display());
     }
     let fallback = Hotkey::from_spec(hotkey::FALLBACK);
     if fallback != configured && register_hotkey(hwnd, &fallback) {
-        return fallback.display();
+        return HotkeyReg::Fallback {
+            wanted: configured.display(),
+            used: fallback.display(),
+        };
     }
-    String::new()
+    HotkeyReg::None
 }
 
 /// Synthesizes a Ctrl+V keystroke into the foreground window (auto-paste).
@@ -1232,12 +1272,18 @@ unsafe fn open_menu(hwnd: HWND) {
                     // hotkey (which may fall back on a clash) and show the label
                     // that actually stuck.
                     let spec = a.pet.cycle_hotkey();
-                    let label = unsafe {
+                    let reg = unsafe {
                         UnregisterHotKey(hwnd, HOTKEY_ID);
                         register_panel_hotkey(hwnd, &spec)
                     };
+                    let label = reg.label();
                     a.pet.set_panel_hint(label.clone());
                     a.hotkey_label = label;
+                    // If this preset is OS-reserved, replace cycle_hotkey's
+                    // chord toast with the explicit fallback explanation.
+                    if let HotkeyReg::Fallback { wanted, used } = &reg {
+                        a.pet.notify_hotkey_fallback(wanted, used);
+                    }
                 });
             }
             CMD_BUBBLE => {
@@ -1760,10 +1806,16 @@ pub fn run() {
 
         // global panel hotkey (best-effort: a clash with another app falls
         // back to Ctrl+Shift+V; failing that, tray/middle-click still work)
-        let hotkey_label = register_panel_hotkey(hwnd, &st.hotkey);
+        let reg = register_panel_hotkey(hwnd, &st.hotkey);
+        let hotkey_label = reg.label();
 
         let mut pet = Pet::new(st);
         pet.set_panel_hint(hotkey_label.clone());
+        // Tell the user when the configured chord was unavailable, so the
+        // displayed fallback label is not a silent mismatch with state.json.
+        if let HotkeyReg::Fallback { wanted, used } = &reg {
+            pet.notify_hotkey_fallback(wanted, used);
+        }
 
         let app = App {
             hwnd,

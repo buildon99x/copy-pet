@@ -235,6 +235,16 @@ impl Pet {
         self.set_toast(t(self.lang(), Msg::ToastAccessibility).to_string(), 8.0);
     }
 
+    /// The OS rejected the configured panel hotkey (e.g. Windows reserves
+    /// Win+Shift+V for clipboard history) and the fallback chord took its
+    /// place. Explain the swap via toast so the label shown in the menu/hint
+    /// stops looking like a silent mismatch with the saved setting. The
+    /// configured chord is kept in `state.json`, so it registers normally once
+    /// whatever was holding it is freed.
+    pub fn notify_hotkey_fallback(&mut self, wanted: &str, used: &str) {
+        self.set_toast(i18n::hotkey_fallback(self.lang(), wanted, used), 5.0);
+    }
+
     /// Returns `true` once after a level-up so the platform can refresh tray UI.
     pub fn take_level_changed(&mut self) -> bool {
         std::mem::take(&mut self.level_changed)
