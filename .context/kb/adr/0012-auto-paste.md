@@ -4,7 +4,8 @@
 - Date: 2026-06-14
 - Related: [ADR-0005](0005-clipboard-manager.md) (copy-back contract it extends),
   [ADR-0008](0008-portable-global-hotkey.md) (input-privacy posture),
-  [LNR-0005](../lnr/0005-macos-tis-eventtap-crash.md) (macOS input crash path)
+  [LNR-0005](../lnr/0005-macos-tis-eventtap-crash.md) (macOS input crash path),
+  [LNR-0006](../lnr/0006-auto-paste-foreground-capture-order.md) (the focus-capture-order bug)
 
 ## Context
 
@@ -32,11 +33,15 @@ chord; key contents are never read, stored or transmitted).
    one — so golden rule 1 is intact, and because `simulate` is output-only it
    avoids the macOS TIS *listen* crash path (LNR-0005).
 3. **Focus handling is per-backend.** Windows native captures
-   `GetForegroundWindow()` at the panel-open focus-steal and, on paste,
-   `SetForegroundWindow`s back to it before the synthesized Ctrl+V — so the
-   clip lands in the app the user came from. The portable backend cannot
-   reliably re-focus the previous app, so paste there is **best-effort**: it
-   lands in whatever is frontmost after the panel closes.
+   `GetForegroundWindow()` at the panel-open *gesture* — before anything can
+   foreground us — and never stores its own hwnd (the hotkey path reveals/
+   foregrounds us a tick before the focus-steal runs, so it must grab the
+   target up-front; see [LNR-0006](../lnr/0006-auto-paste-foreground-capture-order.md)).
+   On paste it re-attaches the input queues, `SetForegroundWindow`s + `SetFocus`es
+   back to that window, then synthesizes Ctrl+V — so the clip lands in the app
+   the user came from. The portable backend cannot reliably re-focus the
+   previous app, so paste there is **best-effort**: it lands in whatever is
+   frontmost after the panel closes.
 
 ## Consequences
 

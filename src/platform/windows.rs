@@ -170,6 +170,9 @@ impl App {
         unsafe { set_clipboard_text(self.hwnd, &pick.text) };
         if pick.paste && !self.paste_target.is_null() && self.paste_target != self.hwnd {
             unsafe {
+                // Win+V parity: hand the foreground back to the app that was
+                // active when the panel opened, then synthesize Ctrl+V there.
+                //
                 // SetForegroundWindow is asynchronous and won't promote a
                 // window owned by another thread on demand, so a bare
                 // SetForegroundWindow + SendInput races: the Ctrl+V fires
@@ -177,17 +180,33 @@ impl App {
                 // our input queue to the target thread first — that
                 // synchronizes the foreground/focus state across both threads,
                 // so the foreground switch takes effect before we synthesize
-                // the keystroke. Always detach afterwards.
+                // the keystroke (SetFocus then nails the keyboard focus onto the
+                // target within the shared input state). Always detach after.
                 let target = self.paste_target;
                 let tid = GetWindowThreadProcessId(target, null_mut());
                 let me = GetCurrentThreadId();
                 let attached = tid != 0 && tid != me && AttachThreadInput(me, tid, 1) != 0;
                 SetForegroundWindow(target);
+                if attached {
+                    SetFocus(target);
+                }
                 send_ctrl_v();
                 if attached {
                     AttachThreadInput(me, tid, 0);
                 }
             }
+        }
+    }
+
+    /// Records the window to auto-paste into: the foreground window captured at
+    /// the moment the panel is *about* to open, before we steal focus. Ignores
+    /// null and our own window, so a hotkey re-press while the panel is already
+    /// up — or the tray menu, which foregrounds us before it runs — can never
+    /// overwrite a good target with ourselves.
+    unsafe fn capture_paste_target(&mut self) {
+        let fg = GetForegroundWindow();
+        if !fg.is_null() && fg != self.hwnd {
+            self.paste_target = fg;
         }
     }
 
@@ -321,9 +340,13 @@ impl App {
         let ex = GetWindowLongPtrW(self.hwnd, GWL_EXSTYLE);
         let no_activate = ex & WS_EX_NOACTIVATE as isize != 0;
         if self.pet.panel_open() && no_activate {
-            // remember who had focus before we steal it, so auto-paste can
-            // send the clip back to that app
-            self.paste_target = GetForegroundWindow();
+            // Remember who had focus before we steal it, so auto-paste can send
+            // the clip back to that app. The hotkey path reveals (and
+            // foregrounds) us *before* this runs, so it already grabbed the
+            // target up-front in WM_HOTKEY — capture_paste_target ignores our
+            // own window and leaves that earlier value intact; the middle-click
+            // path (no reveal) captures the still-active target here.
+            self.capture_paste_target();
             SetWindowLongPtrW(self.hwnd, GWL_EXSTYLE, ex & !(WS_EX_NOACTIVATE as isize));
             SetForegroundWindow(self.hwnd);
             SetFocus(self.hwnd);
@@ -1381,6 +1404,15 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
         WM_HOTKEY => {
             if wp as i32 == HOTKEY_ID {
                 with_app(|a| {
+                    // Grab the app to auto-paste into *before* reveal() steals
+                    // the foreground — otherwise apply_size, which runs a tick
+                    // later, would only ever see us as foreground and the
+                    // hotkey-opened panel could never paste home. Only on a
+                    // fresh open; a re-press while the panel is up keeps the
+                    // original target.
+                    if !a.pet.panel_open() {
+                        a.capture_paste_target();
+                    }
                     // the hotkey always *shows* the panel (never toggles closed)
                     // and reveals the window — un-hidden, raised and focused —
                     // so an obscured (Normal) or hidden panel reappears
