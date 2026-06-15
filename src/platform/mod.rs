@@ -34,3 +34,7 @@ mod mac_menu;
 mod mac_dialogs;
 #[cfg(all(any(not(windows), feature = "portable"), target_os = "macos"))]
 mod mac_autostart;
+// caret-position read for the caret-anchored clipboard flyout (Win+V parity);
+// geometry only, falls back to the mouse cursor.
+#[cfg(all(any(not(windows), feature = "portable"), target_os = "macos"))]
+mod mac_caret;

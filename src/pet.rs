@@ -119,6 +119,14 @@ pub struct Pet {
     pending_shift: (f32, f32),
     /// Active panel-card drag (header move / grip resize), if any.
     drag: Option<PanelDrag>,
+    /// The panel is showing in its own caret-anchored flyout window (hotkey
+    /// path) rather than embedded in the cat window. While true the cat
+    /// window draws no panel and keeps its plain cat-only size/origin — the
+    /// cat never moves for the flyout. See [`Pet::open_flyout`].
+    flyout: bool,
+    /// Set when a flyout grip-resize changed the card size; the flyout window
+    /// drains it via [`Pet::take_flyout_resized`] to rebuild its surface.
+    flyout_resized: bool,
 }
 
 impl Pet {
@@ -167,6 +175,8 @@ impl Pet {
             prev_level: 0,
             pending_shift: (0.0, 0.0),
             drag: None,
+            flyout: false,
+            flyout_resized: false,
         }
     }
 
@@ -273,8 +283,10 @@ impl Pet {
     /// Window size in physical pixels for the current scale + panel state.
     /// When the panel is open the size comes straight from the layout, which
     /// is already physical (the card is fixed-scale, the cat block scaled).
+    /// A flyout-owned panel lives in its own window, so the cat window keeps
+    /// its plain cat-only size (see [`Pet::flyout_size`]).
     pub fn canvas_size(&self) -> (i32, i32) {
-        if self.panel.open {
+        if self.panel.open && !self.flyout {
             let l = self.panel.layout();
             (l.canvas_w.round() as i32, l.canvas_h.round() as i32)
         } else {
@@ -284,7 +296,7 @@ impl Pet {
 
     /// Top-left of the cat block inside the window canvas, in physical pixels.
     fn origin(&self) -> (f32, f32) {
-        if self.panel.open {
+        if self.panel.open && !self.flyout {
             self.panel.layout().cat
         } else {
             (0.0, 0.0)
@@ -477,6 +489,93 @@ impl Pet {
         std::mem::take(&mut self.fit_panel)
     }
 
+    // ---- caret-anchored flyout window (hotkey path) --------------------------
+
+    /// Opens the panel as a caret-anchored flyout in its **own** window (the
+    /// global hotkey path). Unlike [`open_panel`](Pet::open_panel) this never
+    /// relayouts the cat canvas — the cat stays exactly where it is and draws
+    /// no panel; the backend positions the flyout window at the focused app's
+    /// text caret. Idempotent on panel contents when already a flyout.
+    pub fn open_flyout(&mut self) {
+        // An embedded (middle-click) panel must retract first so the cat
+        // window returns to its plain size before the flyout takes over.
+        if self.panel.open && !self.flyout {
+            self.toggle_panel();
+        }
+        if !self.panel.open {
+            // Opening the panel for the first time retires the first-run hint.
+            if !self.st.onboarded {
+                self.st.onboarded = true;
+                self.dirty = true;
+            }
+            self.panel.toggle(); // opens + clears query/source/scroll/sel
+        }
+        self.panel.standalone = true;
+        self.flyout = true;
+        self.drag = None;
+    }
+
+    /// Closes the flyout. The cat window was never resized for it, so this
+    /// needs no relayout.
+    pub fn close_flyout(&mut self) {
+        self.panel.open = false;
+        self.panel.standalone = false;
+        self.flyout = false;
+        self.flyout_resized = false;
+        self.drag = None;
+    }
+
+    /// Whether the panel is currently showing as a caret-anchored flyout.
+    pub fn flyout_open(&self) -> bool {
+        self.flyout && self.panel.open
+    }
+
+    /// The panel is showing *embedded* in the cat window (middle-click), not as
+    /// the separate flyout — the only case in which the cat window itself takes
+    /// keyboard focus and grows its canvas. Backends key their cat-window
+    /// focus/size/clamp logic off this so the flyout (its own window) never
+    /// leaves the cat window focusable.
+    pub fn embedded_panel_open(&self) -> bool {
+        self.panel.open && !self.flyout
+    }
+
+    /// Physical-pixel size of the flyout window (card + margins). The backend
+    /// uses it to size/resize the flyout window; valid regardless of state.
+    pub fn flyout_size(&self) -> (i32, i32) {
+        let l = self.panel.layout_standalone();
+        (l.canvas_w.round() as i32, l.canvas_h.round() as i32)
+    }
+
+    /// Renders only the panel card (no cat) into `pm` on a transparent
+    /// background, for the flyout window (Windows layered window / macOS
+    /// CALayer present). `pm` must be sized to [`flyout_size`](Pet::flyout_size)
+    /// and the panel must be in standalone mode (set by [`open_flyout`]).
+    ///
+    /// [`open_flyout`]: Pet::open_flyout
+    pub fn render_flyout(&self, pm: &mut Pixmap) {
+        pm.fill(tiny_skia::Color::TRANSPARENT);
+        render::draw_panel(pm, &self.build_panel_view(self.now_t()));
+    }
+
+    /// Returns true once after a flyout grip-resize changed the card size, so
+    /// the flyout window rebuilds its surface to the new [`flyout_size`].
+    ///
+    /// [`flyout_size`]: Pet::flyout_size
+    pub fn take_flyout_resized(&mut self) -> bool {
+        std::mem::take(&mut self.flyout_resized)
+    }
+
+    /// Closes the panel however it is currently shown: the flyout window (no
+    /// cat relayout) or the embedded cat-window panel. Used by clip-pick
+    /// auto-close and the Close action so both panel modes dismiss correctly.
+    fn dismiss_panel(&mut self) {
+        if self.flyout {
+            self.close_flyout();
+        } else {
+            self.toggle_panel();
+        }
+    }
+
     /// Slides the open panel card by a delta in canvas units **without moving
     /// the cat** — it re-origins the canvas and flags the window shift exactly
     /// like a header drag, then persists the new offset. The backend uses it
@@ -514,6 +613,20 @@ impl Pet {
     /// flagged to re-apply size + window shift.
     pub fn panel_drag_update(&mut self, dx: f32, dy: f32) {
         let Some(kind) = self.drag else { return };
+        if self.flyout {
+            // The flyout owns its window: a Move is the backend's job (it
+            // repositions the window), and the card offset is never tracked.
+            // Only a Resize changes core card state (size is shared/persisted).
+            if kind == PanelDrag::Resize {
+                self.panel.drag_by(kind, dx, dy);
+                self.panel.refresh(&self.clips);
+                self.st.panel_w = self.panel.w;
+                self.st.panel_h = self.panel.h;
+                self.dirty = true;
+                self.flyout_resized = true;
+            }
+            return;
+        }
         self.relayout(|p| p.panel.drag_by(kind, dx, dy));
         // a shorter card may need the scroll re-clamped
         self.panel.refresh(&self.clips);
@@ -522,6 +635,12 @@ impl Pet {
         self.st.panel_off_x = self.panel.off.0;
         self.st.panel_off_y = self.panel.off.1;
         self.dirty = true;
+    }
+
+    /// The kind of card drag in progress, if any. The flyout backends use it
+    /// to tell a window-move drag (header) from a grip-resize drag.
+    pub fn panel_drag_kind(&self) -> Option<PanelDrag> {
+        self.drag
     }
 
     pub fn panel_drag_end(&mut self) {
@@ -557,7 +676,7 @@ impl Pet {
                     // picked a clip: close the panel so the user can paste
                     // (switchable off to grab several clips in a row)
                     if self.st.panel_autoclose {
-                        self.toggle_panel();
+                        self.dismiss_panel();
                     }
                     return Some(ClipPick {
                         text,
@@ -609,7 +728,7 @@ impl Pet {
                 self.dirty = true;
             }
             PanelAction::ToggleView => self.toggle_panel_view(),
-            PanelAction::Close => self.toggle_panel(),
+            PanelAction::Close => self.dismiss_panel(),
         }
         None
     }
@@ -970,16 +1089,23 @@ impl Pet {
         } else {
             render::render(pm, &scene, self.scale());
         }
-        if self.panel.open {
-            let view = render::PanelView {
-                panel: &self.panel,
-                store: &self.clips,
-                lang: self.lang(),
-                capture: self.st.clip_capture,
-                hint: &self.panel_hint,
-                caret: (t * 1.6).fract() < 0.65,
-            };
-            render::draw_panel(pm, &view);
+        // A flyout-owned panel is drawn in its own window, not here.
+        if self.panel.open && !self.flyout {
+            render::draw_panel(pm, &self.build_panel_view(t));
+        }
+    }
+
+    /// The panel render view (caret blink derived from `t`), shared by the
+    /// embedded cat-window [`draw`](Pet::draw) and the flyout window's
+    /// [`render_flyout`](Pet::render_flyout).
+    fn build_panel_view(&self, t: f32) -> render::PanelView<'_> {
+        render::PanelView {
+            panel: &self.panel,
+            store: &self.clips,
+            lang: self.lang(),
+            capture: self.st.clip_capture,
+            hint: &self.panel_hint,
+            caret: (t * 1.6).fract() < 0.65,
         }
     }
 

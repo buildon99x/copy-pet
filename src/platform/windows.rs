@@ -13,7 +13,7 @@
 use crate::hotkey::{self, Hotkey};
 use crate::i18n::{self, t, Lang, Msg};
 use crate::input;
-use crate::panel::{fit_delta, NavKey, Rect};
+use crate::panel::{fit_delta, NavKey, PanelDrag, Rect};
 use crate::pet::{window_size, ClipPick, Pet, SCALES};
 use crate::render::{self, Badge};
 use crate::state::{Persist, ACCESSORIES};
@@ -122,6 +122,22 @@ struct App {
     /// The window that had focus when the panel was opened — where auto-paste
     /// (`paste_on_select`) sends the synthesized Ctrl+V. Null until captured.
     paste_target: HWND,
+    // ---- caret-anchored flyout panel (hotkey path): its own layered window --
+    /// Second layered window that hosts the panel at the text caret (Win+V
+    /// parity), independent of the cat window so the cat never moves.
+    flyout_hwnd: HWND,
+    fly_mem_dc: HDC,
+    fly_dib: HBITMAP,
+    fly_bits: *mut u8,
+    fly_w: i32,
+    fly_h: i32,
+    fly_pm: tiny_skia::Pixmap,
+    /// Screen-pixel anchor (caret bottom-left, else the mouse cursor) captured
+    /// at the hotkey before we steal focus; the flyout opens its card here.
+    flyout_anchor: Option<(i32, i32)>,
+    /// A flyout header-move drag is in progress (moves the flyout window
+    /// itself, not the card offset — the flyout position is ephemeral).
+    fly_move: bool,
 }
 
 thread_local! {
@@ -170,6 +186,9 @@ impl App {
         unsafe { set_clipboard_text(self.hwnd, &pick.text) };
         if pick.paste && !self.paste_target.is_null() && self.paste_target != self.hwnd {
             unsafe {
+                // Win+V parity: hand the foreground back to the app that was
+                // active when the panel opened, then synthesize Ctrl+V there.
+                //
                 // SetForegroundWindow is asynchronous and won't promote a
                 // window owned by another thread on demand, so a bare
                 // SetForegroundWindow + SendInput races: the Ctrl+V fires
@@ -177,17 +196,33 @@ impl App {
                 // our input queue to the target thread first — that
                 // synchronizes the foreground/focus state across both threads,
                 // so the foreground switch takes effect before we synthesize
-                // the keystroke. Always detach afterwards.
+                // the keystroke (SetFocus then nails the keyboard focus onto the
+                // target within the shared input state). Always detach after.
                 let target = self.paste_target;
                 let tid = GetWindowThreadProcessId(target, null_mut());
                 let me = GetCurrentThreadId();
                 let attached = tid != 0 && tid != me && AttachThreadInput(me, tid, 1) != 0;
                 SetForegroundWindow(target);
+                if attached {
+                    SetFocus(target);
+                }
                 send_ctrl_v();
                 if attached {
                     AttachThreadInput(me, tid, 0);
                 }
             }
+        }
+    }
+
+    /// Records the window to auto-paste into: the foreground window captured at
+    /// the moment the panel is *about* to open, before we steal focus. Ignores
+    /// null and our own window, so a hotkey re-press while the panel is already
+    /// up — or the tray menu, which foregrounds us before it runs — can never
+    /// overwrite a good target with ourselves.
+    unsafe fn capture_paste_target(&mut self) {
+        let fg = GetForegroundWindow();
+        if !fg.is_null() && fg != self.hwnd {
+            self.paste_target = fg;
         }
     }
 
@@ -227,6 +262,15 @@ impl App {
             self.pet.render(&mut self.pm);
             self.blit();
         }
+        // the caret-anchored flyout paints into its own window (independent of
+        // the cat window's visibility); a grip-resize rebuilds its surface
+        if redraw && self.pet.flyout_open() {
+            if self.pet.take_flyout_resized() {
+                unsafe { self.resize_flyout_surface() };
+            }
+            self.pet.render_flyout(&mut self.fly_pm);
+            self.flyout_blit(None);
+        }
         false
     }
 
@@ -242,42 +286,8 @@ impl App {
     /// atomically, so a panel drag can never show a half-updated frame
     /// (the cat would visibly tremble otherwise).
     fn blit_at(&mut self, move_to: Option<(i32, i32)>) {
-        let data = self.pm.data();
-        let len = (self.w * self.h * 4) as usize;
         unsafe {
-            let dst = std::slice::from_raw_parts_mut(self.bits, len);
-            // tiny-skia: premultiplied RGBA -> GDI wants premultiplied BGRA
-            for (d, s) in dst.chunks_exact_mut(4).zip(data.chunks_exact(4)) {
-                d[0] = s[2];
-                d[1] = s[1];
-                d[2] = s[0];
-                d[3] = s[3];
-            }
-            let screen = GetDC(null_mut());
-            let size = SIZE {
-                cx: self.w,
-                cy: self.h,
-            };
-            let src = POINT { x: 0, y: 0 };
-            let dst_pt = move_to.map(|(x, y)| POINT { x, y });
-            let blend = BLENDFUNCTION {
-                BlendOp: AC_SRC_OVER as u8,
-                BlendFlags: 0,
-                SourceConstantAlpha: 255,
-                AlphaFormat: AC_SRC_ALPHA as u8,
-            };
-            UpdateLayeredWindow(
-                self.hwnd,
-                screen,
-                dst_pt.as_ref().map_or(null(), |p| p),
-                &size,
-                self.mem_dc,
-                &src,
-                0,
-                &blend,
-                ULW_ALPHA,
-            );
-            ReleaseDC(null_mut(), screen);
+            blit_surface(self.hwnd, self.mem_dc, self.bits, &self.pm, self.w, self.h, move_to);
         }
     }
 
@@ -298,10 +308,17 @@ impl App {
         };
         GetWindowRect(self.hwnd, &mut rc);
         let (mut nx, mut ny) = (rc.left + dx, rc.top + dy);
-        if !self.pet.panel_open() {
-            // shrunk back to the cat: keep it reachable. While the panel is
-            // open the window legitimately extends offscreen (the card can
-            // sit anywhere); clamping then would drag the cat along.
+        // `apply_size` only ever sizes the *cat* window. The flyout lives in
+        // its own window, so the cat window is cat-only whenever the panel is a
+        // flyout — treat that exactly like "panel closed" here (clamp on
+        // screen, keep no-activate). Only the embedded middle-click panel grows
+        // the cat window and makes it focusable.
+        let embedded = self.pet.embedded_panel_open();
+        if !embedded {
+            // shrunk back to the cat (closed, or owned by the flyout): keep it
+            // reachable. While the *embedded* panel is open the window
+            // legitimately extends offscreen (the card can sit anywhere);
+            // clamping then would drag the cat along.
             (nx, ny) = clamp_to_screen(nx, ny, w, h);
         }
         if (w, h) != (self.w, self.h) {
@@ -317,17 +334,23 @@ impl App {
         }
 
         // toggle focusability only on a real open/close transition — a panel
-        // drag re-applies the size many times per second
+        // drag re-applies the size many times per second. Keyed on the
+        // *embedded* panel: the flyout is a separate focusable window, so the
+        // cat window must stay no-activate while it's up (and after it closes).
         let ex = GetWindowLongPtrW(self.hwnd, GWL_EXSTYLE);
         let no_activate = ex & WS_EX_NOACTIVATE as isize != 0;
-        if self.pet.panel_open() && no_activate {
-            // remember who had focus before we steal it, so auto-paste can
-            // send the clip back to that app
-            self.paste_target = GetForegroundWindow();
+        if embedded && no_activate {
+            // Remember who had focus before we steal it, so auto-paste can send
+            // the clip back to that app. The hotkey path reveals (and
+            // foregrounds) us *before* this runs, so it already grabbed the
+            // target up-front in WM_HOTKEY — capture_paste_target ignores our
+            // own window and leaves that earlier value intact; the middle-click
+            // path (no reveal) captures the still-active target here.
+            self.capture_paste_target();
             SetWindowLongPtrW(self.hwnd, GWL_EXSTYLE, ex & !(WS_EX_NOACTIVATE as isize));
             SetForegroundWindow(self.hwnd);
             SetFocus(self.hwnd);
-        } else if !self.pet.panel_open() && !no_activate {
+        } else if !embedded && !no_activate {
             SetWindowLongPtrW(self.hwnd, GWL_EXSTYLE, ex | WS_EX_NOACTIVATE as isize);
         }
 
@@ -340,11 +363,12 @@ impl App {
         self.pet.render(&mut self.pm);
         self.blit_at(Some((nx, ny)));
 
-        // The panel just opened: if the card landed off the monitor (the pet
-        // sits near an edge, or a persisted offset put it offscreen), slide
-        // the card — not the cat — back into view and re-apply once. `fit` is
-        // already drained, so the recursive call can't loop.
-        if fit && self.pet.panel_open() {
+        // The embedded panel just opened: if the card landed off the monitor
+        // (the pet sits near an edge, or a persisted offset put it offscreen),
+        // slide the card — not the cat — back into view and re-apply once.
+        // `fit` is already drained, so the recursive call can't loop. (Only an
+        // embedded open sets `fit`; the flyout fits itself in its own window.)
+        if fit && embedded {
             if let Some((sdx, sdy)) = self.panel_fit_shift(nx, ny) {
                 self.pet.shift_panel(sdx, sdy);
                 self.apply_size();
@@ -388,20 +412,6 @@ impl App {
         }
     }
 
-    /// Brings the (possibly obscured or hidden) window to the front and gives
-    /// it focus — the panel hotkey's "reveal". Un-hides first; in Normal mode
-    /// the window isn't topmost, so raise it above other windows too.
-    unsafe fn reveal(&mut self) {
-        if self.pet.show_window() {
-            self.apply_window_level(); // was hidden -> show at its level
-        } else if self.pet.window_level() == 1 {
-            // Normal: raise above other (non-topmost) windows
-            SetWindowPos(self.hwnd, HWND_TOP, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
-        }
-        SetForegroundWindow(self.hwnd);
-        SetFocus(self.hwnd);
-    }
-
     fn update_tray_tip(&self) {
         unsafe {
             let mut nid: NOTIFYICONDATAW = std::mem::zeroed();
@@ -437,9 +447,248 @@ impl App {
             self.pet.panel_char(c);
         }
     }
+
+    // ---- caret-anchored flyout window --------------------------------------
+
+    /// Top-left of the flyout window in screen pixels.
+    fn flyout_pos(&self) -> (i32, i32) {
+        let mut rc = RECT { left: 0, top: 0, right: 0, bottom: 0 };
+        unsafe { GetWindowRect(self.flyout_hwnd, &mut rc) };
+        (rc.left, rc.top)
+    }
+
+    /// Rebuilds the flyout surface to the current [`Pet::flyout_size`] (after a
+    /// grip-resize or before a fresh open). No-op when the size is unchanged.
+    unsafe fn resize_flyout_surface(&mut self) {
+        let (w, h) = self.pet.flyout_size();
+        if (w, h) == (self.fly_w, self.fly_h) {
+            return;
+        }
+        DeleteObject(self.fly_dib as _);
+        DeleteDC(self.fly_mem_dc);
+        let (dc, dib, bits) = create_surface(w, h);
+        self.fly_mem_dc = dc;
+        self.fly_dib = dib;
+        self.fly_bits = bits;
+        self.fly_w = w;
+        self.fly_h = h;
+        self.fly_pm = tiny_skia::Pixmap::new(w as u32, h as u32).unwrap();
+    }
+
+    fn flyout_blit(&mut self, move_to: Option<(i32, i32)>) {
+        unsafe {
+            blit_surface(
+                self.flyout_hwnd,
+                self.fly_mem_dc,
+                self.fly_bits,
+                &self.fly_pm,
+                self.fly_w,
+                self.fly_h,
+                move_to,
+            );
+        }
+    }
+
+    /// Window top-left so the card lands at `(ax, ay)` (the caret/cursor),
+    /// slid onto the monitor work area so it never opens off-screen. The card
+    /// sits at `(card_x, card_y)` inside the flyout canvas, so the window
+    /// origin is the anchor minus that inset.
+    unsafe fn flyout_place(&self, ax: i32, ay: i32) -> (i32, i32) {
+        let l = self.pet.panel.layout_standalone();
+        let mut wx = ax - l.card_x.round() as i32;
+        let mut wy = ay - l.card_y.round() as i32;
+        let card = Rect {
+            x: wx as f32 + l.card_x,
+            y: wy as f32 + l.card_y,
+            w: l.card_w,
+            h: l.card_h,
+        };
+        if let Some(work) = monitor_work_rect(self.flyout_hwnd) {
+            let (dx, dy) = fit_delta(card, work);
+            wx += dx.round() as i32;
+            wy += dy.round() as i32;
+        }
+        (wx, wy)
+    }
+
+    /// Shows the flyout at its anchor (caret, else mouse cursor), takes
+    /// keyboard focus for the search box, and paints the panel.
+    unsafe fn show_flyout(&mut self) {
+        self.resize_flyout_surface();
+        let (ax, ay) = self.flyout_anchor.unwrap_or_else(|| {
+            let mut p = POINT { x: 0, y: 0 };
+            GetCursorPos(&mut p);
+            (p.x, p.y)
+        });
+        // Park the (still-hidden) window at the rough anchor first so the
+        // monitor_work_rect inside flyout_place resolves the *anchor's*
+        // monitor — not wherever the window last sat — before fitting.
+        let l = self.pet.panel.layout_standalone();
+        SetWindowPos(
+            self.flyout_hwnd,
+            null_mut(),
+            ax - l.card_x.round() as i32,
+            ay - l.card_y.round() as i32,
+            0,
+            0,
+            SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE,
+        );
+        let pos = self.flyout_place(ax, ay);
+        self.pet.render_flyout(&mut self.fly_pm);
+        self.flyout_blit(Some(pos));
+        ShowWindow(self.flyout_hwnd, SW_SHOW);
+        SetForegroundWindow(self.flyout_hwnd);
+        SetFocus(self.flyout_hwnd);
+    }
+
+    /// Hides the flyout window and clears core flyout state. Safe to call
+    /// re-entrantly (a WM_KILLFOCUS fired by the hide is skipped by the
+    /// `with_app` borrow guard).
+    unsafe fn hide_flyout(&mut self) {
+        ShowWindow(self.flyout_hwnd, SW_HIDE);
+        if self.pet.flyout_open() {
+            self.pet.close_flyout();
+        }
+    }
+
+    /// Runs after a flyout click/key: if the panel closed (a pick with
+    /// auto-close, or Esc), hide the window first so focus returns to the
+    /// source app, then hand any picked clip to `copy_back` for the paste.
+    unsafe fn after_flyout_action(&mut self, pick: Option<ClipPick>) {
+        if !self.pet.flyout_open() {
+            ShowWindow(self.flyout_hwnd, SW_HIDE);
+        }
+        if let Some(pick) = pick {
+            self.copy_back(pick);
+        }
+    }
+
+    unsafe fn flyout_lbutton_down(&mut self, lp: LPARAM) {
+        let (cx, cy) = self.client_xy(lp);
+        if self.pet.panel_drag_start(cx, cy) {
+            match self.pet.panel_drag_kind() {
+                Some(PanelDrag::Move) => {
+                    self.fly_move = true;
+                    let mut pt = POINT { x: 0, y: 0 };
+                    GetCursorPos(&mut pt);
+                    self.drag_cursor = pt;
+                    self.drag_win = self.flyout_pos();
+                }
+                Some(PanelDrag::Resize) => {
+                    self.panel_drag = true;
+                    let mut pt = POINT { x: 0, y: 0 };
+                    GetCursorPos(&mut pt);
+                    self.drag_cursor = pt;
+                }
+                None => {}
+            }
+            SetCapture(self.flyout_hwnd);
+            return;
+        }
+        if self.pet.panel_hit(cx, cy) {
+            let pick = self.pet.panel_click(cx, cy);
+            self.after_flyout_action(pick);
+        }
+        // a click in the thin margin around the card is ignored; a click
+        // outside the window drops focus -> WM_KILLFOCUS closes the flyout
+    }
+
+    unsafe fn flyout_mouse_move(&mut self, lp: LPARAM) {
+        let (cx, cy) = self.client_xy(lp);
+        self.pet.set_cursor(cx, cy);
+        if self.fly_move {
+            let mut pt = POINT { x: 0, y: 0 };
+            GetCursorPos(&mut pt);
+            let (dx, dy) = (pt.x - self.drag_cursor.x, pt.y - self.drag_cursor.y);
+            if dx != 0 || dy != 0 {
+                SetWindowPos(
+                    self.flyout_hwnd,
+                    null_mut(),
+                    self.drag_win.0 + dx,
+                    self.drag_win.1 + dy,
+                    0,
+                    0,
+                    SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE,
+                );
+            }
+        } else if self.panel_drag {
+            // grip resize: feed screen-pixel deltas as panel units; the tick
+            // rebuilds the surface (flyout_resized) and re-blits at the new size
+            let mut pt = POINT { x: 0, y: 0 };
+            GetCursorPos(&mut pt);
+            let (dx, dy) = (pt.x - self.drag_cursor.x, pt.y - self.drag_cursor.y);
+            if dx != 0 || dy != 0 {
+                self.pet.panel_drag_update(dx as f32, dy as f32);
+                self.drag_cursor = pt;
+            }
+        }
+    }
+
+    fn flyout_lbutton_up(&mut self) {
+        if self.fly_move || self.panel_drag {
+            self.fly_move = false;
+            self.panel_drag = false;
+            self.pet.panel_drag_end();
+            unsafe { ReleaseCapture() };
+        }
+    }
+
+    /// Forwards a navigation key to the panel and reconciles the window
+    /// (hide on close, paste on pick).
+    unsafe fn flyout_nav(&mut self, key: NavKey) {
+        let pick = self.pet.panel_nav(key);
+        self.after_flyout_action(pick);
+    }
 }
 
 // ---- surface ----------------------------------------------------------------
+
+/// Pushes `pm` (tiny-skia premultiplied RGBA) to a layered `hwnd` through its
+/// memory DC, converting to the premultiplied BGRA `UpdateLayeredWindow`
+/// wants. `move_to` repositions the (possibly resized) window in the same
+/// call, so position, size and content change atomically (no half-updated
+/// frame during a drag). Shared by the cat window and the flyout window.
+unsafe fn blit_surface(
+    hwnd: HWND,
+    mem_dc: HDC,
+    bits: *mut u8,
+    pm: &tiny_skia::Pixmap,
+    w: i32,
+    h: i32,
+    move_to: Option<(i32, i32)>,
+) {
+    let data = pm.data();
+    let len = (w * h * 4) as usize;
+    let dst = std::slice::from_raw_parts_mut(bits, len);
+    for (d, s) in dst.chunks_exact_mut(4).zip(data.chunks_exact(4)) {
+        d[0] = s[2];
+        d[1] = s[1];
+        d[2] = s[0];
+        d[3] = s[3];
+    }
+    let screen = GetDC(null_mut());
+    let size = SIZE { cx: w, cy: h };
+    let src = POINT { x: 0, y: 0 };
+    let dst_pt = move_to.map(|(x, y)| POINT { x, y });
+    let blend = BLENDFUNCTION {
+        BlendOp: AC_SRC_OVER as u8,
+        BlendFlags: 0,
+        SourceConstantAlpha: 255,
+        AlphaFormat: AC_SRC_ALPHA as u8,
+    };
+    UpdateLayeredWindow(
+        hwnd,
+        screen,
+        dst_pt.as_ref().map_or(null(), |p| p),
+        &size,
+        mem_dc,
+        &src,
+        0,
+        &blend,
+        ULW_ALPHA,
+    );
+    ReleaseDC(null_mut(), screen);
+}
 
 unsafe fn create_surface(w: i32, h: i32) -> (HDC, HBITMAP, *mut u8) {
     let screen = GetDC(null_mut());
@@ -1340,7 +1589,115 @@ unsafe fn open_menu(hwnd: HWND) {
 
 // ---- wndproc -------------------------------------------------------------------------
 
+/// Maps a Win32 virtual-key (+ Ctrl state) to a panel [`NavKey`]. Shared by
+/// the cat window's WM_KEYDOWN and the flyout window's.
+fn map_nav_key(vk: u16, ctrl: bool) -> Option<NavKey> {
+    match vk {
+        0x26 => Some(NavKey::Up),        // VK_UP
+        0x28 => Some(NavKey::Down),      // VK_DOWN
+        0x21 => Some(NavKey::PageUp),    // VK_PRIOR
+        0x22 => Some(NavKey::PageDown),  // VK_NEXT
+        0x24 => Some(NavKey::Home),      // VK_HOME
+        0x23 => Some(NavKey::End),       // VK_END
+        0x0D => Some(NavKey::Enter),     // VK_RETURN
+        0x2E => Some(NavKey::Delete),    // VK_DELETE
+        0x08 => Some(NavKey::Backspace), // VK_BACK
+        0x1B => Some(NavKey::Esc),       // VK_ESCAPE
+        0x09 => Some(NavKey::Tab),       // VK_TAB: source filter
+        0x50 if ctrl => Some(NavKey::Pin),  // Ctrl+P: pin clip
+        0x5A if ctrl => Some(NavKey::Undo), // Ctrl+Z: undo delete
+        // Ctrl+0..9: quick-copy the nth row from the top
+        k @ 0x30..=0x39 if ctrl => Some(NavKey::Quick((k - 0x30) as u8)),
+        k @ 0x60..=0x69 if ctrl => Some(NavKey::Quick((k - 0x60) as u8)), // numpad
+        _ => None,
+    }
+}
+
+/// Screen-pixel anchor for the flyout: the focused app's text caret (its
+/// bottom-left, so the panel drops below the caret like Win+V), or `None`
+/// when the foreground app exposes no Win32 caret (Chromium/Electron/UWP) —
+/// the caller then falls back to the mouse cursor. Reads caret *geometry*
+/// only via `GetGUIThreadInfo`; never any window text or contents (privacy:
+/// golden rule #1).
+unsafe fn caret_screen_pos() -> Option<(i32, i32)> {
+    let fg = GetForegroundWindow();
+    if fg.is_null() {
+        return None;
+    }
+    let tid = GetWindowThreadProcessId(fg, null_mut());
+    if tid == 0 {
+        return None;
+    }
+    let mut gti: GUITHREADINFO = std::mem::zeroed();
+    gti.cbSize = std::mem::size_of::<GUITHREADINFO>() as u32;
+    if GetGUIThreadInfo(tid, &mut gti) == 0 || gti.hwndCaret.is_null() {
+        return None;
+    }
+    let r = gti.rcCaret;
+    if r.right <= r.left && r.bottom <= r.top {
+        return None; // no real caret rect (e.g. a focused button)
+    }
+    let mut pt = POINT { x: r.left, y: r.bottom }; // caret bottom-left
+    if ClientToScreen(gti.hwndCaret, &mut pt) == 0 {
+        return None;
+    }
+    Some((pt.x, pt.y))
+}
+
+/// Messages for the flyout window are routed here (it shares the class +
+/// wndproc with the cat window). Only the panel-relevant messages are
+/// handled; everything else defers to `DefWindowProcW`.
+unsafe fn flyout_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRESULT {
+    match msg {
+        WM_LBUTTONDOWN | WM_LBUTTONDBLCLK => {
+            with_app(|a| a.flyout_lbutton_down(lp));
+            0
+        }
+        WM_MOUSEMOVE => {
+            with_app(|a| a.flyout_mouse_move(lp));
+            0
+        }
+        WM_LBUTTONUP => {
+            with_app(|a| a.flyout_lbutton_up());
+            0
+        }
+        WM_MOUSEWHEEL => {
+            with_app(|a| {
+                let delta = ((wp >> 16) & 0xFFFF) as i16 as i32;
+                if delta != 0 {
+                    a.pet.panel_wheel(if delta > 0 { -1 } else { 1 });
+                }
+            });
+            0
+        }
+        WM_CHAR => {
+            with_app(|a| a.panel_char_utf16(wp as u16));
+            0
+        }
+        WM_KEYDOWN => {
+            let ctrl = GetKeyState(0x11) < 0; // VK_CONTROL
+            if let Some(key) = map_nav_key(wp as u16, ctrl) {
+                with_app(|a| a.flyout_nav(key));
+                0
+            } else {
+                DefWindowProcW(hwnd, msg, wp, lp)
+            }
+        }
+        WM_KILLFOCUS => {
+            // clicked away: dismiss the flyout (the borrow guard makes the
+            // hide-triggered re-entrant WM_KILLFOCUS a no-op)
+            with_app(|a| a.hide_flyout());
+            0
+        }
+        _ => DefWindowProcW(hwnd, msg, wp, lp),
+    }
+}
+
 unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRESULT {
+    // The flyout window shares this wndproc; route its messages separately.
+    if with_app(|a| !a.flyout_hwnd.is_null() && a.flyout_hwnd == hwnd).unwrap_or(false) {
+        return flyout_proc(hwnd, msg, wp, lp);
+    }
     match msg {
         WM_TIMER => {
             if wp == TIMER_ID {
@@ -1381,11 +1738,18 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
         WM_HOTKEY => {
             if wp as i32 == HOTKEY_ID {
                 with_app(|a| {
-                    // the hotkey always *shows* the panel (never toggles closed)
-                    // and reveals the window — un-hidden, raised and focused —
-                    // so an obscured (Normal) or hidden panel reappears
-                    a.pet.open_panel();
-                    a.reveal();
+                    // The hotkey opens the panel as a caret-anchored flyout in
+                    // its own window (Win+V parity); the cat never moves. Grab
+                    // the paste target and the caret position *before* the
+                    // flyout steals focus — otherwise the foreground would only
+                    // ever read as ourselves. Only on a fresh open; a re-press
+                    // while it's up keeps the original target + anchor.
+                    if !a.pet.flyout_open() {
+                        a.capture_paste_target();
+                        a.flyout_anchor = caret_screen_pos();
+                    }
+                    a.pet.open_flyout();
+                    a.show_flyout();
                 });
             }
             0
@@ -1564,25 +1928,7 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
                     return false;
                 }
                 let ctrl = GetKeyState(0x11) < 0; // VK_CONTROL
-                let key = match wp as u16 {
-                    0x26 => Some(NavKey::Up),       // VK_UP
-                    0x28 => Some(NavKey::Down),     // VK_DOWN
-                    0x21 => Some(NavKey::PageUp),   // VK_PRIOR
-                    0x22 => Some(NavKey::PageDown), // VK_NEXT
-                    0x24 => Some(NavKey::Home),     // VK_HOME
-                    0x23 => Some(NavKey::End),      // VK_END
-                    0x0D => Some(NavKey::Enter),    // VK_RETURN
-                    0x2E => Some(NavKey::Delete),   // VK_DELETE
-                    0x08 => Some(NavKey::Backspace),// VK_BACK
-                    0x1B => Some(NavKey::Esc),      // VK_ESCAPE
-                    0x09 => Some(NavKey::Tab),      // VK_TAB: source filter
-                    0x50 if ctrl => Some(NavKey::Pin),  // Ctrl+P: pin clip
-                    0x5A if ctrl => Some(NavKey::Undo), // Ctrl+Z: undo delete
-                    // Ctrl+0..9: quick-copy the nth row from the top
-                    k @ 0x30..=0x39 if ctrl => Some(NavKey::Quick((k - 0x30) as u8)),
-                    k @ 0x60..=0x69 if ctrl => Some(NavKey::Quick((k - 0x60) as u8)), // numpad
-                    _ => None,
-                };
+                let key = map_nav_key(wp as u16, ctrl);
                 if let Some(key) = key {
                     if let Some(pick) = a.pet.panel_nav(key) {
                         a.copy_back(pick);
@@ -1817,6 +2163,31 @@ pub fn run() {
             pet.notify_hotkey_fallback(wanted, used);
         }
 
+        // The caret-anchored flyout panel (hotkey path) lives in its own
+        // layered window, created hidden and shown at the caret on the hotkey.
+        // It shares the class + wndproc with the cat window (routed by hwnd)
+        // but is *focusable* (no WS_EX_NOACTIVATE) so the search box can take
+        // keyboard input. Positioned on the hotkey.
+        let (fw, fh) = pet.flyout_size();
+        let flyout_hwnd = CreateWindowExW(
+            WS_EX_LAYERED | WS_EX_TOPMOST | WS_EX_TOOLWINDOW,
+            class_name.as_ptr(),
+            wz("ClipCat Clipboard").as_ptr(),
+            WS_POPUP,
+            0,
+            0,
+            fw,
+            fh,
+            null_mut(),
+            null_mut(),
+            hinst,
+            null(),
+        );
+        if flyout_hwnd.is_null() {
+            return;
+        }
+        let (fly_mem_dc, fly_dib, fly_bits) = create_surface(fw, fh);
+
         let app = App {
             hwnd,
             mem_dc,
@@ -1841,6 +2212,15 @@ pub fn run() {
             taskbar_created: RegisterWindowMessageW(wz("TaskbarCreated").as_ptr()),
             hotkey_label,
             paste_target: null_mut(),
+            flyout_hwnd,
+            fly_mem_dc,
+            fly_dib,
+            fly_bits,
+            fly_w: fw,
+            fly_h: fh,
+            fly_pm: tiny_skia::Pixmap::new(fw as u32, fh as u32).unwrap(),
+            flyout_anchor: None,
+            fly_move: false,
         };
 
         APP.with(|cell| *cell.borrow_mut() = Some(app));

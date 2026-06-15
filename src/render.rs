@@ -883,7 +883,7 @@ pub fn draw_panel(pm: &mut Pixmap, v: &PanelView) {
         ts: Transform::identity(),
     };
     let lang = v.lang;
-    let lt = v.panel.layout();
+    let lt = v.panel.active_layout();
 
     let card = round_rect(lt.card_x, lt.card_y, lt.card_w, lt.card_h, 12.0);
     cv.fill(&card, (255, 255, 255, 247));

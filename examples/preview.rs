@@ -192,6 +192,26 @@ fn main() {
         };
         render::draw_panel(&mut pm, &view);
         save(&pm, &dir, "4-panel-thumbnail");
+
+        // the caret-anchored flyout: the card alone in its own window (no
+        // cat), on a transparent background — what the hotkey opens at the
+        // text cursor (Win+V parity). A fresh Pixmap is already transparent.
+        let mut panel = Panel::default();
+        panel.toggle();
+        panel.standalone = true;
+        panel.sel = 1;
+        let lt = panel.active_layout();
+        let mut pm = Pixmap::new(lt.canvas_w as u32, lt.canvas_h as u32).unwrap();
+        let view = PanelView {
+            panel: &panel,
+            store: &store,
+            lang: Lang::En,
+            capture: true,
+            hint: "CTRL+SHIFT+V",
+            caret: true,
+        };
+        render::draw_panel(&mut pm, &view);
+        save(&pm, &dir, "4-panel-flyout");
     }
 
     // 5. the app icon (64 px)

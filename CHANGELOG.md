@@ -17,6 +17,12 @@ versions follow [SemVer](https://semver.org/). Maintenance rules:
 ## [Unreleased]
 
 ### Added
+- **Clipboard opens at your cursor** (Win+V parity): pressing the panel hotkey
+  now pops the clip list up at the text caret in whatever app you're typing
+  in, instead of over the cat — so it's right where you're working and the cat
+  stays put. If the focused app doesn't expose a caret (some browsers/Electron
+  apps), it opens at the mouse pointer. Middle-clicking the cat still shows the
+  panel by the cat as before. (Windows and macOS.)
 - **Auto-paste on select** (off by default): a new "Paste on select" setting
   (tray/right-click menu) makes picking a clip paste it straight into the app
   you were just in, instead of only copying it. On Windows it returns focus to
