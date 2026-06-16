@@ -109,13 +109,12 @@ pub fn open_releases_page() {
     open_url(&format!("{REPO_URL}/releases/latest"));
 }
 
-/// The project's GitHub page, linked from the context menu. Placeholder for
-/// now (the real org/repo isn't published yet).
-pub const GITHUB_URL: &str = "https://github.com/clipcat";
-
-/// Opens the GitHub page (the context-menu "GitHub" item).
+/// Opens the project's GitHub page (the context-menu "GitHub" item). Uses the
+/// repository URL from Cargo.toml — the same source the updater builds its
+/// release URLs from (ADR-0009) — so there's no second address to hardcode or
+/// keep in sync.
 pub fn open_github() {
-    open_url(GITHUB_URL);
+    open_url(REPO_URL);
 }
 
 /// Opens `url` in the user's default browser. This launches the OS browser
