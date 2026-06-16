@@ -54,10 +54,10 @@ versions follow [SemVer](https://semver.org/). Maintenance rules:
   formatting, and how to paste a clip as plain text.
 - A **GitHub** entry in the context menu (just below "About ClipCat") opens
   the project page in your browser.
-- The clipboard panel has a new **Thumbnail view**, toggled by a button in
-  the panel's header: clips become roomy rounded cards that wrap onto two
-  lines, so you see even more of each one. The compact list stays the
-  default; your choice is remembered.
+- The clipboard panel now opens in a roomier **card view** by default: clips
+  become rounded cards that wrap onto two lines, so you see more of each one.
+  Switch to the **compact list** with the list/card button in the panel's
+  header — your choice is remembered.
 - New **Window** setting (tray menu on Windows, right-click menu on macOS)
   with three modes: **Always on top** (the default), **Normal** — the pet can
   now sit behind other windows like an ordinary one — and **Hide**. A hidden

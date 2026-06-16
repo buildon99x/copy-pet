@@ -182,7 +182,8 @@ fn filter_button_and_row_clicks() {
     assert_eq!(p.panel.source.as_deref(), Some("Code"));
 
     // the second row is empty under the filter -> a click there is a no-op
-    let empty_y = lt.rows_y + panel::ROW_H * 1.5;
+    // (use the layout's actual row height so this holds in either view mode)
+    let empty_y = lt.rows_y + lt.row_h * 1.5;
     assert_eq!(p.panel_click(150.0, empty_y), None);
 
     // cycle past the last source: back to all apps, both rows clickable
@@ -197,7 +198,7 @@ fn filter_button_and_row_clicks() {
     p.toggle_panel();
     p.panel_click(lt.btn_filter_x + 8.0, lt.btn_y + 8.0);
     assert_eq!(p.panel.source.as_deref(), Some("Code"));
-    let row_y = lt.rows_y + panel::ROW_H / 2.0;
+    let row_y = lt.rows_y + lt.row_h / 2.0;
     let text = p.panel_click(150.0, row_y);
     assert_eq!(text.map(|c| c.text).as_deref(), Some("newest from code"));
 }
@@ -390,6 +391,11 @@ fn context_menu_drives_settings_end_to_end() {
 #[test]
 fn panel_resize_and_move_persist_and_anchor() {
     let mut p = pet();
+    // this test pins the compact-list geometry (8 rows by default, 34px rows so
+    // +68px == 2 rows); the panel now opens in card view, so switch to the list.
+    if p.panel.view != 0 {
+        p.toggle_panel_view();
+    }
     for i in 0..15 {
         copy(&mut p, &format!("clip {i}"), None);
     }

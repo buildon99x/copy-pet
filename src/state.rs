@@ -50,8 +50,8 @@ pub struct Persist {
     /// When true, picking a clip also pastes it into the previously focused app
     /// (synthesized Ctrl/Cmd+V). Off by default — some users want copy-only.
     pub paste_on_select: bool,
-    /// Panel list style: 0 = compact list (default), 1 = roomier rounded-box
-    /// "thumbnail" cards that show more of each clip.
+    /// Panel list style: 0 = compact list, 1 = roomier rounded-box
+    /// "thumbnail" cards that show more of each clip (default).
     pub panel_view: u8,
     // lifetime
     pub total_keys: u64,
@@ -89,7 +89,7 @@ impl Default for Persist {
             panel_autoclose: true,
             onboarded: false,
             paste_on_select: false,
-            panel_view: 0,
+            panel_view: 1,
             total_keys: 0,
             total_clicks: 0,
             total_copies: 0,
@@ -385,6 +385,7 @@ mod tests {
         assert_eq!(st.hotkey, crate::hotkey::DEFAULT, "hotkey defaults in");
         assert!(st.auto_update, "update check defaults on");
         assert!(st.panel_autoclose, "panel closes after copy by default");
+        assert_eq!(st.panel_view, 1, "panel opens in card view by default");
         assert_eq!(st.panel_w, crate::panel::DEFAULT_W, "panel size defaults in");
         assert_eq!(
             (st.panel_off_x, st.panel_off_y),
