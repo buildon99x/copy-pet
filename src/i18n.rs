@@ -82,6 +82,16 @@ pub enum Msg {
     ToastCaptureOn,
     ToastAutoCloseOn,
     ToastAutoCloseOff,
+    /// Toast shown by the per-row "paste as text" action (ADR-0014).
+    ToastPastedPlain,
+    // panel header-icon tooltips
+    TipView,
+    TipFilter,
+    TipPause,
+    TipResume,
+    TipClear,
+    TipLang,
+    TipClose,
     // auto-update (ADR-0009)
     MenuAutoUpdate,
     ToastUpdateDownloading,
@@ -189,6 +199,22 @@ pub fn t(lang: Lang, msg: Msg) -> &'static str {
         (ToastAutoCloseOn, Lang::Ko) => "복사 후 패널을 닫아요",
         (ToastAutoCloseOff, Lang::En) => "PANEL STAYS OPEN AFTER COPY",
         (ToastAutoCloseOff, Lang::Ko) => "복사 후에도 패널이 열려 있어요",
+        (ToastPastedPlain, Lang::En) => "PASTED AS TEXT",
+        (ToastPastedPlain, Lang::Ko) => "텍스트로 붙여넣었어요",
+        (TipView, Lang::En) => "List / card view",
+        (TipView, Lang::Ko) => "목록 / 카드 보기",
+        (TipFilter, Lang::En) => "Filter by app",
+        (TipFilter, Lang::Ko) => "앱별 필터",
+        (TipPause, Lang::En) => "Pause capture",
+        (TipPause, Lang::Ko) => "수집 일시정지",
+        (TipResume, Lang::En) => "Resume capture",
+        (TipResume, Lang::Ko) => "수집 다시 시작",
+        (TipClear, Lang::En) => "Clear history",
+        (TipClear, Lang::Ko) => "기록 비우기",
+        (TipLang, Lang::En) => "Language",
+        (TipLang, Lang::Ko) => "언어",
+        (TipClose, Lang::En) => "Close",
+        (TipClose, Lang::Ko) => "닫기",
         (MenuAutoUpdate, Lang::En) => "Check for updates automatically",
         (MenuAutoUpdate, Lang::Ko) => "자동 업데이트 확인",
         (ToastUpdateDownloading, Lang::En) => "DOWNLOADING UPDATE...",
@@ -338,8 +364,9 @@ pub fn about_text(
             "ClipCat v{version}\n\nA desktop cat that manages your clipboard \
              and grows with your typing.\n\nLevel: LV {lv}\nLifetime keys: {keys}\nStored \
              clips: {clips}\n\n- Copy anywhere: the cat eats a fish and saves the clip\n\
-             - {hotkey} or middle-click: clipboard history\n- Click a clip: copy it \
-             back as clean plain text (formatting stripped)\n- Type/click: the cat taps \
+             - {hotkey} or middle-click: clipboard history\n- Click a clip: paste it \
+             back with its original formatting (or use \"...\" to paste as plain text)\n\
+             - Type/click: the cat taps \
              along and earns XP\n- Double-click: pet the \
              cat\n\nEverything stays on this PC; the only network use is an \
              optional daily GitHub check for new versions (toggle in this menu)."
@@ -348,8 +375,8 @@ pub fn about_text(
             "ClipCat v{version}\n\n클립보드를 관리하고 타이핑과 함께 자라는 데스크탑 \
              고양이.\n\n현재 레벨: LV {lv}\n누적 키 입력: {keys}\n저장된 클립: {clips}개\n\n\
              - 어디서든 복사 → 고양이가 생선을 먹고 클립을 저장\n- {hotkey} 또는 \
-             휠클릭 → 클립보드 히스토리\n- 클립 클릭 → 서식 없는 깔끔한 평문으로 다시 \
-             복사\n- 타이핑/클릭 → \
+             휠클릭 → 클립보드 히스토리\n- 클립 클릭 → 원본 서식 그대로 붙여넣기 \
+             (\"...\"로 텍스트만 붙여넣기 가능)\n- 타이핑/클릭 → \
              고양이가 따라 치고 XP 획득\n- 더블클릭 → 쓰다듬기\n\n모든 데이터는 이 PC에만 \
              저장됩니다. 네트워크는 GitHub 새 버전 확인에만 쓰입니다(이 메뉴에서 끌 수 \
              있음)."
@@ -382,6 +409,7 @@ mod tests {
             MenuAutoClose, MenuPasteOnSelect, ToastCopied, ToastPasteOn, ToastPasteOff,
             ToastDeleted, ToastRestored, ToastClearConfirm,
             ToastCapturePaused, ToastCaptureOn, ToastAutoCloseOn, ToastAutoCloseOff,
+            ToastPastedPlain, TipView, TipFilter, TipPause, TipResume, TipClear, TipLang, TipClose,
             MenuAutoUpdate, ToastUpdateDownloading,
             ToastUpdateFailed, ToastAccessibility, BubbleKeys, BubbleClicks, BubbleClips,
             BubbleActive,

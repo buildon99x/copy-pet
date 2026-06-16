@@ -37,9 +37,14 @@ pub const BTN: f32 = 18.0;
 pub const ROW_H: f32 = 34.0;
 /// Per-clip row height in the roomier rounded-box "thumbnail" view.
 pub const ROW_H_THUMB: f32 = 52.0;
-/// Row x-zones: pin toggle | clip body | delete.
-pub const PIN_ZONE: f32 = 34.0; // x < row_x + PIN_ZONE
-pub const DEL_ZONE: f32 = 28.0; // x > row_x + row_w - DEL_ZONE
+/// Left inset of the clip body text inside a row.
+pub const BODY_X: f32 = 10.0;
+/// Per-row right-edge gadget zones, measured leftward from the row's right edge.
+/// Collapsed: the "..." overflow toggle then the pin star. Expanded (actions
+/// revealed): two buttons, "paste as text" | "delete", each [`ACT_ZONE`] wide.
+pub const OVF_ZONE: f32 = 22.0;
+pub const PIN_ZONE: f32 = 22.0;
+pub const ACT_ZONE: f32 = 24.0;
 /// Quick-copy hotkeys cover the first `QUICK_KEYS` rows (Ctrl+0..9).
 pub const QUICK_KEYS: usize = 10;
 /// Side of the square resize grip in the card's bottom-right corner.
@@ -145,8 +150,11 @@ pub struct Layout {
 /// (scrolling, typing in search) are handled internally and return None.
 #[derive(Debug, PartialEq)]
 pub enum PanelAction {
-    /// Put this clip's text back on the OS clipboard.
+    /// Put this clip's text back on the OS clipboard (formatting preserved).
     Copy(u64),
+    /// Put this clip's *plain* text on the clipboard and paste it (formatting
+    /// stripped) — the revealed "paste as text" row action (ADR-0014).
+    PasteText(u64),
     TogglePin(u64),
     Delete(u64),
     /// First press of the clear button: ask for the confirming second press.
@@ -173,6 +181,10 @@ pub enum NavKey {
     Home,
     End,
     Enter,
+    /// Reveal the selected row's actions ("paste as text" / delete).
+    Right,
+    /// Collapse the selected row's revealed actions.
+    Left,
     Delete,
     Backspace,
     Esc,
@@ -216,6 +228,10 @@ pub struct Panel {
     /// The clear button was pressed once; the next press really clears.
     /// Any other interaction disarms it.
     pub clear_armed: bool,
+    /// Clip id whose inline actions ("paste as text" / delete) are revealed, if
+    /// any. Only one row is expanded at a time; opened by the "..." overflow or
+    /// the Right arrow, closed by Left/Esc or interacting with another row.
+    pub expanded: Option<u64>,
     /// Card size in canvas units (user-resizable, persisted).
     pub w: f32,
     pub h: f32,
@@ -248,6 +264,7 @@ impl Default for Panel {
             sel: 0,
             cursor: None,
             clear_armed: false,
+            expanded: None,
             w: DEFAULT_W,
             h: DEFAULT_H,
             off: DEFAULT_OFF,
@@ -400,6 +417,12 @@ impl Panel {
             self.sel = 0;
         }
         self.clear_armed = false;
+        self.expanded = None;
+    }
+
+    /// Collapses any revealed per-row actions.
+    pub fn collapse_actions(&mut self) {
+        self.expanded = None;
     }
 
     /// Zones that start a card drag: the bottom-right grip resizes, the
@@ -440,6 +463,9 @@ impl Panel {
         let total = self.visible(store).len();
         self.clamp_scroll(total);
         self.keep_sel_visible();
+        // the list changed under the panel (delete/clear/undo/resize): close any
+        // revealed action row so it can't point at a stale clip.
+        self.expanded = None;
     }
 
     /// Moves the keyboard selection to the clip with `id` (after a pin
@@ -487,6 +513,7 @@ impl Panel {
         self.source = next;
         self.scroll = 0;
         self.sel = 0;
+        self.expanded = None;
     }
 
     /// True if the point (canvas coords) is inside the panel card.
@@ -579,14 +606,32 @@ impl Panel {
         if let Some(i) = self.row_at(y, visible.len()) {
             let id = visible[i].id;
             self.sel = i;
-            if x < l.row_x + PIN_ZONE {
-                return Some(PanelAction::TogglePin(id));
+            let right = l.row_x + l.row_w;
+            if self.expanded == Some(id) {
+                // revealed actions: [ paste as text ] [ delete ]
+                if x > right - ACT_ZONE {
+                    return Some(PanelAction::Delete(id));
+                }
+                if x > right - 2.0 * ACT_ZONE {
+                    return Some(PanelAction::PasteText(id));
+                }
+                // body of an expanded row: copy it and collapse the actions
+                self.expanded = None;
+                return Some(PanelAction::Copy(id));
             }
-            if x > l.row_x + l.row_w - DEL_ZONE {
-                return Some(PanelAction::Delete(id));
+            // collapsed: [ ... overflow ] [ pin ] | body
+            if x > right - OVF_ZONE {
+                self.expanded = Some(id); // reveal this row's actions (pure state)
+                return None;
+            }
+            // any other row interaction closes a menu open on another row
+            self.expanded = None;
+            if x > right - OVF_ZONE - PIN_ZONE {
+                return Some(PanelAction::TogglePin(id));
             }
             return Some(PanelAction::Copy(id));
         }
+        self.expanded = None; // click in the empty row area closes an open menu
         None
     }
 
@@ -608,6 +653,11 @@ impl Panel {
         let armed = std::mem::take(&mut self.clear_armed);
         let total = self.visible(store).len();
         let rows = self.visible_rows();
+        // Right reveals the selected row's actions; Esc peels them in its own
+        // handler; every other key collapses an open action row.
+        if !matches!(key, NavKey::Right | NavKey::Esc) {
+            self.expanded = None;
+        }
         match key {
             NavKey::Up => {
                 self.sel = self.sel.saturating_sub(1);
@@ -641,6 +691,15 @@ impl Panel {
                     return Some(PanelAction::Copy(c.id));
                 }
             }
+            NavKey::Right => {
+                // reveal the selected row's actions (pure state)
+                let visible = self.visible(store);
+                if let Some(c) = visible.get(self.sel) {
+                    self.expanded = Some(c.id);
+                }
+                return None;
+            }
+            NavKey::Left => return None, // actions already collapsed above
             NavKey::Quick(n) => {
                 // nth row from the very top of the filtered list (0-based,
                 // matching the digit badges drawn on the rows)
@@ -672,8 +731,12 @@ impl Panel {
                 return None;
             }
             NavKey::Esc => {
-                // peel back one layer at a time: armed clear, query, filter, close
+                // peel back one layer at a time: armed clear, revealed actions,
+                // query, filter, close
                 if armed {
+                    return None;
+                }
+                if self.expanded.take().is_some() {
                     return None;
                 }
                 if !self.query.is_empty() {
@@ -736,16 +799,27 @@ mod tests {
         let mut p = open_panel();
         let l = p.layout();
         let ids: Vec<u64> = s.visible("").iter().map(|c| c.id).collect();
-        // middle of first row copies
+        // middle of first row copies (formatting preserved)
         let y0 = l.rows_y + ROW_H / 2.0;
+        let right = l.row_x + l.row_w;
         assert_eq!(p.click(150.0, y0, &s), Some(PanelAction::Copy(ids[0])));
-        // pin zone
-        assert_eq!(p.click(l.row_x + 5.0, y0, &s), Some(PanelAction::TogglePin(ids[0])));
-        // delete zone
+        // pin zone now sits on the right, just left of the "..." overflow
         assert_eq!(
-            p.click(l.row_x + l.row_w - 5.0, y0, &s),
-            Some(PanelAction::Delete(ids[0]))
+            p.click(right - OVF_ZONE - 5.0, y0, &s),
+            Some(PanelAction::TogglePin(ids[0]))
         );
+        // the "..." overflow reveals the row's actions (no action emitted)
+        assert_eq!(p.click(right - 4.0, y0, &s), None);
+        assert_eq!(p.expanded, Some(ids[0]));
+        // revealed: rightmost button deletes, the one left of it pastes as text
+        assert_eq!(p.click(right - 4.0, y0, &s), Some(PanelAction::Delete(ids[0])));
+        assert_eq!(
+            p.click(right - ACT_ZONE - 4.0, y0, &s),
+            Some(PanelAction::PasteText(ids[0]))
+        );
+        // a click on the body of an expanded row copies it and collapses
+        assert_eq!(p.click(150.0, y0, &s), Some(PanelAction::Copy(ids[0])));
+        assert_eq!(p.expanded, None);
         // outside the card
         assert_eq!(p.click(150.0, l.card_y + l.card_h + 30.0, &s), None);
         // close button
@@ -762,6 +836,28 @@ mod tests {
         assert_eq!(p.drag_hit(l.btn_view_x + 8.0, l.btn_y + 8.0), None);
         // the header strip left of it still moves the card
         assert_eq!(p.drag_hit(l.btn_view_x - 12.0, l.btn_y + 8.0), Some(PanelDrag::Move));
+    }
+
+    #[test]
+    fn arrow_keys_and_esc_drive_the_action_row() {
+        let s = store(3);
+        let mut p = open_panel();
+        let ids: Vec<u64> = s.visible("").iter().map(|c| c.id).collect();
+        // Right reveals the selected row's actions; Left collapses them
+        assert_eq!(p.nav(NavKey::Right, &s), None);
+        assert_eq!(p.expanded, Some(ids[0]));
+        assert_eq!(p.nav(NavKey::Left, &s), None);
+        assert_eq!(p.expanded, None);
+        // moving the selection collapses an open action row
+        p.nav(NavKey::Right, &s);
+        p.nav(NavKey::Down, &s);
+        assert_eq!(p.expanded, None);
+        // Esc peels the actions before it would close the panel
+        p.nav(NavKey::Right, &s);
+        assert!(p.expanded.is_some());
+        assert_eq!(p.nav(NavKey::Esc, &s), None);
+        assert_eq!(p.expanded, None, "esc collapses the actions first");
+        assert_eq!(p.nav(NavKey::Esc, &s), Some(PanelAction::Close));
     }
 
     #[test]

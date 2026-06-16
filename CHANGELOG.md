@@ -17,6 +17,16 @@ versions follow [SemVer](https://semver.org/). Maintenance rules:
 ## [Unreleased]
 
 ### Added
+- **Formatting is kept when you paste** (Win+V parity): copied rich text now
+  keeps its original formatting (bold, colors, links) when you pick it from the
+  panel, instead of always pasting as plain text. (Windows and macOS; on Linux
+  clips stay plain text.)
+- **"Paste as text" per clip**: click the new "..." on a clip row — or select
+  the row and press the **→** arrow — to reveal **Paste as text** and **Delete**
+  buttons. "Paste as text" strips the formatting and pastes the clean text;
+  press **←** to hide the buttons again.
+- **Tooltips on the panel's top icons**: hovering the view / filter / pause /
+  clear / language / close buttons now shows a label so it's clear what each does.
 - **Clipboard opens at your cursor** (Win+V parity): pressing the panel hotkey
   now pops the clip list up at the text caret in whatever app you're typing
   in, instead of over the cat — so it's right where you're working and the cat
@@ -37,8 +47,8 @@ versions follow [SemVer](https://semver.org/). Maintenance rules:
   the cat shows a small banner with the exact hotkey (e.g. "Clipboard:
   WIN+SHIFT+V"), so the history is discoverable from the very first launch.
   It disappears for good once you've opened the panel.
-- The **About box** now spells out that clips are pasted back as clean plain
-  text (formatting stripped) — a strength ClipCat always had but never said.
+- The **About box** now explains that clips paste back with their original
+  formatting, and how to paste a clip as plain text.
 - A **GitHub** entry in the context menu (just below "About ClipCat") opens
   the project page in your browser.
 - The clipboard panel has a new **Thumbnail view**, toggled by a button in
@@ -62,6 +72,9 @@ versions follow [SemVer](https://semver.org/). Maintenance rules:
   can grab several clips in a row. On by default.
 
 ### Changed
+- The per-clip **pin (★) moved to the right** side of each row, and the row's
+  delete moved into the new "..." menu (the always-visible delete "X" is gone) —
+  a cleaner, less cluttered row.
 - **Smarter panel search**: type several words and only clips matching
   *every* word are shown (the words can match the text or the source app),
   and results are ranked by relevance — matches at the start of a word, or

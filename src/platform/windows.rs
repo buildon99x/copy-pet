@@ -10,6 +10,7 @@
 //! `WS_EX_NOACTIVATE` and takes focus so the search box can receive
 //! keyboard input (incl. IME-composed Hangul via WM_CHAR).
 
+use crate::clipboard::{b64_decode, b64_encode, RichFormats};
 use crate::hotkey::{self, Hotkey};
 use crate::i18n::{self, t, Lang, Msg};
 use crate::input;
@@ -26,7 +27,8 @@ use windows_sys::Win32::Foundation::*;
 use windows_sys::Win32::Graphics::Gdi::*;
 use windows_sys::Win32::System::DataExchange::{
     AddClipboardFormatListener, CloseClipboard, EmptyClipboard, GetClipboardData,
-    GetClipboardOwner, OpenClipboard, RemoveClipboardFormatListener, SetClipboardData,
+    GetClipboardOwner, OpenClipboard, RegisterClipboardFormatW, RemoveClipboardFormatListener,
+    SetClipboardData,
 };
 use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows_sys::Win32::System::Memory::{
@@ -183,7 +185,7 @@ impl App {
     /// active when the panel opened and synthesizes Ctrl+V there.
     fn copy_back(&mut self, pick: ClipPick) {
         self.suppress_clip = Some(pick.text.clone());
-        unsafe { set_clipboard_text(self.hwnd, &pick.text) };
+        unsafe { set_clipboard_rich(self.hwnd, &pick.text, pick.formats.as_ref(), pick.plain_only) };
         if pick.paste && !self.paste_target.is_null() && self.paste_target != self.hwnd {
             unsafe {
                 // Win+V parity: hand the foreground back to the app that was
@@ -748,11 +750,74 @@ unsafe fn make_icon() -> HICON {
 
 // ---- clipboard --------------------------------------------------------------
 
-/// Reads CF_UNICODETEXT from the clipboard, retrying briefly: the copying
-/// app may still hold the clipboard open when WM_CLIPBOARDUPDATE arrives.
-/// SAFETY: handles returned by GetClipboardData are owned by the clipboard;
-/// we only read between GlobalLock/GlobalUnlock and never free them.
-unsafe fn read_clipboard_text(hwnd: HWND) -> Option<String> {
+/// The registered clipboard format ids for CF_HTML / CF_RTF (ADR-0014).
+/// `RegisterClipboardFormatW` returns the same atom for a given name for the
+/// life of the session, so we cache them after the first call.
+fn clip_atoms() -> (u32, u32) {
+    use std::sync::OnceLock;
+    static ATOMS: OnceLock<(u32, u32)> = OnceLock::new();
+    *ATOMS.get_or_init(|| unsafe {
+        (
+            RegisterClipboardFormatW(wz("HTML Format").as_ptr()),
+            RegisterClipboardFormatW(wz("Rich Text Format").as_ptr()),
+        )
+    })
+}
+
+/// Trailing-NUL trim: CF_HTML/CF_RTF blobs are NUL-terminated and `GlobalSize`
+/// reports the (possibly padded) allocation, not the data length.
+fn trim_nul(mut b: Vec<u8>) -> Vec<u8> {
+    while b.last() == Some(&0) {
+        b.pop();
+    }
+    b
+}
+
+/// Reads CF_UNICODETEXT from an already-open clipboard.
+unsafe fn read_unicode_open() -> Option<String> {
+    let h = GetClipboardData(CF_UNICODETEXT);
+    if h.is_null() {
+        return None;
+    }
+    let p = GlobalLock(h) as *const u16;
+    if p.is_null() {
+        return None;
+    }
+    let max = GlobalSize(h) / 2;
+    let mut len = 0usize;
+    while len < max && *p.add(len) != 0 {
+        len += 1;
+    }
+    let s = String::from_utf16_lossy(std::slice::from_raw_parts(p, len));
+    GlobalUnlock(h);
+    Some(s)
+}
+
+/// Reads a raw clipboard-format blob from an already-open clipboard.
+unsafe fn read_format_bytes(fmt: u32) -> Option<Vec<u8>> {
+    if fmt == 0 {
+        return None;
+    }
+    let h = GetClipboardData(fmt);
+    if h.is_null() {
+        return None;
+    }
+    let p = GlobalLock(h) as *const u8;
+    if p.is_null() {
+        return None;
+    }
+    let n = GlobalSize(h);
+    let bytes = std::slice::from_raw_parts(p, n).to_vec();
+    GlobalUnlock(h);
+    Some(trim_nul(bytes))
+}
+
+/// Reads CF_UNICODETEXT plus any CF_HTML / CF_RTF in one OpenClipboard, retrying
+/// briefly (the copying app may still hold the clipboard open). The CF_HTML blob
+/// is kept verbatim (header included). SAFETY: clipboard-owned handles are only
+/// read between GlobalLock/GlobalUnlock and never freed.
+unsafe fn read_clipboard_rich(hwnd: HWND) -> Option<(String, Option<RichFormats>)> {
+    let (cf_html, cf_rtf) = clip_atoms();
     for attempt in 0..5 {
         if attempt > 0 {
             Sleep(15);
@@ -760,36 +825,55 @@ unsafe fn read_clipboard_text(hwnd: HWND) -> Option<String> {
         if OpenClipboard(hwnd) == 0 {
             continue;
         }
-        let h = GetClipboardData(CF_UNICODETEXT);
-        let result = if h.is_null() {
-            None
-        } else {
-            let p = GlobalLock(h) as *const u16;
-            if p.is_null() {
-                None
-            } else {
-                let max = GlobalSize(h) / 2;
-                let mut len = 0usize;
-                while len < max && *p.add(len) != 0 {
-                    len += 1;
-                }
-                let s = String::from_utf16_lossy(std::slice::from_raw_parts(p, len));
-                GlobalUnlock(h);
-                Some(s)
-            }
-        };
+        let text = read_unicode_open();
+        let formats = text.as_ref().and_then(|_| {
+            let html = read_format_bytes(cf_html).and_then(|b| String::from_utf8(b).ok());
+            let rtf_b64 = read_format_bytes(cf_rtf).map(|b| b64_encode(&b));
+            let f = RichFormats { html, rtf_b64 };
+            (!f.is_empty()).then_some(f)
+        });
         CloseClipboard();
-        return result;
+        return text.map(|t| (t, formats));
     }
     None
 }
 
-/// Replaces the clipboard with `text` (CF_UNICODETEXT).
-/// SAFETY: the GlobalAlloc'd buffer is handed to the clipboard on success
-/// (which then owns it); on failure we free it ourselves.
-unsafe fn set_clipboard_text(hwnd: HWND, text: &str) -> bool {
+/// Writes one format's bytes to an already-open, already-emptied clipboard.
+/// SAFETY: the GlobalAlloc'd buffer is handed to the clipboard on success (it
+/// then owns it); on failure we free it ourselves.
+unsafe fn write_format(fmt: u32, bytes: &[u8]) -> bool {
+    let h = GlobalAlloc(GMEM_MOVEABLE, bytes.len());
+    if h.is_null() {
+        return false;
+    }
+    let p = GlobalLock(h) as *mut u8;
+    if p.is_null() {
+        GlobalFree(h);
+        return false;
+    }
+    std::ptr::copy_nonoverlapping(bytes.as_ptr(), p, bytes.len());
+    GlobalUnlock(h);
+    if SetClipboardData(fmt, h).is_null() {
+        GlobalFree(h);
+        false
+    } else {
+        true
+    }
+}
+
+/// Replaces the clipboard with `text` (CF_UNICODETEXT, always), plus the
+/// original CF_HTML / CF_RTF when `!plain_only` and present (ADR-0014). One
+/// OpenClipboard for all formats. The self-suppression marker is keyed on the
+/// text, which is always written, so it stays valid.
+unsafe fn set_clipboard_rich(
+    hwnd: HWND,
+    text: &str,
+    formats: Option<&RichFormats>,
+    plain_only: bool,
+) -> bool {
+    let (cf_html, cf_rtf) = clip_atoms();
     let wide: Vec<u16> = text.encode_utf16().chain(std::iter::once(0)).collect();
-    let bytes = wide.len() * 2;
+    let text_bytes = std::slice::from_raw_parts(wide.as_ptr() as *const u8, wide.len() * 2);
     for attempt in 0..5 {
         if attempt > 0 {
             Sleep(15);
@@ -798,17 +882,20 @@ unsafe fn set_clipboard_text(hwnd: HWND, text: &str) -> bool {
             continue;
         }
         EmptyClipboard();
-        let h = GlobalAlloc(GMEM_MOVEABLE, bytes);
-        let mut ok = false;
-        if !h.is_null() {
-            let p = GlobalLock(h) as *mut u8;
-            if !p.is_null() {
-                std::ptr::copy_nonoverlapping(wide.as_ptr() as *const u8, p, bytes);
-                GlobalUnlock(h);
-                ok = !SetClipboardData(CF_UNICODETEXT, h).is_null();
-            }
-            if !ok {
-                GlobalFree(h);
+        let ok = write_format(CF_UNICODETEXT, text_bytes);
+        if ok && !plain_only {
+            if let Some(f) = formats {
+                if let Some(html) = &f.html {
+                    let mut b = html.as_bytes().to_vec();
+                    b.push(0);
+                    let _ = write_format(cf_html, &b);
+                }
+                if let Some(rtf_b64) = &f.rtf_b64 {
+                    if let Some(mut b) = b64_decode(rtf_b64) {
+                        b.push(0);
+                        let _ = write_format(cf_rtf, &b);
+                    }
+                }
             }
         }
         CloseClipboard();
@@ -1599,6 +1686,8 @@ fn map_nav_key(vk: u16, ctrl: bool) -> Option<NavKey> {
         0x22 => Some(NavKey::PageDown),  // VK_NEXT
         0x24 => Some(NavKey::Home),      // VK_HOME
         0x23 => Some(NavKey::End),       // VK_END
+        0x27 => Some(NavKey::Right),     // VK_RIGHT: reveal row actions
+        0x25 => Some(NavKey::Left),      // VK_LEFT: collapse row actions
         0x0D => Some(NavKey::Enter),     // VK_RETURN
         0x2E => Some(NavKey::Delete),    // VK_DELETE
         0x08 => Some(NavKey::Backspace), // VK_BACK
@@ -1722,14 +1811,14 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
             })
             .unwrap_or(false);
             if capture {
-                if let Some(text) = read_clipboard_text(hwnd) {
+                if let Some((text, formats)) = read_clipboard_rich(hwnd) {
                     with_app(|a| {
                         if a.suppress_clip.as_deref() == Some(text.as_str()) {
                             a.suppress_clip = None;
                             return;
                         }
                         let (source, badge) = clipboard_source();
-                        a.pet.on_copy(text, source, badge);
+                        a.pet.on_copy_rich(text, source, badge, formats);
                     });
                 }
             }

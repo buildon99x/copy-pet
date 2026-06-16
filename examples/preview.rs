@@ -212,6 +212,55 @@ fn main() {
         };
         render::draw_panel(&mut pm, &view);
         save(&pm, &dir, "4-panel-flyout");
+
+        // the per-row inline actions revealed ("..." / Right arrow): the
+        // selected row shows [ paste as text ] [ delete ] on the right (paste
+        // button hovered); pin/overflow now live on the right edge too.
+        let mut panel = Panel::default();
+        panel.toggle();
+        panel.sel = 1;
+        let lt = panel.layout();
+        panel.expanded = Some(panel.visible(&store)[1].id);
+        let right = lt.row_x + lt.row_w;
+        let y1 = lt.rows_y + clipcat::panel::ROW_H * 1.5;
+        panel.cursor = Some((right - clipcat::panel::ACT_ZONE - 4.0, y1));
+        let mut sc = base_scene(Lang::En);
+        sc.origin = lt.cat;
+        let mut pm = Pixmap::new(lt.canvas_w as u32, lt.canvas_h as u32).unwrap();
+        render::render_card(&mut pm, &sc, 1.0);
+        let view = PanelView {
+            panel: &panel,
+            store: &store,
+            lang: Lang::En,
+            capture: true,
+            hint: "WIN+SHIFT+V",
+            caret: false,
+        };
+        render::draw_panel(&mut pm, &view);
+        save(&pm, &dir, "4-panel-actions");
+
+        // a header-icon tooltip on hover (the clear/trash button)
+        let mut panel = Panel::default();
+        panel.toggle();
+        let lt = panel.layout();
+        panel.cursor = Some((
+            lt.btn_clear_x + clipcat::panel::BTN / 2.0,
+            lt.btn_y + clipcat::panel::BTN / 2.0,
+        ));
+        let mut sc = base_scene(Lang::Ko);
+        sc.origin = lt.cat;
+        let mut pm = Pixmap::new(lt.canvas_w as u32, lt.canvas_h as u32).unwrap();
+        render::render_card(&mut pm, &sc, 1.0);
+        let view = PanelView {
+            panel: &panel,
+            store: &store,
+            lang: Lang::Ko,
+            capture: true,
+            hint: "WIN+SHIFT+V",
+            caret: false,
+        };
+        render::draw_panel(&mut pm, &view);
+        save(&pm, &dir, "4-panel-tooltip");
     }
 
     // 5. the app icon (64 px)

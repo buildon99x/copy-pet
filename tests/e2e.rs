@@ -627,3 +627,36 @@ fn context_menu_unlocks_accessories_by_level() {
     high.apply_menu_action(MenuAction::SetAccessory(9999));
     assert_eq!(high.st.accessory, prev);
 }
+
+/// Rich-format paste parity (ADR-0014): a normal pick re-emits the original
+/// formatting, while the per-row "paste as text" action strips it. Drives the
+/// panel exactly as the backends do (overflow click reveals the row actions).
+#[test]
+fn copy_preserves_formats_but_paste_as_text_strips_them() {
+    use clipcat::clipboard::RichFormats;
+    let mut p = pet();
+    p.on_copy_rich(
+        "rich clip".into(),
+        Some("Code".into()),
+        None,
+        Some(RichFormats { html: Some("<b>rich clip</b>".into()), rtf_b64: None }),
+    );
+    p.toggle_panel();
+    let l = p.panel.active_layout();
+    let right = l.row_x + l.row_w;
+    let y0 = l.rows_y + panel::ROW_H / 2.0;
+
+    // the default pick (Enter) preserves the original formatting
+    let copied = p.panel_nav(NavKey::Enter).expect("a clip pick");
+    assert_eq!(copied.text, "rich clip");
+    assert!(!copied.plain_only);
+    assert_eq!(copied.formats.unwrap().html.as_deref(), Some("<b>rich clip</b>"));
+
+    // reopen, reveal the row actions, and "paste as text" strips formatting
+    p.toggle_panel();
+    assert_eq!(p.panel_click(right - 4.0, y0), None, "overflow only reveals actions");
+    let plain = p.panel_click(right - panel::ACT_ZONE - 4.0, y0).expect("a clip pick");
+    assert_eq!(plain.text, "rich clip");
+    assert!(plain.plain_only && plain.paste, "paste as text: plain + explicit paste");
+    assert!(plain.formats.is_none());
+}
