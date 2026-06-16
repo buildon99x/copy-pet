@@ -660,3 +660,22 @@ fn copy_preserves_formats_but_paste_as_text_strips_them() {
     assert!(plain.plain_only && plain.paste, "paste as text: plain + explicit paste");
     assert!(plain.formats.is_none());
 }
+
+/// Mouse-free "paste as text" (ADR-0014): Ctrl/Cmd+Enter on the selected clip
+/// strips formatting and pastes it, without opening the "..." action menu.
+#[test]
+fn ctrl_enter_pastes_selected_clip_as_text() {
+    use clipcat::clipboard::RichFormats;
+    let mut p = pet();
+    p.on_copy_rich(
+        "rich clip".into(),
+        Some("Code".into()),
+        None,
+        Some(RichFormats { html: Some("<b>rich clip</b>".into()), rtf_b64: None }),
+    );
+    p.toggle_panel();
+    let pick = p.panel_nav(NavKey::PasteText).expect("a clip pick");
+    assert_eq!(pick.text, "rich clip");
+    assert!(pick.plain_only && pick.paste, "plain text, explicitly pasted");
+    assert!(pick.formats.is_none());
+}

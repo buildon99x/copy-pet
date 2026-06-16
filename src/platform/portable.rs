@@ -1150,6 +1150,8 @@ fn nav_from_key(event: &winit::event::KeyEvent, ctrl: bool) -> Option<NavKey> {
         PhysicalKey::Code(KeyCode::End) => Some(NavKey::End),
         PhysicalKey::Code(KeyCode::ArrowRight) => Some(NavKey::Right),
         PhysicalKey::Code(KeyCode::ArrowLeft) => Some(NavKey::Left),
+        // Ctrl/Cmd+Enter: paste the selection as plain text (formatting stripped)
+        PhysicalKey::Code(KeyCode::Enter | KeyCode::NumpadEnter) if ctrl => Some(NavKey::PasteText),
         PhysicalKey::Code(KeyCode::Enter | KeyCode::NumpadEnter) => Some(NavKey::Enter),
         PhysicalKey::Code(KeyCode::Delete) => Some(NavKey::Delete),
         PhysicalKey::Code(KeyCode::Backspace) => Some(NavKey::Backspace),

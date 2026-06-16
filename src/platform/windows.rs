@@ -1688,6 +1688,7 @@ fn map_nav_key(vk: u16, ctrl: bool) -> Option<NavKey> {
         0x23 => Some(NavKey::End),       // VK_END
         0x27 => Some(NavKey::Right),     // VK_RIGHT: reveal row actions
         0x25 => Some(NavKey::Left),      // VK_LEFT: collapse row actions
+        0x0D if ctrl => Some(NavKey::PasteText), // Ctrl+Enter: paste as plain text
         0x0D => Some(NavKey::Enter),     // VK_RETURN
         0x2E => Some(NavKey::Delete),    // VK_DELETE
         0x08 => Some(NavKey::Backspace), // VK_BACK

@@ -181,6 +181,8 @@ pub enum NavKey {
     Home,
     End,
     Enter,
+    /// Paste the selected clip as plain text (Ctrl/Cmd+Enter): strips formatting.
+    PasteText,
     /// Reveal the selected row's actions ("paste as text" / delete).
     Right,
     /// Collapse the selected row's revealed actions.
@@ -691,6 +693,13 @@ impl Panel {
                     return Some(PanelAction::Copy(c.id));
                 }
             }
+            NavKey::PasteText => {
+                // mouse-free "paste as text": strip formatting on the selection
+                let visible = self.visible(store);
+                if let Some(c) = visible.get(self.sel) {
+                    return Some(PanelAction::PasteText(c.id));
+                }
+            }
             NavKey::Right => {
                 // reveal the selected row's actions (pure state)
                 let visible = self.visible(store);
@@ -858,6 +867,20 @@ mod tests {
         assert_eq!(p.nav(NavKey::Esc, &s), None);
         assert_eq!(p.expanded, None, "esc collapses the actions first");
         assert_eq!(p.nav(NavKey::Esc, &s), Some(PanelAction::Close));
+    }
+
+    #[test]
+    fn ctrl_enter_pastes_selected_as_text() {
+        let s = store(3);
+        let mut p = open_panel();
+        let ids: Vec<u64> = s.visible("").iter().map(|c| c.id).collect();
+        p.nav(NavKey::Down, &s); // select row 1
+        assert_eq!(p.nav(NavKey::PasteText, &s), Some(PanelAction::PasteText(ids[1])));
+        // it works without opening the "..." menu, and collapses any open one
+        assert_eq!(p.expanded, None);
+        // empty list: a no-op, not a panic
+        let empty = ClipStore::default();
+        assert_eq!(p.nav(NavKey::PasteText, &empty), None);
     }
 
     #[test]
