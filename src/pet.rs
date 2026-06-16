@@ -4,7 +4,7 @@
 //! trays — the platform backends drive it by feeding input counts and copy
 //! events, calling [`Pet::advance`] each tick and presenting [`Pet::render`].
 
-use crate::clipboard::ClipStore;
+use crate::clipboard::{ClipStore, RichFormats};
 use crate::i18n::{self, t, Lang, Msg};
 use crate::menu::{MenuAction, MenuEntry, MenuItem, MenuOutcome};
 use crate::panel::{NavKey, Panel, PanelAction, PanelDrag};
@@ -24,10 +24,16 @@ pub const XP_PER_COPY: u64 = 5;
 /// A clip the user picked from the panel, handed to the backend to put on the
 /// OS clipboard. `paste` additionally asks the backend to paste it into the
 /// previously focused app (synthesized Ctrl/Cmd+V; see `paste_on_select`).
+///
+/// `formats` carries the original rich formats to re-emit (ADR-0014); when
+/// `plain_only` is set the backend writes plain text only — the "paste as text"
+/// per-row action, which strips formatting regardless of what was captured.
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct ClipPick {
     pub text: String,
     pub paste: bool,
+    pub formats: Option<RichFormats>,
+    pub plain_only: bool,
 }
 
 /// Flight time of one fish, in seconds.
@@ -425,11 +431,24 @@ impl Pet {
     /// fish and grants XP. `badge` lets the backend attach a real app icon;
     /// when None one is derived from the source app name.
     pub fn on_copy(&mut self, text: String, source: Option<String>, badge: Option<Badge>) {
+        self.on_copy_rich(text, source, badge, None);
+    }
+
+    /// Like [`Pet::on_copy`], additionally storing the original rich formats the
+    /// backend captured (ADR-0014). The plain `on_copy` is the `formats: None`
+    /// case (Linux, or a plain copy).
+    pub fn on_copy_rich(
+        &mut self,
+        text: String,
+        source: Option<String>,
+        badge: Option<Badge>,
+        formats: Option<RichFormats>,
+    ) {
         if !self.st.clip_capture {
             return;
         }
         let badge = badge.unwrap_or_else(|| Badge::from_source(source.as_deref()));
-        if !self.clips.add_copy(text, source) {
+        if !self.clips.add_copy_rich(text, source, formats) {
             return;
         }
         if self.fish_queue.len() >= FISH_QUEUE_MAX {
@@ -661,27 +680,51 @@ impl Pet {
         self.panel.hit(cx, cy)
     }
 
+    /// Shared reaction to picking a clip (copy / paste-as-text): toast, a happy
+    /// bump, the pop sound, and closing the panel when auto-close is on.
+    fn after_pick(&mut self, toast: Msg) {
+        self.set_toast(t(self.lang(), toast).to_string(), 1.6);
+        self.happy = (self.happy + 0.4).min(1.0);
+        if self.st.sound_mode >= 1 {
+            sound::play_pop();
+        }
+        // picked a clip: close the panel so the user can paste
+        // (switchable off to grab several clips in a row)
+        if self.st.panel_autoclose {
+            self.dismiss_panel();
+        }
+    }
+
     /// Executes a panel action. Returns text the backend must put on the
     /// OS clipboard, if any.
     fn run_action(&mut self, action: PanelAction) -> Option<ClipPick> {
         match action {
             PanelAction::Copy(id) => {
-                let text = self.clips.get(id).map(|c| c.text.clone());
-                if let Some(text) = text {
-                    self.set_toast(t(self.lang(), Msg::ToastCopied).to_string(), 1.6);
-                    self.happy = (self.happy + 0.4).min(1.0);
-                    if self.st.sound_mode >= 1 {
-                        sound::play_pop();
-                    }
-                    // picked a clip: close the panel so the user can paste
-                    // (switchable off to grab several clips in a row)
-                    if self.st.panel_autoclose {
-                        self.dismiss_panel();
-                    }
-                    return Some(ClipPick {
-                        text,
+                // default pick: preserve the original formatting (ADR-0014)
+                if let Some(clip) = self.clips.get(id) {
+                    let pick = ClipPick {
+                        text: clip.text.clone(),
                         paste: self.st.paste_on_select,
-                    });
+                        formats: clip.formats.clone(),
+                        plain_only: false,
+                    };
+                    self.after_pick(Msg::ToastCopied);
+                    return Some(pick);
+                }
+                return None;
+            }
+            PanelAction::PasteText(id) => {
+                // "paste as text": strip formatting and paste it explicitly
+                if let Some(clip) = self.clips.get(id) {
+                    let pick = ClipPick {
+                        text: clip.text.clone(),
+                        paste: true,
+                        formats: None,
+                        plain_only: true,
+                    };
+                    self.panel.collapse_actions();
+                    self.after_pick(Msg::ToastPastedPlain);
+                    return Some(pick);
                 }
                 return None;
             }

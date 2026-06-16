@@ -42,8 +42,17 @@
 
 use crate::hotkey::Hotkey;
 use crate::input;
+use crate::clipboard::RichFormats;
 use crate::panel::{fit_delta, NavKey, Rect};
 use crate::pet::{ClipPick, Pet};
+
+/// A clipboard observation handed from the watcher thread to the main loop:
+/// the plain text plus any rich formats the platform could read (macOS only;
+/// Linux/arboard is text-only, so `formats` is always `None` there).
+struct ClipCapture {
+    text: String,
+    formats: Option<RichFormats>,
+}
 use crate::state::{Persist, ACCESSORIES};
 #[cfg(not(target_os = "macos"))]
 use std::num::NonZeroU32;
@@ -95,7 +104,7 @@ struct PortableApp {
     h: u32,
     last_frame: Instant,
     // clipboard
-    clip_rx: Receiver<String>,
+    clip_rx: Receiver<ClipCapture>,
     suppress: Suppress,
     /// Mirror of `st.clip_capture` for the watcher thread: while false the
     /// clipboard is not even read.
@@ -155,7 +164,7 @@ struct Flyout {
 impl PortableApp {
     fn new(
         pet: Pet,
-        clip_rx: Receiver<String>,
+        clip_rx: Receiver<ClipCapture>,
         suppress: Suppress,
         capture_flag: Arc<AtomicBool>,
         signals: InputSignals,
@@ -390,11 +399,24 @@ impl PortableApp {
     /// can't reliably re-focus the previous app, so the paste lands in whatever
     /// is frontmost after the panel closes.
     fn set_clipboard(&self, pick: ClipPick) {
+        // suppression is keyed on the text, which is always written, so it stays
+        // valid whether or not we also write the rich formats (ADR-0014).
         if let Ok(mut guard) = self.suppress.lock() {
             *guard = Some(pick.text.clone());
         }
-        if let Ok(mut cb) = arboard::Clipboard::new() {
-            let _ = cb.set_text(pick.text);
+        #[cfg(target_os = "macos")]
+        {
+            // macOS: write text plus the original HTML/RTF, unless this is the
+            // "paste as text" action (plain_only) which strips formatting.
+            let formats = if pick.plain_only { None } else { pick.formats.as_ref() };
+            super::mac_clipboard::write(&pick.text, formats);
+        }
+        #[cfg(not(target_os = "macos"))]
+        {
+            // Linux: arboard is text-only — rich formats degrade to plain.
+            if let Ok(mut cb) = arboard::Clipboard::new() {
+                let _ = cb.set_text(pick.text.clone());
+            }
         }
         if pick.paste {
             paste_synthesize();
@@ -1083,8 +1105,8 @@ impl ApplicationHandler for PortableApp {
             // copy events observed by the clipboard watcher
             self.capture_flag
                 .store(self.pet.st.clip_capture, Ordering::Relaxed);
-            while let Ok(text) = self.clip_rx.try_recv() {
-                self.pet.on_copy(text, None, None);
+            while let Ok(cap) = self.clip_rx.try_recv() {
+                self.pet.on_copy_rich(cap.text, None, None, cap.formats);
             }
             let (k, c, wh) = input::drain();
             let redraw = self.pet.advance(k, c, wh);
@@ -1126,6 +1148,10 @@ fn nav_from_key(event: &winit::event::KeyEvent, ctrl: bool) -> Option<NavKey> {
         PhysicalKey::Code(KeyCode::PageDown) => Some(NavKey::PageDown),
         PhysicalKey::Code(KeyCode::Home) => Some(NavKey::Home),
         PhysicalKey::Code(KeyCode::End) => Some(NavKey::End),
+        PhysicalKey::Code(KeyCode::ArrowRight) => Some(NavKey::Right),
+        PhysicalKey::Code(KeyCode::ArrowLeft) => Some(NavKey::Left),
+        // Ctrl/Cmd+Enter: paste the selection as plain text (formatting stripped)
+        PhysicalKey::Code(KeyCode::Enter | KeyCode::NumpadEnter) if ctrl => Some(NavKey::PasteText),
         PhysicalKey::Code(KeyCode::Enter | KeyCode::NumpadEnter) => Some(NavKey::Enter),
         PhysicalKey::Code(KeyCode::Delete) => Some(NavKey::Delete),
         PhysicalKey::Code(KeyCode::Backspace) => Some(NavKey::Backspace),
@@ -1372,7 +1398,7 @@ fn spawn_global_input(
 /// clipboard at startup, and — while capture is paused — doesn't read the
 /// clipboard at all (resyncing silently on resume so paused-time copies are
 /// never retroactively captured).
-fn spawn_clipboard_watcher(tx: Sender<String>, suppress: Suppress, capture: Arc<AtomicBool>) {
+fn spawn_clipboard_watcher(tx: Sender<ClipCapture>, suppress: Suppress, capture: Arc<AtomicBool>) {
     std::thread::spawn(move || {
         let Ok(mut cb) = arboard::Clipboard::new() else {
             return; // no clipboard (e.g. pure Wayland without XWayland)
@@ -1401,7 +1427,13 @@ fn spawn_clipboard_watcher(tx: Sender<String>, suppress: Suppress, capture: Arc<
                     continue;
                 }
             }
-            if tx.send(text).is_err() {
+            // arboard already told us the text changed; on macOS also grab the
+            // original rich formats for the same content (Linux stays plain).
+            #[cfg(target_os = "macos")]
+            let formats = super::mac_clipboard::read_formats();
+            #[cfg(not(target_os = "macos"))]
+            let formats = None;
+            if tx.send(ClipCapture { text, formats }).is_err() {
                 return;
             }
         }

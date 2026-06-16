@@ -182,7 +182,8 @@ fn filter_button_and_row_clicks() {
     assert_eq!(p.panel.source.as_deref(), Some("Code"));
 
     // the second row is empty under the filter -> a click there is a no-op
-    let empty_y = lt.rows_y + panel::ROW_H * 1.5;
+    // (use the layout's actual row height so this holds in either view mode)
+    let empty_y = lt.rows_y + lt.row_h * 1.5;
     assert_eq!(p.panel_click(150.0, empty_y), None);
 
     // cycle past the last source: back to all apps, both rows clickable
@@ -197,7 +198,7 @@ fn filter_button_and_row_clicks() {
     p.toggle_panel();
     p.panel_click(lt.btn_filter_x + 8.0, lt.btn_y + 8.0);
     assert_eq!(p.panel.source.as_deref(), Some("Code"));
-    let row_y = lt.rows_y + panel::ROW_H / 2.0;
+    let row_y = lt.rows_y + lt.row_h / 2.0;
     let text = p.panel_click(150.0, row_y);
     assert_eq!(text.map(|c| c.text).as_deref(), Some("newest from code"));
 }
@@ -390,6 +391,11 @@ fn context_menu_drives_settings_end_to_end() {
 #[test]
 fn panel_resize_and_move_persist_and_anchor() {
     let mut p = pet();
+    // this test pins the compact-list geometry (8 rows by default, 34px rows so
+    // +68px == 2 rows); the panel now opens in card view, so switch to the list.
+    if p.panel.view != 0 {
+        p.toggle_panel_view();
+    }
     for i in 0..15 {
         copy(&mut p, &format!("clip {i}"), None);
     }
@@ -626,4 +632,56 @@ fn context_menu_unlocks_accessories_by_level() {
     let prev = high.st.accessory;
     high.apply_menu_action(MenuAction::SetAccessory(9999));
     assert_eq!(high.st.accessory, prev);
+}
+
+/// Rich-format paste parity (ADR-0014): a normal pick re-emits the original
+/// formatting, while the per-row "paste as text" action strips it. Drives the
+/// panel exactly as the backends do (overflow click reveals the row actions).
+#[test]
+fn copy_preserves_formats_but_paste_as_text_strips_them() {
+    use clipcat::clipboard::RichFormats;
+    let mut p = pet();
+    p.on_copy_rich(
+        "rich clip".into(),
+        Some("Code".into()),
+        None,
+        Some(RichFormats { html: Some("<b>rich clip</b>".into()), rtf_b64: None }),
+    );
+    p.toggle_panel();
+    let l = p.panel.active_layout();
+    let right = l.row_x + l.row_w;
+    let y0 = l.rows_y + panel::ROW_H / 2.0;
+
+    // the default pick (Enter) preserves the original formatting
+    let copied = p.panel_nav(NavKey::Enter).expect("a clip pick");
+    assert_eq!(copied.text, "rich clip");
+    assert!(!copied.plain_only);
+    assert_eq!(copied.formats.unwrap().html.as_deref(), Some("<b>rich clip</b>"));
+
+    // reopen, reveal the row actions, and "paste as text" strips formatting
+    p.toggle_panel();
+    assert_eq!(p.panel_click(right - 4.0, y0), None, "overflow only reveals actions");
+    let plain = p.panel_click(right - panel::ACT_ZONE - 4.0, y0).expect("a clip pick");
+    assert_eq!(plain.text, "rich clip");
+    assert!(plain.plain_only && plain.paste, "paste as text: plain + explicit paste");
+    assert!(plain.formats.is_none());
+}
+
+/// Mouse-free "paste as text" (ADR-0014): Ctrl/Cmd+Enter on the selected clip
+/// strips formatting and pastes it, without opening the "..." action menu.
+#[test]
+fn ctrl_enter_pastes_selected_clip_as_text() {
+    use clipcat::clipboard::RichFormats;
+    let mut p = pet();
+    p.on_copy_rich(
+        "rich clip".into(),
+        Some("Code".into()),
+        None,
+        Some(RichFormats { html: Some("<b>rich clip</b>".into()), rtf_b64: None }),
+    );
+    p.toggle_panel();
+    let pick = p.panel_nav(NavKey::PasteText).expect("a clip pick");
+    assert_eq!(pick.text, "rich clip");
+    assert!(pick.plain_only && pick.paste, "plain text, explicitly pasted");
+    assert!(pick.formats.is_none());
 }

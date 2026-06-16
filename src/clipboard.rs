@@ -15,8 +15,38 @@ pub const MAX_PINNED: usize = 100;
 /// Clips larger than this many bytes are ignored entirely (a clipboard pet
 /// is not a paste-bin; truncating would corrupt a later paste).
 pub const MAX_TEXT: usize = 256 * 1024;
+/// Cap on a clip's optional rich formats (HTML + base64 RTF), independent of
+/// [`MAX_TEXT`]. On overflow the rich formats are dropped but the plain clip is
+/// kept — a paste still works, it just loses the formatting (ADR-0014).
+pub const MAX_RICH: usize = 1024 * 1024;
 /// Most delete operations kept for undo (session-only, not persisted).
 const MAX_UNDO: usize = 20;
+
+/// Optional rich clipboard formats kept alongside a clip's plain [`Clip::text`]
+/// (ADR-0014). Opaque to the core — backends encode/decode the OS formats. The
+/// plain text is always the source of truth for search, preview and de-dupe;
+/// these are only re-emitted when the user pastes with formatting preserved.
+/// Captured on Windows + macOS; Linux leaves them `None` (arboard is text-only).
+#[derive(Serialize, Deserialize, Clone, Default, PartialEq, Eq, Debug)]
+pub struct RichFormats {
+    /// CF_HTML (Windows) / `public.html` (macOS) blob, stored verbatim.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub html: Option<String>,
+    /// RTF bytes, base64-encoded (serde_json bloats raw `Vec<u8>`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rtf_b64: Option<String>,
+}
+
+impl RichFormats {
+    pub fn is_empty(&self) -> bool {
+        self.html.is_none() && self.rtf_b64.is_none()
+    }
+
+    /// Total encoded size, for the [`MAX_RICH`] cap.
+    fn byte_len(&self) -> usize {
+        self.html.as_ref().map_or(0, String::len) + self.rtf_b64.as_ref().map_or(0, String::len)
+    }
+}
 
 #[derive(Serialize, Deserialize, Clone)]
 pub struct Clip {
@@ -28,6 +58,65 @@ pub struct Clip {
     pub pinned: bool,
     /// Unix seconds of the last copy of this text.
     pub ts: u64,
+    /// Original rich formats (HTML/RTF), when the backend captured them and the
+    /// platform supports them. `None` for old clips, plain copies and Linux.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub formats: Option<RichFormats>,
+}
+
+// ---- base64 (inline; no crate, per the "no heavy deps" golden rule) ---------
+
+const B64: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+
+/// Standard base64 (with `=` padding). Used by backends to stash RTF bytes in
+/// [`RichFormats::rtf_b64`] without bloating the JSON into an integer array.
+pub fn b64_encode(data: &[u8]) -> String {
+    let mut out = String::with_capacity(data.len().div_ceil(3) * 4);
+    for chunk in data.chunks(3) {
+        let b = [chunk[0], *chunk.get(1).unwrap_or(&0), *chunk.get(2).unwrap_or(&0)];
+        let n = (u32::from(b[0]) << 16) | (u32::from(b[1]) << 8) | u32::from(b[2]);
+        out.push(B64[(n >> 18 & 63) as usize] as char);
+        out.push(B64[(n >> 12 & 63) as usize] as char);
+        out.push(if chunk.len() > 1 { B64[(n >> 6 & 63) as usize] as char } else { '=' });
+        out.push(if chunk.len() > 2 { B64[(n & 63) as usize] as char } else { '=' });
+    }
+    out
+}
+
+/// Inverse of [`b64_encode`]. Ignores whitespace and `=` padding; returns
+/// `None` on any non-base64 byte. Accepts both padded and unpadded input.
+pub fn b64_decode(s: &str) -> Option<Vec<u8>> {
+    fn val(c: u8) -> Option<u32> {
+        Some(match c {
+            b'A'..=b'Z' => u32::from(c - b'A'),
+            b'a'..=b'z' => u32::from(c - b'a') + 26,
+            b'0'..=b'9' => u32::from(c - b'0') + 52,
+            b'+' => 62,
+            b'/' => 63,
+            _ => return None,
+        })
+    }
+    let bytes: Vec<u8> = s.bytes().filter(|&b| !b.is_ascii_whitespace() && b != b'=').collect();
+    let mut out = Vec::with_capacity(bytes.len() / 4 * 3);
+    for chunk in bytes.chunks(4) {
+        if chunk.len() == 1 {
+            return None; // a lone trailing sextet can't be a byte
+        }
+        let mut n = 0u32;
+        for &c in chunk {
+            n = (n << 6) | val(c)?;
+        }
+        let bits = chunk.len() * 6;
+        n <<= 24 - bits;
+        out.push((n >> 16 & 0xFF) as u8);
+        if bits >= 16 {
+            out.push((n >> 8 & 0xFF) as u8);
+        }
+        if bits >= 24 {
+            out.push((n & 0xFF) as u8);
+        }
+    }
+    Some(out)
 }
 
 impl Clip {
@@ -240,12 +329,26 @@ impl ClipStore {
         }
     }
 
-    /// Records a copy event. Returns `true` when it was accepted (new clip or
-    /// an existing one bumped to the top) so the pet can react.
+    /// Records a plain copy event (no rich formats). Returns `true` when it was
+    /// accepted (new clip or an existing one bumped to the top) so the pet can
+    /// react. Thin wrapper over [`ClipStore::add_copy_rich`].
     pub fn add_copy(&mut self, text: String, source: Option<String>) -> bool {
+        self.add_copy_rich(text, source, None)
+    }
+
+    /// Records a copy event, optionally carrying the original rich formats
+    /// (ADR-0014). Oversized or empty `formats` are dropped (the plain clip is
+    /// still kept); on a duplicate bump, `formats` is refreshed like `source`.
+    pub fn add_copy_rich(
+        &mut self,
+        text: String,
+        source: Option<String>,
+        formats: Option<RichFormats>,
+    ) -> bool {
         if text.trim().is_empty() || text.len() > MAX_TEXT {
             return false;
         }
+        let formats = formats.filter(|f| !f.is_empty() && f.byte_len() <= MAX_RICH);
         let ts = now_ts();
         if let Some(i) = self.items.iter().position(|c| c.text == text) {
             // same text copied again: bump to top, refresh meta
@@ -253,6 +356,9 @@ impl ClipStore {
             clip.ts = ts;
             if source.is_some() {
                 clip.source = source;
+            }
+            if formats.is_some() {
+                clip.formats = formats;
             }
             self.items.insert(0, clip);
         } else {
@@ -262,6 +368,7 @@ impl ClipStore {
                 source,
                 pinned: false,
                 ts,
+                formats,
             };
             self.next_id += 1;
             self.items.insert(0, clip);
@@ -696,11 +803,64 @@ mod tests {
             source: None,
             pinned: false,
             ts: 0,
+            formats: None,
         };
         assert_eq!(c.preview(), "fn main() {");
         // flattened folds *every* line in (newlines -> single spaces), so the
         // row shows more than just the first line
         assert_eq!(c.flattened(), "fn main() { body }");
+    }
+
+    #[test]
+    fn base64_round_trips_including_padding_and_binary() {
+        for case in [
+            &b""[..],
+            &b"f"[..],
+            &b"fo"[..],
+            &b"foo"[..],
+            &b"foob"[..],
+            &b"fooba"[..],
+            &b"foobar"[..],
+            &[0u8, 1, 2, 253, 254, 255][..],
+        ] {
+            assert_eq!(b64_decode(&b64_encode(case)).as_deref(), Some(case));
+        }
+        // tolerant of whitespace, strict on junk
+        assert_eq!(b64_decode("Zm9v\nYmFy"), Some(b"foobar".to_vec()));
+        assert_eq!(b64_decode("not base64!"), None);
+    }
+
+    #[test]
+    fn rich_formats_store_refresh_and_cap() {
+        let mut s = ClipStore::default();
+        let fmt = RichFormats { html: Some("<b>hi</b>".into()), rtf_b64: None };
+        assert!(s.add_copy_rich("hi".into(), None, Some(fmt.clone())));
+        assert_eq!(s.get(s.visible("")[0].id).unwrap().formats, Some(fmt));
+        // a bumping plain copy keeps the existing formats; a new one refreshes
+        let id = s.visible("")[0].id;
+        assert!(s.add_copy("hi".into(), None));
+        assert!(s.get(id).unwrap().formats.is_some(), "plain re-copy keeps formats");
+        let fmt2 = RichFormats { html: None, rtf_b64: Some(b64_encode(b"{\\rtf1}")) };
+        assert!(s.add_copy_rich("hi".into(), None, Some(fmt2.clone())));
+        assert_eq!(s.get(id).unwrap().formats, Some(fmt2), "new formats refresh on bump");
+        // oversized formats are dropped, the plain clip is still stored
+        let huge = RichFormats { html: Some("x".repeat(MAX_RICH + 1)), rtf_b64: None };
+        assert!(s.add_copy_rich("plain".into(), None, Some(huge)));
+        assert!(s.get(s.visible("plain")[0].id).unwrap().formats.is_none());
+    }
+
+    #[test]
+    fn formats_are_omitted_for_plain_clips_and_back_compat_loads() {
+        // a plain clip serializes without a `formats` key (skip_serializing_if)
+        let mut s = store_with(&["plain"]);
+        let json = serde_json::to_string(&ClipsOut { clips: &s.items }).unwrap();
+        assert!(!json.contains("formats"), "plain clips omit the key: {json}");
+        // old clips.json with no `formats` field loads as None
+        let legacy = r#"{"clips":[{"id":1,"text":"old","source":null,"pinned":false,"ts":0}]}"#;
+        let back: ClipsFile = serde_json::from_str(legacy).unwrap();
+        let s2 = ClipStore::from_items(back.clips);
+        assert_eq!(s2.len(), 1);
+        assert!(s2.get(1).unwrap().formats.is_none());
     }
 
     #[test]

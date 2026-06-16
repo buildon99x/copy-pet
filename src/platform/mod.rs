@@ -38,3 +38,8 @@ mod mac_autostart;
 // geometry only, falls back to the mouse cursor.
 #[cfg(all(any(not(windows), feature = "portable"), target_os = "macos"))]
 mod mac_caret;
+// rich-format clipboard read/write via NSPasteboard (ADR-0014): original
+// HTML/RTF preserved on copy and restored on paste, the macOS half of Win+V
+// parity. The portable watcher reads it; `set_clipboard` writes it.
+#[cfg(all(any(not(windows), feature = "portable"), target_os = "macos"))]
+mod mac_clipboard;

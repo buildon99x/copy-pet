@@ -1005,6 +1005,8 @@ pub fn draw_panel(pm: &mut Pixmap, v: &PanelView) {
     let thumb = v.panel.view == 1;
     const BODY_PX: f32 = 1.75;
     const BODY_BOLD: usize = 10;
+    // a row's pin ★ under the cursor: drawn as a tooltip after the loop (on top)
+    let mut pin_tip: Option<(f32, f32, bool)> = None;
     for i in 0..lt.rows {
         let idx = v.panel.scroll + i;
         let Some(clip) = visible.get(idx) else { break };
@@ -1030,24 +1032,23 @@ pub fn draw_panel(pm: &mut Pixmap, v: &PanelView) {
             cv.fill(&round_rect(lt.row_x, ry + 1.0, lt.row_w, lt.row_h - 2.0, 7.0), bg);
         }
 
-        // pin star
-        let star = star_path(lt.row_x + 12.0, mid, 6.5, 0.0);
-        if clip.pinned {
-            cv.fill(&star, PIN_GOLD);
-            cv.stroke(&star, (180, 140, 30, 255), 1.4);
-        } else {
-            cv.stroke(&star, fade(TEXT_DIM, 0.55), 1.4);
-        }
-
-        // quick-copy badge: the first ten rows answer to Ctrl+0..9
         let quick = idx < pl::QUICK_KEYS;
-        let badge_w = if quick { 18.0 } else { 0.0 };
+        let right = lt.row_x + lt.row_w;
+        let expanded = v.panel.expanded == Some(clip.id);
+        // cursor x, but only for the row actually under the pointer
+        let hx = hover.filter(|_| hovered).map(|(x, _)| x);
 
         // body (the whole clip flattened to one line so more of its content
         // shows; the first few characters are bolded for scannability). The
-        // thumbnail view wraps it onto a second line for even more.
-        let tx = lt.row_x + 28.0;
-        let tmax = lt.row_x + lt.row_w - pl::DEL_ZONE - tx - 4.0 - badge_w;
+        // thumbnail view wraps it onto a second line for even more. The body
+        // shrinks to leave room for the right-side gadget cluster.
+        let tx = lt.row_x + pl::BODY_X;
+        let cluster = if expanded {
+            2.0 * pl::ACT_ZONE
+        } else {
+            pl::OVF_ZONE + pl::PIN_ZONE + if quick { 16.0 } else { 0.0 }
+        };
+        let tmax = right - cluster - tx - 6.0;
         let flat = clip.flattened();
         let (line1, line2) = if thumb {
             sysfont::wrap_two(&flat, BODY_PX, tmax)
@@ -1080,27 +1081,47 @@ pub fn draw_panel(pm: &mut Pixmap, v: &PanelView) {
         let meta = sysfont::truncate_to_width(&meta, 1.35, tmax - (mx - tx));
         cv.ui_text(&meta, mx, meta_y, 1.35, TEXT_DIM);
 
-        if quick {
-            let qx = lt.row_x + lt.row_w - pl::DEL_ZONE - 16.0;
-            let chip = round_rect(qx, ry + 4.0, 13.0, 13.0, 4.0);
-            cv.fill(&chip, (243, 240, 235, 255));
-            cv.stroke(&chip, fade(OUTLINE, 0.35), 1.2);
-            let d = char::from(b'0' + idx as u8).to_string();
-            let dw = sysfont::measure(&d, 1.3);
-            cv.ui_text(&d, qx + (13.0 - dw) / 2.0, ry + 6.0, 1.3, fade(TEXT_DIM, 0.9));
-        }
-
-        // delete x (red halo while hovered, so a destructive click is obvious)
-        let dx = lt.row_x + lt.row_w - 14.0;
-        let on_del = hovered && hover.is_some_and(|(x, _)| x > lt.row_x + lt.row_w - pl::DEL_ZONE);
-        let xc = if on_del {
-            cv.fill(&oval(dx, mid, 8.0, 8.0), (250, 224, 224, 255));
-            (217, 79, 79, 255)
+        // right-side gadgets: the revealed action buttons when this row is
+        // expanded, else the collapsed [ quick badge ] [ pin ] [ ... ] cluster.
+        if expanded {
+            let del_cx = right - pl::ACT_ZONE / 2.0;
+            let paste_cx = right - pl::ACT_ZONE - pl::ACT_ZONE / 2.0;
+            let hot = |cx: f32| hx.is_some_and(|x| (x - cx).abs() <= pl::ACT_ZONE / 2.0);
+            draw_row_btn(&mut cv, paste_cx, mid, RowBtn::PasteText, hot(paste_cx));
+            draw_row_btn(&mut cv, del_cx, mid, RowBtn::Delete, hot(del_cx));
         } else {
-            fade(TEXT_DIM, 0.7)
-        };
-        cv.line(&[(dx - 3.4, mid - 3.4), (dx + 3.4, mid + 3.4)], xc, 1.8);
-        cv.line(&[(dx - 3.4, mid + 3.4), (dx + 3.4, mid - 3.4)], xc, 1.8);
+            let ovf_cx = right - pl::OVF_ZONE / 2.0;
+            let pin_cx = right - pl::OVF_ZONE - pl::PIN_ZONE / 2.0;
+            let pin_hot = hx.is_some_and(|x| (x - pin_cx).abs() <= pl::PIN_ZONE / 2.0);
+            // pin star (now on the right; brighter outline on hover)
+            let star = star_path(pin_cx, mid, 6.5, 0.0);
+            if clip.pinned {
+                cv.fill(&star, PIN_GOLD);
+                cv.stroke(&star, (180, 140, 30, 255), 1.4);
+            } else {
+                cv.stroke(&star, fade(TEXT_DIM, if pin_hot { 0.95 } else { 0.55 }), 1.4);
+            }
+            if pin_hot {
+                // teach the Ctrl/Cmd+P shortcut where the user is already looking
+                pin_tip = Some((pin_cx, mid, clip.pinned));
+            }
+            // "..." overflow toggle (brighter on hover)
+            let ovf_hot = hx.is_some_and(|x| x > right - pl::OVF_ZONE);
+            let dotc = fade(TEXT_DIM, if ovf_hot { 1.0 } else { 0.72 });
+            for dxo in [-3.2_f32, 0.0, 3.2] {
+                cv.fill(&oval(ovf_cx + dxo, mid, 1.15, 1.15), dotc);
+            }
+            // quick-copy badge: the first ten rows answer to Ctrl+0..9
+            if quick {
+                let qcx = right - pl::OVF_ZONE - pl::PIN_ZONE - 9.0;
+                let chip = round_rect(qcx - 6.5, mid - 6.5, 13.0, 13.0, 4.0);
+                cv.fill(&chip, (243, 240, 235, 255));
+                cv.stroke(&chip, fade(OUTLINE, 0.35), 1.2);
+                let d = char::from(b'0' + idx as u8).to_string();
+                let dw = sysfont::measure(&d, 1.3);
+                cv.ui_text(&d, qcx - dw / 2.0, mid - 4.0, 1.3, fade(TEXT_DIM, 0.9));
+            }
+        }
 
         // thin separator between compact rows (cards have their own gap/border)
         if !thumb && i + 1 < lt.rows {
@@ -1155,6 +1176,98 @@ pub fn draw_panel(pm: &mut Pixmap, v: &PanelView) {
         for i in 0..3 {
             let d = 5.0 + i as f32 * 4.0;
             cv.line(&[(gx - d, gy - 3.0), (gx - 3.0, gy - d)], fade(OUTLINE, 0.45), 1.6);
+        }
+    }
+
+    // header-icon tooltips: drawn last so they sit on top of everything. Shown
+    // while the cursor rests on one of the header buttons.
+    if let Some((cx, cy)) = v.panel.cursor {
+        let on = |bx: f32| {
+            cx >= bx - 2.0
+                && cx <= bx + pl::BTN + 2.0
+                && (lt.btn_y - 2.0..=lt.btn_y + pl::BTN + 2.0).contains(&cy)
+        };
+        let tip = if on(lt.btn_view_x) {
+            Some((lt.btn_view_x, Msg::TipView))
+        } else if on(lt.btn_filter_x) {
+            Some((lt.btn_filter_x, Msg::TipFilter))
+        } else if on(lt.btn_pause_x) {
+            Some((lt.btn_pause_x, if v.capture { Msg::TipPause } else { Msg::TipResume }))
+        } else if on(lt.btn_clear_x) {
+            Some((lt.btn_clear_x, Msg::TipClear))
+        } else if on(lt.btn_lang_x) {
+            Some((lt.btn_lang_x, Msg::TipLang))
+        } else if on(lt.btn_close_x) {
+            Some((lt.btn_close_x, Msg::TipClose))
+        } else {
+            None
+        };
+        if let Some((bx, msg)) = tip {
+            draw_tooltip(&mut cv, &lt, bx + pl::BTN / 2.0, lt.btn_y + pl::BTN + 5.0, t(lang, msg));
+        }
+    }
+
+    // pin ★ tooltip: teaches the keyboard shortcut at the point of use. The
+    // cursor can be over a header button or a row pin, never both, so this and
+    // the header tooltip above are mutually exclusive.
+    if let Some((cx, cy, pinned)) = pin_tip {
+        let msg = if pinned { Msg::TipUnpin } else { Msg::TipPin };
+        draw_tooltip(&mut cv, &lt, cx, cy - 22.0, t(lang, msg));
+    }
+}
+
+/// A small dark tooltip centered on `anchor_x` with its top at `top_y`, clamped
+/// inside the card. Used by the header icons and the per-row pin ★.
+fn draw_tooltip(cv: &mut Cv, lt: &pl::Layout, anchor_x: f32, top_y: f32, label: &str) {
+    let px = 1.4;
+    let pad = 6.0;
+    let w = sysfont::measure(label, px) + pad * 2.0;
+    let h = 15.0;
+    let x = (anchor_x - w / 2.0).clamp(lt.card_x + 4.0, lt.card_x + lt.card_w - 4.0 - w);
+    let y = top_y.clamp(lt.card_y + 4.0, lt.card_y + lt.card_h - h - 4.0);
+    let bg = round_rect(x, y, w, h, 5.0);
+    cv.fill(&bg, (54, 47, 38, 240));
+    cv.ui_text(label, x + pad, y + (h - 7.0 * px) / 2.0, px, (250, 248, 244, 255));
+}
+
+/// A revealed per-row action button.
+enum RowBtn {
+    PasteText,
+    Delete,
+}
+
+/// Draws an 18px revealed row-action button (paste-as-text / delete), styled
+/// like the header [`draw_btn`] buttons so the panel stays visually consistent.
+fn draw_row_btn(cv: &mut Cv, cx: f32, cy: f32, kind: RowBtn, hot: bool) {
+    let b = pl::BTN;
+    let bg = round_rect(cx - b / 2.0, cy - b / 2.0, b, b, 6.0);
+    match kind {
+        RowBtn::Delete => {
+            if hot {
+                cv.fill(&bg, (250, 224, 224, 255));
+                cv.stroke(&bg, (217, 79, 79, 255), 1.6);
+            } else {
+                cv.fill(&bg, (243, 240, 235, 255));
+                cv.stroke(&bg, fade(OUTLINE, 0.45), 1.6);
+            }
+            let c = if hot { (217, 79, 79, 255) } else { TEXT };
+            cv.line(&[(cx - 3.4, cy - 3.4), (cx + 3.4, cy + 3.4)], c, 1.9);
+            cv.line(&[(cx - 3.4, cy + 3.4), (cx + 3.4, cy - 3.4)], c, 1.9);
+        }
+        RowBtn::PasteText => {
+            if hot {
+                cv.fill(&bg, (208, 228, 248, 255));
+                cv.stroke(&bg, (91, 141, 217, 255), 1.6);
+            } else {
+                cv.fill(&bg, (243, 240, 235, 255));
+                cv.stroke(&bg, fade(OUTLINE, 0.45), 1.6);
+            }
+            let c = if hot { (74, 118, 184, 255) } else { TEXT };
+            // a clipboard with text lines = "paste as text"
+            cv.stroke(&round_rect(cx - 3.6, cy - 4.4, 7.2, 9.4, 1.6), c, 1.4);
+            cv.fill(&round_rect(cx - 1.9, cy - 5.8, 3.8, 2.6, 0.8), c);
+            cv.line(&[(cx - 2.0, cy - 0.6), (cx + 2.0, cy - 0.6)], c, 1.1);
+            cv.line(&[(cx - 2.0, cy + 1.7), (cx + 2.0, cy + 1.7)], c, 1.1);
         }
     }
 }
