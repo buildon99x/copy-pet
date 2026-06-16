@@ -27,6 +27,9 @@ versions follow [SemVer](https://semver.org/). Maintenance rules:
   press **←** to hide the buttons again.
 - **Tooltips on the panel's top icons**: hovering the view / filter / pause /
   clear / language / close buttons now shows a label so it's clear what each does.
+- Hovering a clip's **★** now shows a tooltip with its keyboard shortcut
+  (**Ctrl/Cmd+P** pins or unpins the selected clip), so the shortcut is
+  discoverable without hunting through the footer.
 - **Clipboard opens at your cursor** (Win+V parity): pressing the panel hotkey
   now pops the clip list up at the text caret in whatever app you're typing
   in, instead of over the cat — so it's right where you're working and the cat

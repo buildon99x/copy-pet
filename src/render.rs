@@ -1005,6 +1005,8 @@ pub fn draw_panel(pm: &mut Pixmap, v: &PanelView) {
     let thumb = v.panel.view == 1;
     const BODY_PX: f32 = 1.75;
     const BODY_BOLD: usize = 10;
+    // a row's pin ★ under the cursor: drawn as a tooltip after the loop (on top)
+    let mut pin_tip: Option<(f32, f32, bool)> = None;
     for i in 0..lt.rows {
         let idx = v.panel.scroll + i;
         let Some(clip) = visible.get(idx) else { break };
@@ -1090,14 +1092,18 @@ pub fn draw_panel(pm: &mut Pixmap, v: &PanelView) {
         } else {
             let ovf_cx = right - pl::OVF_ZONE / 2.0;
             let pin_cx = right - pl::OVF_ZONE - pl::PIN_ZONE / 2.0;
+            let pin_hot = hx.is_some_and(|x| (x - pin_cx).abs() <= pl::PIN_ZONE / 2.0);
             // pin star (now on the right; brighter outline on hover)
             let star = star_path(pin_cx, mid, 6.5, 0.0);
             if clip.pinned {
                 cv.fill(&star, PIN_GOLD);
                 cv.stroke(&star, (180, 140, 30, 255), 1.4);
             } else {
-                let pin_hot = hx.is_some_and(|x| (x - pin_cx).abs() <= pl::PIN_ZONE / 2.0);
                 cv.stroke(&star, fade(TEXT_DIM, if pin_hot { 0.95 } else { 0.55 }), 1.4);
+            }
+            if pin_hot {
+                // teach the Ctrl/Cmd+P shortcut where the user is already looking
+                pin_tip = Some((pin_cx, mid, clip.pinned));
             }
             // "..." overflow toggle (brighter on hover)
             let ovf_hot = hx.is_some_and(|x| x > right - pl::OVF_ZONE);
@@ -1197,19 +1203,28 @@ pub fn draw_panel(pm: &mut Pixmap, v: &PanelView) {
             None
         };
         if let Some((bx, msg)) = tip {
-            draw_tooltip(&mut cv, &lt, bx + pl::BTN / 2.0, t(lang, msg));
+            draw_tooltip(&mut cv, &lt, bx + pl::BTN / 2.0, lt.btn_y + pl::BTN + 5.0, t(lang, msg));
         }
+    }
+
+    // pin ★ tooltip: teaches the keyboard shortcut at the point of use. The
+    // cursor can be over a header button or a row pin, never both, so this and
+    // the header tooltip above are mutually exclusive.
+    if let Some((cx, cy, pinned)) = pin_tip {
+        let msg = if pinned { Msg::TipUnpin } else { Msg::TipPin };
+        draw_tooltip(&mut cv, &lt, cx, cy - 22.0, t(lang, msg));
     }
 }
 
-/// A small dark tooltip centered under `anchor_x`, clamped inside the card.
-fn draw_tooltip(cv: &mut Cv, lt: &pl::Layout, anchor_x: f32, label: &str) {
+/// A small dark tooltip centered on `anchor_x` with its top at `top_y`, clamped
+/// inside the card. Used by the header icons and the per-row pin ★.
+fn draw_tooltip(cv: &mut Cv, lt: &pl::Layout, anchor_x: f32, top_y: f32, label: &str) {
     let px = 1.4;
     let pad = 6.0;
     let w = sysfont::measure(label, px) + pad * 2.0;
     let h = 15.0;
     let x = (anchor_x - w / 2.0).clamp(lt.card_x + 4.0, lt.card_x + lt.card_w - 4.0 - w);
-    let y = lt.btn_y + pl::BTN + 5.0;
+    let y = top_y.clamp(lt.card_y + 4.0, lt.card_y + lt.card_h - h - 4.0);
     let bg = round_rect(x, y, w, h, 5.0);
     cv.fill(&bg, (54, 47, 38, 240));
     cv.ui_text(label, x + pad, y + (h - 7.0 * px) / 2.0, px, (250, 248, 244, 255));

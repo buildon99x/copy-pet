@@ -261,6 +261,27 @@ fn main() {
         };
         render::draw_panel(&mut pm, &view);
         save(&pm, &dir, "4-panel-tooltip");
+
+        // hover a pinned clip's ★ → tooltip teaches the Ctrl/Cmd+P shortcut
+        let mut panel = Panel::default();
+        panel.toggle();
+        let lt = panel.layout();
+        let pin_cx = lt.row_x + lt.row_w - clipcat::panel::OVF_ZONE - clipcat::panel::PIN_ZONE / 2.0;
+        panel.cursor = Some((pin_cx, lt.rows_y + clipcat::panel::ROW_H * 0.5)); // row 0 (pinned)
+        let mut sc = base_scene(Lang::Ko);
+        sc.origin = lt.cat;
+        let mut pm = Pixmap::new(lt.canvas_w as u32, lt.canvas_h as u32).unwrap();
+        render::render_card(&mut pm, &sc, 1.0);
+        let view = PanelView {
+            panel: &panel,
+            store: &store,
+            lang: Lang::Ko,
+            capture: true,
+            hint: "WIN+SHIFT+V",
+            caret: false,
+        };
+        render::draw_panel(&mut pm, &view);
+        save(&pm, &dir, "4-panel-pintip");
     }
 
     // 5. the app icon (64 px)
