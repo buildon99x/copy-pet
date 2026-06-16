@@ -795,29 +795,25 @@ impl Pet {
         self.st.paste_on_select
     }
 
+    fn toggle_bool_toast(&mut self, on: bool, on_msg: Msg, off_msg: Msg) {
+        self.dirty = true;
+        let msg = if on { on_msg } else { off_msg };
+        self.set_toast(t(self.lang(), msg).to_string(), 2.2);
+    }
+
     /// Flips "paste the clip into the previous app after picking it" and
     /// confirms via toast.
     pub fn toggle_paste_on_select(&mut self) {
         self.st.paste_on_select = !self.st.paste_on_select;
-        self.dirty = true;
-        let msg = if self.st.paste_on_select {
-            Msg::ToastPasteOn
-        } else {
-            Msg::ToastPasteOff
-        };
-        self.set_toast(t(self.lang(), msg).to_string(), 2.2);
+        let on = self.st.paste_on_select;
+        self.toggle_bool_toast(on, Msg::ToastPasteOn, Msg::ToastPasteOff);
     }
 
     /// Flips "close the panel after copying a clip" and confirms via toast.
     pub fn toggle_panel_autoclose(&mut self) {
         self.st.panel_autoclose = !self.st.panel_autoclose;
-        self.dirty = true;
-        let msg = if self.st.panel_autoclose {
-            Msg::ToastAutoCloseOn
-        } else {
-            Msg::ToastAutoCloseOff
-        };
-        self.set_toast(t(self.lang(), msg).to_string(), 2.2);
+        let on = self.st.panel_autoclose;
+        self.toggle_bool_toast(on, Msg::ToastAutoCloseOn, Msg::ToastAutoCloseOff);
     }
 
     /// Switches the clipboard list between the compact list and the roomier

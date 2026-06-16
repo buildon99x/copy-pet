@@ -25,6 +25,8 @@ pub use portable::run;
 // CALayer presenter (replaces softbuffer's opaque card, ADR-0003), the native
 // right-click context menu and its dialogs, plus LaunchAgent autostart.
 #[cfg(all(any(not(windows), feature = "portable"), target_os = "macos"))]
+mod mac_util;
+#[cfg(all(any(not(windows), feature = "portable"), target_os = "macos"))]
 mod mac_input;
 #[cfg(all(any(not(windows), feature = "portable"), target_os = "macos"))]
 mod mac_present;

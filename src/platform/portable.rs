@@ -161,6 +161,23 @@ struct Flyout {
     drag_screen: (f64, f64),
 }
 
+/// Converts a `MouseScrollDelta` to a signed row count (positive = scroll down).
+fn scroll_rows(delta: MouseScrollDelta) -> f32 {
+    match delta {
+        MouseScrollDelta::LineDelta(_, y) => y,
+        MouseScrollDelta::PixelDelta(p) => p.y as f32,
+    }
+}
+
+/// Screen-space cursor: `window.outer_position() + local`.
+fn window_screen_cursor(window: &Window, local: PhysicalPosition<f64>) -> (f64, f64) {
+    let base = window
+        .outer_position()
+        .map(|p| (p.x as f64, p.y as f64))
+        .unwrap_or((0.0, 0.0));
+    (base.0 + local.x, base.1 + local.y)
+}
+
 impl PortableApp {
     fn new(
         pet: Pet,
@@ -286,14 +303,12 @@ impl PortableApp {
     /// cursor); window-local coordinates would feed back into themselves
     /// while a panel drag moves/resizes the window under the pointer.
     fn screen_cursor(&self) -> (f64, f64) {
-        let base = self
-            .window
-            .as_ref()
-            .and_then(|w| w.outer_position().ok())
-            .map(|p| (p.x as f64, p.y as f64))
-            .unwrap_or((0.0, 0.0));
-        (base.0 + self.cursor.x, base.1 + self.cursor.y)
+        match self.window.as_ref() {
+            Some(w) => window_screen_cursor(w, self.cursor),
+            None => (0.0, 0.0),
+        }
     }
+
 
     /// Resizes the presentation buffers to the current `w`×`h`. On macOS the
     /// view's backing layer follows the window automatically, so this is a
@@ -563,8 +578,14 @@ impl PortableApp {
             }
             return;
         }
+        self.forward_text_input(event, ctrl);
+    }
+
+    /// Forwards printable characters to the panel search box, skipping
+    /// unhandled ctrl/cmd chords.
+    fn forward_text_input(&mut self, event: &winit::event::KeyEvent, ctrl: bool) {
         if ctrl {
-            return; // unhandled shortcut chords never type into the search
+            return;
         }
         if let Some(txt) = &event.text {
             for c in txt.chars() {
@@ -703,12 +724,7 @@ impl PortableApp {
         let Some(f) = self.flyout.as_ref() else {
             return (0.0, 0.0);
         };
-        let base = f
-            .window
-            .outer_position()
-            .map(|p| (p.x as f64, p.y as f64))
-            .unwrap_or((0.0, 0.0));
-        (base.0 + f.cursor.x, base.1 + f.cursor.y)
+        window_screen_cursor(&f.window, f.cursor)
     }
 
     fn flyout_window_event(&mut self, event: WindowEvent) {
@@ -793,10 +809,7 @@ impl PortableApp {
                 }
             },
             WindowEvent::MouseWheel { delta, .. } => {
-                let dy = match delta {
-                    MouseScrollDelta::LineDelta(_, y) => y,
-                    MouseScrollDelta::PixelDelta(p) => p.y as f32,
-                };
+                let dy = scroll_rows(delta);
                 if dy != 0.0 {
                     self.pet.panel_wheel(if dy < 0.0 { 1 } else { -1 });
                 }
@@ -825,14 +838,7 @@ impl PortableApp {
             self.after_flyout_action(pick);
             return;
         }
-        if ctrl {
-            return;
-        }
-        if let Some(txt) = &event.text {
-            for c in txt.chars() {
-                self.pet.panel_char(c);
-            }
-        }
+        self.forward_text_input(event, ctrl);
     }
 
     /// After a flyout click/key: hide the window if the panel closed (a pick
@@ -1039,10 +1045,7 @@ impl ApplicationHandler for PortableApp {
                 _ => {}
             },
             WindowEvent::MouseWheel { delta, .. } => {
-                let dy = match delta {
-                    MouseScrollDelta::LineDelta(_, y) => y,
-                    MouseScrollDelta::PixelDelta(p) => p.y as f32,
-                };
+                let dy = scroll_rows(delta);
                 let (cx, cy) = self.client_xy();
                 if self.pet.panel_hit(cx, cy) {
                     if dy != 0.0 {

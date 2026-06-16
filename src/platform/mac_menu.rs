@@ -27,7 +27,7 @@ use std::sync::Once;
 use winit::raw_window_handle::{HasWindowHandle, RawWindowHandle};
 use winit::window::Window;
 
-type Id = *mut Object;
+use super::mac_util::{nsstring, Id};
 
 /// `NSControlStateValueOn` — a checked menu item.
 const STATE_ON: isize = 1;
@@ -58,16 +58,6 @@ fn handler() -> Id {
         HANDLER = msg_send![cls, new];
     });
     unsafe { HANDLER }
-}
-
-fn nsstring(s: &str) -> Id {
-    let bytes = s.as_bytes();
-    unsafe {
-        msg_send![class!(NSString),
-            stringWithBytes: bytes.as_ptr()
-            length: bytes.len()
-            encoding: 4usize] // NSUTF8StringEncoding
-    }
 }
 
 fn ns_view(window: &Window) -> Option<Id> {
