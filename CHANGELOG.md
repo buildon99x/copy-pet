@@ -25,9 +25,10 @@ versions follow [SemVer](https://semver.org/). Maintenance rules:
   panel by the cat as before. (Windows and macOS.)
 - **Auto-paste on select** (off by default): a new "Paste on select" setting
   (tray/right-click menu) makes picking a clip paste it straight into the app
-  you were just in, instead of only copying it. On Windows it returns focus to
-  that app and sends Ctrl+V; on macOS/Linux it's best-effort (pastes into
-  whatever is frontmost after the panel closes). Leave it off for copy-only.
+  you were just in, instead of only copying it. On Windows and macOS it returns
+  focus to that app and sends the paste shortcut, so the clip lands at the caret
+  you started from; on Linux it's best-effort (pastes into whatever is frontmost
+  after the panel closes). Leave it off for copy-only.
 - **Change the panel hotkey from the menu**: the tray/right-click menu now has
   a "Panel hotkey" entry showing the current combo — click it to cycle through
   safe presets (Win/Cmd+Shift+V → Ctrl+Shift+V → Alt+Shift+V → Ctrl+Shift+C).

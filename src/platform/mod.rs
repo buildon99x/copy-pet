@@ -38,3 +38,7 @@ mod mac_autostart;
 // geometry only, falls back to the mouse cursor.
 #[cfg(all(any(not(windows), feature = "portable"), target_os = "macos"))]
 mod mac_caret;
+// frontmost-app capture + re-activation so a flyout-picked clip pastes back into
+// the source app's caret (Win+V parity); captures only a process id.
+#[cfg(all(any(not(windows), feature = "portable"), target_os = "macos"))]
+mod mac_focus;

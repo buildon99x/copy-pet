@@ -135,6 +135,13 @@ struct PortableApp {
     /// portable keep the embedded (cat-window) panel for the hotkey.
     #[cfg(target_os = "macos")]
     flyout: Option<Flyout>,
+    /// The app that was frontmost when the flyout hotkey fired — where an
+    /// auto-paste (`paste_on_select`) sends the synthesized Cmd+V. Captured as
+    /// a bare process id (never a window title or name) before our flyout
+    /// steals focus, then re-activated just before the paste. The macOS
+    /// analogue of the Windows-native `paste_target: HWND` (Win+V parity).
+    #[cfg(target_os = "macos")]
+    paste_target_pid: Option<i32>,
 }
 
 /// The flyout panel's dedicated winit window + transparent presenter (macOS).
@@ -201,6 +208,8 @@ impl PortableApp {
             mods: ModifiersState::default(),
             #[cfg(target_os = "macos")]
             flyout: None,
+            #[cfg(target_os = "macos")]
+            paste_target_pid: None,
         }
     }
 
@@ -382,14 +391,18 @@ impl PortableApp {
         }
     }
 
-    /// Puts text on the OS clipboard (a clip picked from the panel).
     /// Puts a panel-picked clip on the OS clipboard (our own change is
     /// suppressed once by the watcher). When `pick.paste` (the `paste_on_select`
-    /// setting), it also synthesizes the paste shortcut. Focus restoration is
-    /// best-effort here: unlike the Windows-native backend, the portable stack
-    /// can't reliably re-focus the previous app, so the paste lands in whatever
-    /// is frontmost after the panel closes.
-    fn set_clipboard(&self, pick: ClipPick) {
+    /// setting), it also synthesizes the paste shortcut.
+    ///
+    /// On macOS the flyout hotkey stole focus from the source app, so before the
+    /// Cmd+V we re-activate the app that was frontmost when the flyout opened
+    /// (`paste_target_pid`) — the paste then lands back in the original caret,
+    /// mirroring how the Windows-native backend restores its `paste_target`
+    /// (Win+V parity). On Linux/Windows-portable there is no reliable cross-app
+    /// focus restore, so the paste lands in whatever is frontmost after the
+    /// panel closes.
+    fn set_clipboard(&mut self, pick: ClipPick) {
         if let Ok(mut guard) = self.suppress.lock() {
             *guard = Some(pick.text.clone());
         }
@@ -397,6 +410,21 @@ impl PortableApp {
             let _ = cb.set_text(pick.text);
         }
         if pick.paste {
+            // Consume the captured target one-shot: only the flyout hotkey path
+            // captures it (before stealing focus), so the embedded middle-click
+            // panel never re-activates a stale app — it just pastes into the
+            // current frontmost like Linux.
+            #[cfg(target_os = "macos")]
+            if let Some(pid) = self.paste_target_pid.take() {
+                // Hand focus back to the source app before the Cmd+V. The
+                // activation is asynchronous (macOS has no AttachThreadInput
+                // equivalent to synchronize it), so give it a moment to land
+                // before the synthesized keystroke, or the paste would race
+                // ahead of the focus switch and miss the caret.
+                if super::mac_focus::activate_app(pid) {
+                    std::thread::sleep(std::time::Duration::from_millis(60));
+                }
+            }
             paste_synthesize();
         }
     }
@@ -564,6 +592,15 @@ impl PortableApp {
     /// creating its window on first use, sizing it to the card and focusing it
     /// for the search box. The cat window is left untouched.
     fn open_flyout(&mut self, event_loop: &ActiveEventLoop) {
+        // Capture who is frontmost *before* the flyout steals focus, so a
+        // picked clip can be pasted back there (Win+V parity). Only on a fresh
+        // open — a re-press while it's up keeps the original target — and never
+        // ourselves (the flyout/cat window).
+        if !self.pet.flyout_open() {
+            let me = std::process::id() as i32;
+            self.paste_target_pid =
+                super::mac_focus::frontmost_app_pid().filter(|&p| p != me);
+        }
         self.pet.open_flyout();
         let (fw, fh) = self.pet.flyout_size();
         let (fw, fh) = (fw as u32, fh as u32);
