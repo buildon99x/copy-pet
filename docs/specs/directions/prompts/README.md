@@ -1,29 +1,38 @@
-# 구현 작업 요청 프롬프트 (방향별 개별)
+# 구현 작업 요청 프롬프트 (방향별)
 
-7개 방향을 각각 바로 구현에 착수할 수 있도록, 방향별로 분리한 **구현 작업 요청 프롬프트**다.
-한 방향을 맡길 때 해당 파일 내용을 그대로 작업자(또는 새 Claude Code 세션/에이전트)에게 전달하면 된다.
+방향별 구현 프롬프트. 한 방향을 맡길 때 **이 공통 규칙 + 해당 `0N-*.prompt.md`** 를 함께 전달한다.
 
 | # | 프롬프트 | 방향 | 우선순위 |
 |---|---|---|---|
-| 1 | [01-accessories.prompt.md](01-accessories.prompt.md) | 악세사리 확장 | 받쳐주기 |
-| 2 | [02-emotion-design.prompt.md](02-emotion-design.prompt.md) | 감정·표정 설계 | **★최우선** |
-| 3 | [03-living-cat.prompt.md](03-living-cat.prompt.md) | 살아있는 고양이 | **★최우선** |
-| 4 | [04-collection-season.prompt.md](04-collection-season.prompt.md) | 컬렉션·시즌 운영 | 후속 |
-| 5 | [05-comfort-voice.prompt.md](05-comfort-voice.prompt.md) | 교감·위로 보이스 | 핵심 |
-| 6 | [06-persona.prompt.md](06-persona.prompt.md) | 부캐 페르소나 | 후속 |
-| 7 | [07-friend.prompt.md](07-friend.prompt.md) | 친구 관계 | 후속 |
+| 1 | [01](01-accessories.prompt.md) | 악세사리 확장 | 받쳐주기 |
+| 2 | [02](02-emotion-design.prompt.md) | 감정·표정 설계 | ★최우선 |
+| 3 | [03](03-living-cat.prompt.md) | 살아있는 고양이 | ★최우선 |
+| 4 | [04](04-collection-season.prompt.md) | 컬렉션·시즌 | 후속 |
+| 5 | [05](05-comfort-voice.prompt.md) | 교감·위로 보이스 | 핵심 |
+| 6 | [06](06-persona.prompt.md) | 부캐 페르소나 | 후속 |
+| 7 | [07](07-friend.prompt.md) | 친구 관계 | 후속 |
 
-## 공통 구조
-각 프롬프트는 동일한 골격을 가진다: **역할 / 먼저 읽을 것(해당 스펙 + AGENTS.md) / 확정 캐릭터
-정체성 / 이번 작업 범위 + 권장 1차 PR / 반드시 지킬 제약(골든룰) / 완료·검증 기준 / 작업 방식**.
+착수 순서: **2·3 → 5 → 1 → 4 → 6 → 7** (2·3이 빌딩블록).
 
-## 사용법
-1. 맡길 방향의 `.prompt.md` 내용을 작업자에게 전달.
-2. 작업자는 `먼저 읽을 것`의 스펙 문서(`docs/specs/directions/0N-*.md`)에서 터치할 파일·함수
-   (`file:line`)와 재사용 패턴을 확인한 뒤 구현.
-3. 권장 착수 순서: **2·3(★최우선) → 5 → 1 → 4 → 6 → 7** (방향 2·3이 빌딩블록).
+---
 
-## 공통 가드레일 (모든 프롬프트에 포함)
-프라이버시 로컬-only(입력은 카운터만, 키 내용·창 제목·타이밍 미사용, 네트워크는 `update.rs`뿐),
-코드 드로잉 벡터아트, 코어 OS-비종속, i18n EN/KO, 두 백엔드 패리티, 신규 heavy dep 금지(ADR),
-결제·가챠·스트릭·방치 죄책감 금지. 브랜치 `claude/vigilant-volta-q64b61`, PR은 명시 요청 전까지 금지.
+## 공통 규칙 (모든 프롬프트 적용)
+
+**역할** — ClipCat(러스트 초경량 클립보드 매니저 데스크탑 펫) 저장소의 시니어 러스트 엔지니어. 스펙대로 구현.
+
+**먼저 읽기** — `AGENTS.md`(골든룰·검증) + 해당 방향 스펙 `docs/specs/directions/0N-*.md`. 새 코드 전에 스펙의 기존 함수(`file:line`)를 먼저 재사용.
+
+**정체성(불변)** — "생선 본위제 먹보 고양이의 속마음(+id-미러)". 본캐 불변, 무드는 텍스처(집중→독설·유휴→병맛·심야→다정·조작→츤데레), id-미러=생선 은유 빼고 1인칭 속마음("나 대신 빡쳐줄게").
+
+**제약(위반 시 무효)**
+- 프라이버시: 입력은 카운터만. 키 내용·창 제목·타이밍 미사용. 로컬 상태만 구동. 네트워크는 `update.rs`뿐.
+- 에셋은 tiny-skia 코드 드로잉. 번들 이미지·새 heavy dep 금지(필요 시 ADR 먼저).
+- 코어 OS-비종속, 문구 i18n(영/한), 두 백엔드 패리티. 결제·가챠·스트릭·방치 죄책감 금지.
+
+**검증(전부 통과)**
+1. `build`/`clippy`(+`--features portable`) 경고 0
+2. `test`: 신규 로직 단위 테스트 + i18n 패리티 + 하위호환(구 state.json)
+3. `preview` PNG 육안(한글 폭 포함)
+4. `CHANGELOG.md [Unreleased]` 한 줄(영문)
+
+**워크플로** — 브랜치 `claude/vigilant-volta-q64b61`. 논리 단위 커밋. 스키마·새 의존성·캔버스 변경은 진행 전 질문. PR은 명시 요청 전 금지. 끝나면 검증 결과 + 미실행 항목(Win/mac 런타임)을 정직히 보고.
