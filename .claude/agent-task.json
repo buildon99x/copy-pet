@@ -13,7 +13,7 @@
     "commit_dir": "docs/plans/screenshots"
   },
   "max_attempts": 3,
-  "require_plan_approval": true,
+  "require_plan_approval": false,
   "approval_keyword": "/approve",
   "labels": {
     "task": "agent-task",

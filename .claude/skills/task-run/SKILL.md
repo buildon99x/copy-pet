@@ -25,8 +25,11 @@ Read `docs/agent-workflow.md` for the full design.
   *that* one — never start a second.
 - **Attempt cap.** Read `attempts:` from the issue's `agent-meta`. If it is
   `>= max_attempts` (default 3), set the issue `blocked`, comment why, and stop.
-- **Human gate.** When `require_plan_approval` (default true), stop after planning
-  and wait for explicit human approval before writing code.
+- **Review gate before code.** Always gate implementation behind a plan review.
+  By default (`require_plan_approval` false) this is an **automated self-review**
+  (stage 2): the driver critiques its own plan and only proceeds if it passes.
+  Set `require_plan_approval: true` to instead require an explicit **human**
+  approval — the run stops after planning until a maintainer approves.
 - **No base-branch writes.** Only ever commit/push to the task's
   `<branch_prefix><slug>` branch. Never push to `<base_branch>`.
 
@@ -37,7 +40,7 @@ Read `docs/agent-workflow.md` for the full design.
    `plans_dir=docs/plans`, `base_branch=main`, `branch_prefix=claude/`,
    `verify_commands=["cargo build --release","cargo clippy --release","cargo test --release"]`,
    `screenshot={command,src_glob,commit_dir}` (optional — skip stage screenshots if absent),
-   `max_attempts=3`, `require_plan_approval=true`, `approval_keyword="/approve"`,
+   `max_attempts=3`, `require_plan_approval=false`, `approval_keyword="/approve"`,
    `labels={task,queued,in_progress,needs_approval,blocked,done,report}`.
 3. `git fetch origin` so branch/PR checks are current.
 
@@ -87,13 +90,23 @@ Started — picking up this task.`
 Verification. Commit + push (`git push -u origin <branch>`). Record `branch` and
 `plan` in `agent-meta`; tick box 1. Comment a short plan summary + a link to the
 file on the branch.
-- If `require_plan_approval`: set `<labels.needs_approval>`, comment
-  `🧐 계획 리뷰 요청 · Plan review — reply with \`<approval_keyword>\` to approve, or
-  ask for changes.` and **exit**. (A later run resumes after approval.)
-- Else: continue.
+- If `require_plan_approval` is **true** (human gate): set `<labels.needs_approval>`,
+  comment `🧐 계획 리뷰 요청 · Plan review — reply with \`<approval_keyword>\` to approve,
+  or ask for changes.` and **exit**. (A later run resumes after approval.)
+- Else (default): continue to the automated self-review.
 
-**2 · Plan review.** (Reached only when resumed post-approval, or when approval
-is off.) Tick box 2; comment `✅ 계획 승인됨 · Plan approved — implementing.`
+**2 · Plan review.**
+- **Human-gate mode** (reached only when resumed after a maintainer `<approval_keyword>`):
+  tick box 2; comment `✅ 계획 승인됨 · Plan approved — implementing.`
+- **Automated self-review** (default): critique your own plan against a short
+  rubric — (a) does it cover every acceptance criterion? (b) is the scope bounded
+  and the change reversible? (c) any obvious feasibility risk or missing step?
+  Keep it lightweight (no heavy tooling). Post the verdict as a comment
+  (`🤖 자동 계획 리뷰 · Self-review`: PASS + 1–3 bullets, or the blockers found).
+  - **PASS** → tick box 2; proceed to Implement.
+  - **Blocking issues** → revise the plan doc to address them, commit + push,
+    bump `attempts`, and re-review. If `attempts >= max_attempts`, set
+    `<labels.blocked>` with the open concerns and stop.
 
 **3 · Implement.** Make the changes described in the plan. Commit + push to the
 branch. Tick box 3; comment a 1–3 line summary of what changed.

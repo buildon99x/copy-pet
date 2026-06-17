@@ -27,15 +27,20 @@ routine's fresh-clone-every-run cloud environment.
 1. Someone runs **`/task-new`** (interactively) describing the work. It opens an
    issue labelled `agent-task` + `agent:queued` with a workflow checklist.
 2. The routine fires and runs **`/task-run`**. It picks the one task, creates a
-   `claude/<slug>` branch, writes `docs/plans/<slug>-<date>.md`, comments the
-   plan, sets `agent:needs-approval`, and **stops** (human gate).
-3. A maintainer reviews the plan and comments **`/approve`** (or just `approve`)
-   — or asks for changes. Matching is normalized (case- and punctuation-
-   insensitive), so the leading-slash form survives API escaping.
-4. The next routine run resumes: **implement → verify (+ screenshots) → completion
-   report issue → PR → conflict check → `agent:done`**. Every stage posts a
-   progress comment on the work-request issue; the report issue and the PR
-   cross-link back to it.
+   `claude/<slug>` branch, writes `docs/plans/<slug>-<date>.md`, and comments the
+   plan.
+3. **Plan review** gates implementation. By default this is an **automated
+   self-review**: the driver critiques its own plan (covers all acceptance
+   criteria? bounded & reversible? feasible?), posts the verdict, and proceeds
+   if it passes (or revises and stops if it finds blockers). Set
+   `require_plan_approval: true` to instead require a **human** approval — the run
+   sets `agent:needs-approval` and stops until a maintainer comments **`/approve`**
+   (or `approve`; matching is normalized so the leading-slash form survives API
+   escaping).
+4. The run continues (same run when self-reviewing; the next run after a human
+   approval): **implement → verify (+ screenshots) → completion report issue → PR
+   → conflict check → `agent:done`**. Every stage posts a progress comment on the
+   work-request issue; the report issue and the PR cross-link back to it.
 
 ### Status labels (the state machine)
 
@@ -55,8 +60,8 @@ at the first unchecked box, so a crashed/interrupted run is safe to re-run.
 - Only ever touches issues carrying the `agent-task` label/marker.
 - Never auto-acts on `blocked` / `done` / closed issues.
 - **One** task advanced per run; **one** `in-progress` task at a time.
-- A **human approval gate** before any code is written (toggle with
-  `require_plan_approval`).
+- A **plan-review gate** before any code is written: automated self-review by
+  default, or a **human approval gate** (`require_plan_approval: true`).
 - An **attempt cap** (`max_attempts`, default 3): repeated verify failures or
   replans flip the issue to `agent:blocked` and stop.
 - Only commits to the task's `claude/<slug>` branch; never to the base branch.
@@ -92,8 +97,8 @@ All keys are optional; the skills fall back to these defaults:
 | `verify_commands` | `["cargo build --release", "cargo clippy --release", "cargo test --release"]` | Run in order at the Verify stage; any failure blocks. |
 | `screenshot` | *(see below)* | `{command, src_glob, commit_dir}` — optional; omit to skip screenshots. |
 | `max_attempts` | `3` | Verify/replan failures before `agent:blocked`. |
-| `require_plan_approval` | `true` | Human gate after planning. |
-| `approval_keyword` | `/approve` | The comment that approves a plan. |
+| `require_plan_approval` | `false` | `false` = automated self-review; `true` = human approval gate after planning. |
+| `approval_keyword` | `/approve` | The comment that approves a plan (human-gate mode). |
 | `labels` | see below | Override any label name. |
 
 `screenshot` collects "tested" images for the completion report: it runs
