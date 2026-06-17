@@ -5,6 +5,12 @@ name: CI
 # PR creation or branch pushes. Linux is deliberately not built in CI (the
 # portable backend is exercised by the macOS job and by the Windows
 # `--features portable` lint).
+#
+# Doc/asset-only changes skip the heavy windows/macos build matrix. The skip
+# is done with a `changes` detection job + a job-level `if:` (NOT top-level
+# paths-ignore), so the matrix check contexts still report — as "skipped" —
+# instead of going missing. A skipped REQUIRED status check passes branch
+# protection, so doc-only PRs stay mergeable even when the matrix is required.
 on:
   push:
     branches: [main]
@@ -16,8 +22,49 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  # Cheap gate: did any SOURCE path change? Always runs, needs no toolchain.
+  # On a missing/zero base ref (new branch, force-push) paths-filter fails
+  # open (reports changed), so the build runs — the safe direction.
+  changes:
+    name: detect changes
+    runs-on: ubuntu-latest
+    outputs:
+      source: ${{ steps.filter.outputs.source }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            source:
+              - 'src/**'
+              - 'build.rs'
+              - 'Cargo.toml'
+              - 'Cargo.lock'
+              - 'examples/**'
+              - 'tests/**'
+              - 'scripts/**'
+              - '.github/workflows/**'
+
+  # CHANGELOG.md policy lint (format + version sync with Cargo.toml). Kept as
+  # its own always-running job — pure bash, no Rust toolchain — so changelog/
+  # doc-only PRs are still linted even when the build matrix is skipped.
+  changelog:
+    name: changelog lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: bash scripts/release.sh verify
+
   build:
     name: ${{ matrix.os }}
+    needs: changes
+    # Build when any source path changed, OR always on a v* tag push (so the
+    # release path is never filtered out — the tag clause short-circuits
+    # before trusting the filter on a ref it can't diff).
+    if: >-
+      startsWith(github.ref, 'refs/tags/v') ||
+      needs.changes.outputs.source == 'true'
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -41,11 +88,6 @@ jobs:
 
       - name: Test
         run: cargo test --release
-
-      # CHANGELOG.md policy lint (format + version sync with Cargo.toml)
-      - name: Changelog lint
-        if: runner.os == 'macOS'
-        run: bash scripts/release.sh verify
 
       # Also exercise the portable backend on Windows so it can't bit-rot.
       - name: Clippy (portable backend on Windows)
