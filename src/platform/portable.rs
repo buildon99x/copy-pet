@@ -142,6 +142,13 @@ struct PortableApp {
     /// analogue of the Windows-native `paste_target: HWND` (Win+V parity).
     #[cfg(target_os = "macos")]
     paste_target_pid: Option<i32>,
+    /// When set, the synthesized Cmd+V is *due* at this instant. The paste is
+    /// deferred (rather than fired inline after `activate_app`) so the run loop
+    /// gets a turn to actually carry out the asynchronous app activation first
+    /// — sleeping the main thread here would block that very activation, so the
+    /// keystroke would race ahead and miss the caret. Polled in `about_to_wait`.
+    #[cfg(target_os = "macos")]
+    pending_paste: Option<Instant>,
 }
 
 /// The flyout panel's dedicated winit window + transparent presenter (macOS).
@@ -210,6 +217,8 @@ impl PortableApp {
             flyout: None,
             #[cfg(target_os = "macos")]
             paste_target_pid: None,
+            #[cfg(target_os = "macos")]
+            pending_paste: None,
         }
     }
 
@@ -399,9 +408,11 @@ impl PortableApp {
     /// Cmd+V we re-activate the app that was frontmost when the flyout opened
     /// (`paste_target_pid`) — the paste then lands back in the original caret,
     /// mirroring how the Windows-native backend restores its `paste_target`
-    /// (Win+V parity). On Linux/Windows-portable there is no reliable cross-app
-    /// focus restore, so the paste lands in whatever is frontmost after the
-    /// panel closes.
+    /// (Win+V parity). Activation is asynchronous and needs a run-loop turn, so
+    /// the keystroke is *deferred* via `pending_paste` (fired from
+    /// `about_to_wait`) rather than sent inline. On Linux/Windows-portable there
+    /// is no reliable cross-app focus restore, so the paste lands in whatever is
+    /// frontmost after the panel closes.
     fn set_clipboard(&mut self, pick: ClipPick) {
         if let Ok(mut guard) = self.suppress.lock() {
             *guard = Some(pick.text.clone());
@@ -415,16 +426,24 @@ impl PortableApp {
             // panel never re-activates a stale app — it just pastes into the
             // current frontmost like Linux.
             #[cfg(target_os = "macos")]
-            if let Some(pid) = self.paste_target_pid.take() {
-                // Hand focus back to the source app before the Cmd+V. The
-                // activation is asynchronous (macOS has no AttachThreadInput
-                // equivalent to synchronize it), so give it a moment to land
-                // before the synthesized keystroke, or the paste would race
-                // ahead of the focus switch and miss the caret.
-                if super::mac_focus::activate_app(pid) {
-                    std::thread::sleep(std::time::Duration::from_millis(60));
+            {
+                if let Some(pid) = self.paste_target_pid.take() {
+                    // Hand focus back to the source app, then defer the Cmd+V:
+                    // `activateWithOptions:` only takes effect once the run loop
+                    // turns, and sleeping the main thread here would block that
+                    // turn, so we schedule the keystroke a short moment out and
+                    // let `about_to_wait` fire it.
+                    if super::mac_focus::activate_app(pid) {
+                        self.pending_paste =
+                            Some(Instant::now() + Duration::from_millis(80));
+                        return;
+                    }
                 }
+                // No target to restore (e.g. the middle-click panel): paste into
+                // whatever is frontmost, like Linux.
+                paste_cmd_v();
             }
+            #[cfg(not(target_os = "macos"))]
             paste_synthesize();
         }
     }
@@ -1091,6 +1110,16 @@ impl ApplicationHandler for PortableApp {
 
     fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
         let now = Instant::now();
+        // Fire a deferred paste once its target app has had a run-loop turn to
+        // become frontmost (see `set_clipboard`). Checked outside the TICK gate
+        // so the short delay isn't rounded up to a whole frame.
+        #[cfg(target_os = "macos")]
+        if let Some(due) = self.pending_paste {
+            if now >= due {
+                self.pending_paste = None;
+                paste_cmd_v();
+            }
+        }
         if now.duration_since(self.last_frame) >= TICK {
             self.last_frame = now;
             // the global panel hotkey fired on the input thread
@@ -1149,7 +1178,16 @@ impl ApplicationHandler for PortableApp {
                 }
             }
         }
-        event_loop.set_control_flow(ControlFlow::WaitUntil(self.last_frame + TICK));
+        // Wake early for a scheduled paste so its ~80 ms delay is honored even
+        // when the app is otherwise idle between frames.
+        #[cfg(target_os = "macos")]
+        let wake = match self.pending_paste {
+            Some(due) => (self.last_frame + TICK).min(due),
+            None => self.last_frame + TICK,
+        };
+        #[cfg(not(target_os = "macos"))]
+        let wake = self.last_frame + TICK;
+        event_loop.set_control_flow(ControlFlow::WaitUntil(wake));
     }
 }
 
@@ -1272,15 +1310,13 @@ impl ChordTracker {
     }
 }
 
-/// Synthesizes the paste shortcut (Ctrl+V, or Cmd+V on macOS) into the focused
-/// app via `rdev::simulate` (auto-paste). Output-only: it injects keystrokes,
-/// never reads them, so the input-privacy guarantee is untouched (golden rule
-/// 1); and being a `simulate` call it avoids the macOS TIS *listen* crash path
-/// (LNR-0005).
+/// Synthesizes the Ctrl+V paste shortcut into the focused app via
+/// `rdev::simulate` (auto-paste) on Linux/Windows-portable. Output-only: it
+/// injects keystrokes, never reads them, so the input-privacy guarantee is
+/// untouched (golden rule 1). macOS uses `paste_cmd_v` instead — rdev there
+/// leaves the Command flag off the `V` event (LNR-0007).
+#[cfg(not(target_os = "macos"))]
 fn paste_synthesize() {
-    #[cfg(target_os = "macos")]
-    let modifier = rdev::Key::MetaLeft;
-    #[cfg(not(target_os = "macos"))]
     let modifier = rdev::Key::ControlLeft;
     for et in [
         rdev::EventType::KeyPress(modifier),
@@ -1289,6 +1325,32 @@ fn paste_synthesize() {
         rdev::EventType::KeyRelease(modifier),
     ] {
         let _ = rdev::simulate(&et);
+    }
+}
+
+/// Synthesizes a Cmd+V keystroke natively on macOS.
+///
+/// rdev's macOS path posts the `V` key event with an empty modifier-flags
+/// field (it relies on a separately-posted Meta keydown), and macOS only
+/// reliably recognizes the paste shortcut when the Command flag rides on the
+/// `V` event itself — so we build the CGEvents directly and set the flag. This
+/// is the macOS analogue of the Windows-native `SendInput(Ctrl+V)`.
+#[cfg(target_os = "macos")]
+fn paste_cmd_v() {
+    use core_graphics::event::{
+        CGEvent, CGEventFlags, CGEventTapLocation, CGKeyCode,
+    };
+    use core_graphics::event_source::{CGEventSource, CGEventSourceStateID};
+
+    const KVK_ANSI_V: CGKeyCode = 0x09;
+    let Ok(src) = CGEventSource::new(CGEventSourceStateID::HIDSystemState) else {
+        return;
+    };
+    for down in [true, false] {
+        if let Ok(ev) = CGEvent::new_keyboard_event(src.clone(), KVK_ANSI_V, down) {
+            ev.set_flags(CGEventFlags::CGEventFlagCommand);
+            ev.post(CGEventTapLocation::HID);
+        }
     }
 }
 

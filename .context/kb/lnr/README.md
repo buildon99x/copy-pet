@@ -12,3 +12,4 @@ before touching the related area.
 | [0004](0004-cargo-cross-platform-deps.md) | "optional on Windows, required elsewhere" dependency layout | build/cargo |
 | [0005](0005-macos-tis-eventtap-crash.md) | macOS 15 SIGTRAP: rdev translates keys (TIS) off the main thread | portable input (macOS) |
 | [0006](0006-auto-paste-foreground-capture-order.md) | Auto-paste captured our own window as the target on the hotkey path | Windows backend (auto-paste) |
+| [0007](0007-macos-paste-synthesis.md) | macOS auto-paste: Command flag missing on the V event + a main-thread sleep starved app activation | portable backend (auto-paste, macOS) |
