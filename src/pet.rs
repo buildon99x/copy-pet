@@ -1632,18 +1632,22 @@ mod tests {
     #[test]
     fn flyout_pick_always_pastes_for_win_v_parity() {
         let mut p = pet();
+        p.st.panel_autoclose = false; // keep the flyout open between picks
         p.on_copy("hello".into(), None, None);
         let id = p.clips.visible("")[0].id;
-        // paste_on_select stays off (its default; not even exposed on the
-        // Windows tray menu) — yet the caret-anchored flyout is the Win+V
-        // parity path opened at a focused field, so a pick there still pastes.
-        assert!(!p.paste_on_select());
         p.open_flyout();
+
+        // paste_on_select off (its default; not even exposed on the Windows
+        // tray menu) — yet the caret-anchored flyout is the Win+V parity path
+        // opened at a focused field, so a pick there still pastes.
+        assert!(!p.paste_on_select());
         let pick = p.run_action(PanelAction::Copy(id)).expect("a pick");
-        assert!(
-            pick.paste,
-            "a flyout pick auto-pastes regardless of paste_on_select"
-        );
+        assert!(pick.paste, "flyout pick pastes even with paste_on_select off");
+
+        // turning the setting on must not regress the flyout either
+        p.toggle_paste_on_select();
+        let pick = p.run_action(PanelAction::Copy(id)).expect("a pick");
+        assert!(pick.paste, "flyout pick still pastes with paste_on_select on");
     }
 
     #[test]

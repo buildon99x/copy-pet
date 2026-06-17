@@ -252,7 +252,15 @@ relative markdown links.
 3. On a Windows dev machine: launch the exe, copy text from a couple of apps,
    confirm the fish + history; screenshot the result. Confirm CPU is a few
    percent and memory ~12–16 MB on release.
-4. Whatever you could not execute locally (e.g. macOS/Linux runtime from a
+4. If you touched the clip-pick / paste path (`Pet::run_action`, `ClipPick`,
+   `copy_back` / `set_clipboard`, or any panel setting): on Windows exercise
+   **both** trigger paths — the hotkey **flyout** (focus a text field, press the
+   hotkey, pick a clip → it must paste into that field, Win+V parity) **and** the
+   middle-click panel — and confirm any new setting is actually reachable on the
+   **Windows tray menu**, not only the macOS NSMenu (the menu is the deliberate
+   backend split; a shared `menu::MenuAction` is easy to ship with no Windows
+   surface — see [LNR-0007](.context/kb/lnr/0007-flyout-paste-gated-on-unreachable-setting.md)).
+5. Whatever you could not execute locally (e.g. macOS/Linux runtime from a
    Windows box, or any GUI from a headless box) is validated by CI builds +
    code review — say so honestly in summaries. Note CI has **no Linux job**;
    Linux-affecting changes need a local Linux build/test pass.
