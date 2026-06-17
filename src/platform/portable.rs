@@ -885,15 +885,18 @@ impl ApplicationHandler for PortableApp {
             .with_resizable(false)
             .with_window_level(WindowLevel::AlwaysOnTop);
 
+        crate::diag::log("resumed: creating window");
         let window = match event_loop.create_window(attrs) {
             Ok(win) => Rc::new(win),
             Err(_) => {
+                crate::diag::log("resumed: create_window FAILED");
                 event_loop.exit();
                 return;
             }
         };
         // Korean search input needs the IME (composition arrives as Ime::Commit)
         window.set_ime_allowed(true);
+        crate::diag::log("resumed: window created");
 
         #[cfg(not(target_os = "macos"))]
         {
@@ -907,12 +910,14 @@ impl ApplicationHandler for PortableApp {
         #[cfg(target_os = "macos")]
         {
             self.presenter = super::mac_present::Presenter::new(&window);
+            crate::diag::log("resumed: presenter init done");
         }
 
         self.window = Some(window);
         self.resize_surface();
         self.last_frame = Instant::now();
         self.paint();
+        crate::diag::log("resumed: first paint done");
         self.apply_window_level(); // enforce a persisted level/hide
     }
 
@@ -1368,12 +1373,14 @@ fn spawn_global_input(
     perm_needed: Arc<AtomicBool>,
 ) {
     std::thread::spawn(move || {
+        crate::diag::log("input thread: installing macOS event tap");
         let mut chord = ChordTracker::new(hk);
         let mut gate = KeyGate::new();
         let res = super::mac_input::listen(move |et| {
             pump(et, &mut chord, &mut gate, &panel_toggle, &hk_rx)
         });
         if res.is_err() {
+            crate::diag::log("input thread: event tap not installed (permission?)");
             perm_needed.store(true, Ordering::Relaxed);
         }
     });
@@ -1403,10 +1410,13 @@ fn spawn_global_input(
 /// never retroactively captured).
 fn spawn_clipboard_watcher(tx: Sender<ClipCapture>, suppress: Suppress, capture: Arc<AtomicBool>) {
     std::thread::spawn(move || {
+        crate::diag::log("clip-watcher thread: opening clipboard");
         let Ok(mut cb) = arboard::Clipboard::new() else {
+            crate::diag::log("clip-watcher thread: Clipboard::new failed");
             return; // no clipboard (e.g. pure Wayland without XWayland)
         };
         let mut last: Option<String> = cb.get_text().ok();
+        crate::diag::log("clip-watcher thread: initial get_text done");
         let mut paused = false;
         loop {
             std::thread::sleep(CLIP_POLL);
@@ -1444,13 +1454,20 @@ fn spawn_clipboard_watcher(tx: Sender<ClipCapture>, suppress: Suppress, capture:
 }
 
 pub fn run() {
+    // Startup breadcrumbs (clipcat::diag) localize a hard crash on launch — a
+    // macOS abort() (e.g. SIGTRAP) can't be caught by the panic hook, so the
+    // last line with no follow-up marks the step that died.
+    crate::diag::init();
     crate::sound::init();
+    crate::diag::log("sound init done");
 
     let (tx, rx) = std::sync::mpsc::channel();
     let suppress: Suppress = Arc::new(Mutex::new(None));
     let st = Persist::load();
+    crate::diag::log("persist loaded");
     let capture_flag = Arc::new(AtomicBool::new(st.clip_capture));
     spawn_clipboard_watcher(tx, suppress.clone(), capture_flag.clone());
+    crate::diag::log("clipboard watcher spawned");
 
     // daily GitHub release check (ADR-0009)
     crate::update::set_enabled(st.auto_update);
@@ -1462,6 +1479,7 @@ pub fn run() {
     // Runtime hotkey changes (preset cycling) flow to the listener thread here.
     let (hk_tx, hk_rx) = std::sync::mpsc::channel::<Hotkey>();
     spawn_global_input(hk, hk_rx, panel_toggle.clone(), perm_needed.clone());
+    crate::diag::log("global input spawned");
 
     let mut pet = Pet::new(st);
     pet.set_panel_hint(format!("{} / C", hk.display()));
@@ -1471,11 +1489,16 @@ pub fn run() {
         hk_tx,
     };
     let mut app = PortableApp::new(pet, rx, suppress, capture_flag, signals, hk.display());
+    crate::diag::log("pet + app built");
 
     let event_loop = match EventLoop::new() {
         Ok(el) => el,
-        Err(_) => return,
+        Err(_) => {
+            crate::diag::log("EventLoop::new FAILED");
+            return;
+        }
     };
+    crate::diag::log("event loop created; entering run_app");
     event_loop.set_control_flow(ControlFlow::WaitUntil(Instant::now() + TICK));
     let _ = event_loop.run_app(&mut app);
 }

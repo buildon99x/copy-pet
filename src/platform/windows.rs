@@ -2169,8 +2169,12 @@ pub fn run() {
         }
 
         SetProcessDpiAwarenessContext(-4 as _); // PER_MONITOR_AWARE_V2
+        // Startup breadcrumbs (clipcat::diag) so a crash on launch leaves a
+        // trace in <config_dir>/clipcat.log; parity with the portable backend.
+        crate::diag::init();
         crate::sound::init();
         migrate_autostart();
+        crate::diag::log("win: dpi/sound/autostart done");
 
         let hinst = GetModuleHandleW(null());
         let icon = make_icon();
@@ -2326,6 +2330,7 @@ pub fn run() {
         }); // first paint
         with_app(|a| a.apply_window_level()); // enforce a persisted level/hide
         SetTimer(hwnd, TIMER_ID, TICK_MS, None);
+        crate::diag::log("win: windows/tray/hooks ready; entering message loop");
 
         let mut msg: MSG = std::mem::zeroed();
         while GetMessageW(&mut msg, null_mut(), 0, 0) > 0 {

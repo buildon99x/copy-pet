@@ -6,6 +6,7 @@
 //! [`render::draw_icon_scaled`] to regenerate the embedded `.ico` asset.
 
 pub mod clipboard;
+pub mod diag;
 pub mod hotkey;
 pub mod i18n;
 pub mod input;
