@@ -702,9 +702,14 @@ impl Pet {
             PanelAction::Copy(id) => {
                 // default pick: preserve the original formatting (ADR-0014)
                 if let Some(clip) = self.clips.get(id) {
+                    // The caret-anchored flyout is the Win+V parity path: the
+                    // hotkey opened it at the focused field's text caret and the
+                    // backend captured that field as the paste target, so picking
+                    // a clip there always pastes — independent of the embedded
+                    // (middle-click) panel's opt-in `paste_on_select`.
                     let pick = ClipPick {
                         text: clip.text.clone(),
-                        paste: self.st.paste_on_select,
+                        paste: self.st.paste_on_select || self.flyout,
                         formats: clip.formats.clone(),
                         plain_only: false,
                     };
@@ -1622,6 +1627,23 @@ mod tests {
         assert!(p.paste_on_select());
         let pick = p.run_action(PanelAction::Copy(id)).expect("a pick");
         assert!(pick.paste, "now the pick also asks the backend to paste");
+    }
+
+    #[test]
+    fn flyout_pick_always_pastes_for_win_v_parity() {
+        let mut p = pet();
+        p.on_copy("hello".into(), None, None);
+        let id = p.clips.visible("")[0].id;
+        // paste_on_select stays off (its default; not even exposed on the
+        // Windows tray menu) — yet the caret-anchored flyout is the Win+V
+        // parity path opened at a focused field, so a pick there still pastes.
+        assert!(!p.paste_on_select());
+        p.open_flyout();
+        let pick = p.run_action(PanelAction::Copy(id)).expect("a pick");
+        assert!(
+            pick.paste,
+            "a flyout pick auto-pastes regardless of paste_on_select"
+        );
     }
 
     #[test]

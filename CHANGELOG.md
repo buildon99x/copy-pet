@@ -16,6 +16,13 @@ versions follow [SemVer](https://semver.org/). Maintenance rules:
 
 ## [Unreleased]
 
+### Fixed
+- **Picking a clip from the hotkey panel now pastes it** (Win+V parity, Windows):
+  opening the clipboard with the panel hotkey while typing in a text field and
+  then clicking a clip — or selecting it and pressing **Enter** — now pastes it
+  straight into that field, instead of only copying it. (The separate
+  "Paste on select" setting still controls the middle-click panel by the cat.)
+
 ## [2.2.0] - 2026-06-17
 
 ### Added

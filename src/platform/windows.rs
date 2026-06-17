@@ -180,9 +180,10 @@ impl App {
     }
 
     /// Puts panel-picked text on the OS clipboard; our own change is
-    /// suppressed once in WM_CLIPBOARDUPDATE. When `pick.paste` (the
-    /// `paste_on_select` setting), it then restores focus to the app that was
-    /// active when the panel opened and synthesizes Ctrl+V there.
+    /// suppressed once in WM_CLIPBOARDUPDATE. When `pick.paste` (always for a
+    /// caret-anchored flyout pick — Win+V parity — or the `paste_on_select`
+    /// setting for the embedded panel), it then restores focus to the app that
+    /// was active when the panel opened and synthesizes Ctrl+V there.
     fn copy_back(&mut self, pick: ClipPick) {
         self.suppress_clip = Some(pick.text.clone());
         unsafe { set_clipboard_rich(self.hwnd, &pick.text, pick.formats.as_ref(), pick.plain_only) };
