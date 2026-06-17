@@ -16,6 +16,8 @@ versions follow [SemVer](https://semver.org/). Maintenance rules:
 
 ## [Unreleased]
 
+## [2.2.0] - 2026-06-17
+
 ### Added
 - **Formatting is kept when you paste** (Win+V parity): copied rich text now
   keeps its original formatting (bold, colors, links) when you pick it from the
