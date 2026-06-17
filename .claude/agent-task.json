@@ -1,0 +1,27 @@
+{
+  "plans_dir": "docs/plans",
+  "base_branch": "main",
+  "branch_prefix": "claude/",
+  "verify_commands": [
+    "cargo build --release",
+    "cargo clippy --release",
+    "cargo test --release"
+  ],
+  "screenshot": {
+    "command": "cargo run --release --example preview",
+    "src_glob": "/tmp/clipcat-preview/*.png",
+    "commit_dir": "docs/plans/screenshots"
+  },
+  "max_attempts": 3,
+  "require_plan_approval": true,
+  "approval_keyword": "/approve",
+  "labels": {
+    "task": "agent-task",
+    "queued": "agent:queued",
+    "in_progress": "agent:in-progress",
+    "needs_approval": "agent:needs-approval",
+    "blocked": "agent:blocked",
+    "done": "agent:done",
+    "report": "agent-report"
+  }
+}
