@@ -531,7 +531,7 @@ impl ClipStore {
                 .filter(|(_, c)| c.pinned == want_pinned)
                 .filter_map(|(i, c)| score(c).map(|s| (i, s)))
                 .collect();
-            v.sort_by(|a, b| b.1.cmp(&a.1));
+            v.sort_by_key(|&(_, s)| std::cmp::Reverse(s));
             v.into_iter().map(|(i, _)| i).collect()
         };
 

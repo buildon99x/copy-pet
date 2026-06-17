@@ -10,16 +10,8 @@ fn demul(pm: &Pixmap) -> Vec<u8> {
         .chunks_exact(4)
         .flat_map(|px| {
             let a = px[3] as u32;
-            if a == 0 {
-                [0u8, 0, 0, 0]
-            } else {
-                [
-                    ((px[0] as u32 * 255 + a / 2) / a).min(255) as u8,
-                    ((px[1] as u32 * 255 + a / 2) / a).min(255) as u8,
-                    ((px[2] as u32 * 255 + a / 2) / a).min(255) as u8,
-                    px[3],
-                ]
-            }
+            let unmul = |c: u8| (c as u32 * 255 + a / 2).checked_div(a).map_or(0, |v| v.min(255)) as u8;
+            [unmul(px[0]), unmul(px[1]), unmul(px[2]), px[3]]
         })
         .collect()
 }

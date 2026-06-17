@@ -1031,10 +1031,8 @@ impl ApplicationHandler for PortableApp {
                         self.dragging = false;
                     }
                 },
-                MouseButton::Middle => {
-                    if state == ElementState::Pressed {
-                        self.pet.toggle_panel();
-                    }
+                MouseButton::Middle if state == ElementState::Pressed => {
+                    self.pet.toggle_panel();
                 }
                 #[cfg(target_os = "macos")]
                 MouseButton::Right => {
@@ -1064,13 +1062,11 @@ impl ApplicationHandler for PortableApp {
                 }
             }
             WindowEvent::ModifiersChanged(m) => self.mods = m.state(),
-            WindowEvent::KeyboardInput { event, .. } => {
-                if event.state == ElementState::Pressed {
-                    if self.pet.panel_open() {
-                        self.panel_key(&event);
-                    } else if let PhysicalKey::Code(code) = event.physical_key {
-                        self.shortcut(code, event_loop);
-                    }
+            WindowEvent::KeyboardInput { event, .. } if event.state == ElementState::Pressed => {
+                if self.pet.panel_open() {
+                    self.panel_key(&event);
+                } else if let PhysicalKey::Code(code) = event.physical_key {
+                    self.shortcut(code, event_loop);
                 }
             }
             _ => {}
