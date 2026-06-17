@@ -29,8 +29,9 @@ routine's fresh-clone-every-run cloud environment.
 2. The routine fires and runs **`/task-run`**. It picks the one task, creates a
    `claude/<slug>` branch, writes `docs/plans/<slug>-<date>.md`, comments the
    plan, sets `agent:needs-approval`, and **stops** (human gate).
-3. A maintainer reviews the plan and comments **`/approve`** (the approval
-   keyword) — or asks for changes.
+3. A maintainer reviews the plan and comments **`/approve`** (or just `approve`)
+   — or asks for changes. Matching is normalized (case- and punctuation-
+   insensitive), so the leading-slash form survives API escaping.
 4. The next routine run resumes: **implement → verify (+ screenshots) → completion
    report issue → PR → conflict check → `agent:done`**. Every stage posts a
    progress comment on the work-request issue; the report issue and the PR

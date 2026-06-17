@@ -49,11 +49,15 @@ Then choose, in this priority order:
 
 1. **Resume** an `<labels.in_progress>` task → go to its first unchecked stage.
 2. An `<labels.needs_approval>` task **that was approved**: read its comments
-   (`issue_read get_comments`). Approved = a comment **after** the plan comment
-   whose body contains `<approval_keyword>` from a repo collaborator (the issue
-   author counts). → resume at **Implement**.
-   - If instead the latest reviewer comment requests changes (contains "재계획"
-     / "replan" / "changes requested"), bump `attempts` and go back to **Plan**.
+   (`issue_read get_comments`). Approved = a comment **after** the plan comment,
+   from a repo collaborator (the issue author counts), that matches the approval
+   keyword. **Match by normalizing both sides** — lowercase and strip every
+   non-alphanumeric character, then check the comment contains the keyword's core
+   (default `approve`). This normalization is required: a leading-slash token like
+   `/approve` is escaped to e.g. `·/·a·pprove` when read back through the API, so a
+   raw substring match would miss it. → resume at **Implement**.
+   - If instead the latest reviewer comment requests changes (its normalized text
+     contains `replan` / `changes` / `재계획`), bump `attempts` and go back to **Plan**.
    - Otherwise it is still waiting → **exit** ("awaiting approval on #N").
 3. The **oldest** `<labels.queued>` task → **start** it (only if no task is
    `in-progress`; the order above already guarantees this).
