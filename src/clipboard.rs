@@ -119,6 +119,27 @@ pub fn b64_decode(s: &str) -> Option<Vec<u8>> {
     Some(out)
 }
 
+/// Collapses runs of whitespace to a single space, up to `cap` characters.
+fn collapse_whitespace(chars: impl Iterator<Item = char>, cap: usize) -> String {
+    let mut out = String::new();
+    let mut last_space = false;
+    for c in chars {
+        if out.len() >= cap {
+            break;
+        }
+        if c.is_whitespace() {
+            if !last_space {
+                out.push(' ');
+            }
+            last_space = true;
+        } else {
+            out.push(c);
+            last_space = false;
+        }
+    }
+    out
+}
+
 impl Clip {
     /// Single-line preview: first non-empty line, whitespace collapsed.
     pub fn preview(&self) -> String {
@@ -127,20 +148,7 @@ impl Clip {
             .lines()
             .find(|l| !l.trim().is_empty())
             .unwrap_or("");
-        let mut out = String::new();
-        let mut last_space = false;
-        for c in line.trim().chars().take(120) {
-            if c.is_whitespace() {
-                if !last_space {
-                    out.push(' ');
-                }
-                last_space = true;
-            } else {
-                out.push(c);
-                last_space = false;
-            }
-        }
-        out
+        collapse_whitespace(line.trim().chars().take(120), 120)
     }
 
     /// One-line view of the **whole** clip for the panel list: every line is
@@ -149,26 +157,7 @@ impl Clip {
     /// see more of what a clip actually holds. Capped generously; the row
     /// truncates it to the available width.
     pub fn flattened(&self) -> String {
-        let mut out = String::new();
-        let mut last_space = false;
-        let mut n = 0usize;
-        for c in self.text.trim().chars() {
-            if n >= 200 {
-                break;
-            }
-            if c.is_whitespace() {
-                if !last_space {
-                    out.push(' ');
-                    n += 1;
-                }
-                last_space = true;
-            } else {
-                out.push(c);
-                n += 1;
-                last_space = false;
-            }
-        }
-        out
+        collapse_whitespace(self.text.trim().chars(), 200)
     }
 }
 
@@ -379,14 +368,17 @@ impl ClipStore {
     }
 
     fn evict(&mut self) {
-        let mut unpinned = self.items.iter().filter(|c| !c.pinned).count();
-        while unpinned > MAX_HISTORY {
-            if let Some(i) = self.items.iter().rposition(|c| !c.pinned) {
-                self.items.remove(i);
-                unpinned -= 1;
-            } else {
-                break;
-            }
+        let unpinned: Vec<usize> = self
+            .items
+            .iter()
+            .enumerate()
+            .filter(|(_, c)| !c.pinned)
+            .map(|(i, _)| i)
+            .collect();
+        let excess = unpinned.len().saturating_sub(MAX_HISTORY);
+        // Remove oldest (highest indices in newest-first order) first so indices stay valid.
+        for &i in unpinned.iter().rev().take(excess) {
+            self.items.remove(i);
         }
     }
 
@@ -557,10 +549,11 @@ impl ClipStore {
     /// (case-insensitive dedupe, first spelling wins). Drives the panel's
     /// source-filter cycle button.
     pub fn sources(&self) -> Vec<&str> {
+        let mut seen = std::collections::HashSet::new();
         let mut out: Vec<&str> = Vec::new();
         for c in &self.items {
             if let Some(s) = c.source.as_deref() {
-                if !out.iter().any(|seen| eq_ci(seen, s)) {
+                if seen.insert(s.to_lowercase()) {
                     out.push(s);
                 }
             }
@@ -852,7 +845,7 @@ mod tests {
     #[test]
     fn formats_are_omitted_for_plain_clips_and_back_compat_loads() {
         // a plain clip serializes without a `formats` key (skip_serializing_if)
-        let mut s = store_with(&["plain"]);
+        let s = store_with(&["plain"]);
         let json = serde_json::to_string(&ClipsOut { clips: &s.items }).unwrap();
         assert!(!json.contains("formats"), "plain clips omit the key: {json}");
         // old clips.json with no `formats` field loads as None

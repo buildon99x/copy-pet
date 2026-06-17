@@ -5,23 +5,12 @@
 
 #![allow(unexpected_cfgs)] // objc 0.2's msg_send!/class! macros
 
-use objc::runtime::Object;
 use objc::{class, msg_send, sel, sel_impl};
 
-type Id = *mut Object;
+use super::mac_util::{nsstring, Id};
 
 /// `NSAlertFirstButtonReturn` — the first (default) button.
 const FIRST_BUTTON: isize = 1000;
-
-fn nsstring(s: &str) -> Id {
-    let bytes = s.as_bytes();
-    unsafe {
-        msg_send![class!(NSString),
-            stringWithBytes: bytes.as_ptr()
-            length: bytes.len()
-            encoding: 4usize] // NSUTF8StringEncoding
-    }
-}
 
 unsafe fn make_alert(title: &str, body: &str) -> Id {
     let alert: Id = msg_send![class!(NSAlert), alloc];

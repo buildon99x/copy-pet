@@ -9,28 +9,18 @@
 
 #![allow(unexpected_cfgs)] // objc 0.2's msg_send!/class! macros
 
-use objc::runtime::{Object, BOOL};
+use objc::runtime::BOOL;
 use objc::{class, msg_send, sel, sel_impl};
 use std::os::raw::c_char;
 
 use crate::clipboard::{b64_decode, b64_encode, RichFormats};
 
-type Id = *mut Object;
+use super::mac_util::{nsstring, Id};
 
 // NSPasteboard uniform-type identifiers.
 const UTF8_TEXT: &str = "public.utf8-plain-text";
 const HTML: &str = "public.html";
 const RTF: &str = "public.rtf";
-
-fn nsstring(s: &str) -> Id {
-    let bytes = s.as_bytes();
-    unsafe {
-        msg_send![class!(NSString),
-            stringWithBytes: bytes.as_ptr()
-            length: bytes.len()
-            encoding: 4usize] // NSUTF8StringEncoding
-    }
-}
 
 unsafe fn nsstring_to_string(ns: Id) -> Option<String> {
     if ns.is_null() {

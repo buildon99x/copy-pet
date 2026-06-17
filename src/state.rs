@@ -173,11 +173,7 @@ impl Persist {
             .unwrap_or_default();
         let today = today_string();
         if st.today != today {
-            st.today = today;
-            st.keys_today = 0;
-            st.clicks_today = 0;
-            st.copies_today = 0;
-            st.active_min_today = 0;
+            st.reset_daily(today);
         }
         if Lang::from_code(&st.lang).is_none() {
             st.lang = detect_lang().code().to_string();
@@ -210,15 +206,19 @@ impl Persist {
         self.lang = lang.code().to_string();
     }
 
+    fn reset_daily(&mut self, today: String) {
+        self.today = today;
+        self.keys_today = 0;
+        self.clicks_today = 0;
+        self.copies_today = 0;
+        self.active_min_today = 0;
+    }
+
     /// Resets daily counters if the local date rolled over.
     pub fn roll_day(&mut self) -> bool {
         let today = today_string();
         if self.today != today {
-            self.today = today;
-            self.keys_today = 0;
-            self.clicks_today = 0;
-            self.copies_today = 0;
-            self.active_min_today = 0;
+            self.reset_daily(today);
             true
         } else {
             false
