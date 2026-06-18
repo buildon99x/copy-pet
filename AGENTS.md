@@ -9,8 +9,10 @@ accessories. The full UI is bilingual (English/Korean). Primary target is
 **Windows** (premium native build); **macOS** and **Linux** are supported via a
 portable backend.
 
-> This file is the single source of truth for working in this repo. `CLAUDE.md`
-> imports it. Keep it accurate when structure or commands change.
+> This file is the source of truth for *how to work* in this repo (the steering
+> that's worth loading every turn); it links out to reference detail — the repo
+> map, ADRs, LNRs — that you read only when a task touches it. `CLAUDE.md`
+> imports this file. Keep it accurate when structure or commands change.
 
 ## Golden rules
 
@@ -45,78 +47,11 @@ portable backend.
 
 ## Repository layout
 
-```
-src/
-  main.rs              thin entry → clipcat::platform::run()
-  lib.rs               module wiring
-  pet.rs               Pet: platform-agnostic simulation, fish animation,
-                       clip/panel orchestration + scene building
-  clipboard.rs         ClipStore: clip history model + clips.json persistence
-  panel.rs             clipboard panel UI state, dynamic Layout geometry
-                       (user-movable/resizable card), hit testing, drag zones
-  render.rs            all vector art (cat, fish, panel, accessories, bubble, icon)
-  sysfont.rs           system-font text for everything drawn (ab_glyph,
-                       ADR-0007/0011); hollow tofu box for uncovered glyphs
-  hotkey.rs            panel-hotkey spec parsing ("win+shift+v") + display label
-  i18n.rs              every user-visible string, English + Korean
-  sound.rs             synthesized SFX; winmm on Windows, no-op elsewhere
-  state.rs             Persist (JSON) + XP/level progression + accessory table
-  update.rs            optional self-update (ADR-0009): daily GitHub release
-                       check via system curl; exe swap + relaunch on Windows
-  input.rs             shared atomic activity counters (KEYS/CLICKS/WHEEL)
-  menu.rs              platform-agnostic context-menu model (entries, actions,
-                       check state); Pet::build_menu / apply_menu_action drive
-                       it. Native menus (macOS NSMenu) just render it — so the
-                       whole menu is unit/e2e testable without a GUI.
-  platform/
-    mod.rs             selects exactly one backend by cfg
-    windows.rs         native Win32 layered window + LL hooks + clipboard
-                       listener + global panel hotkey (default Win+Shift+V,
-                       fallback Ctrl+Shift+V) + Shell tray. The hotkey opens
-                       the panel as a caret-anchored flyout in a *second*
-                       focusable layered window (ADR-0013); middle-click keeps
-                       the embedded panel.
-    portable.rs        winit + softbuffer + rdev + arboard (macOS/Linux,
-                       and Windows --feature portable). On macOS the hotkey
-                       opens the panel as a caret-anchored flyout in a second
-                       winit window (ADR-0013); Linux keeps the embedded panel.
-    mac_input.rs       macOS-only global-input event tap (CoreGraphics).
-                       Replaces rdev's keyboard listener, which crashes on
-                       macOS 15 by calling Text Input Source APIs off the main
-                       thread (LNR-0005); reads event kind + keycode only.
-    mac_present.rs     macOS-only transparent presenter: pushes the pixmap to
-                       the window's CALayer as a CGImage with alpha, so the pet
-                       floats with a transparent background (ADR-0003 update)
-                       instead of softbuffer's opaque card.
-    mac_menu.rs        macOS-only native NSMenu shown on right-click; renders
-                       the platform-agnostic menu::MenuEntry tree (submenus,
-                       check marks, disabled items) and returns the chosen
-                       menu::MenuAction. The portable tray-menu stand-in.
-    mac_dialogs.rs     macOS-only NSAlert dialogs (About box, Reset-stats
-                       confirmation) — the parity of the Windows MessageBoxW.
-    mac_autostart.rs   macOS-only "run at login" via a ~/Library/LaunchAgents
-                       plist (parity of the Windows HKCU\Run value).
-    mac_caret.rs       macOS-only text-caret read for the flyout (ADR-0013):
-                       Accessibility API (AXBoundsForRange), geometry only —
-                       never element text; falls back to the mouse cursor.
-  bin/gen_icon.rs      regenerates assets/clipcat.ico from render::draw_icon_scaled
-examples/preview.rs    renders representative frames to PNGs (headless review)
-tests/e2e.rs           end-to-end core flows through the public Pet API
-tests/release_script.rs  e2e of scripts/release.sh in a scratch git repo (unix)
-build.rs               embeds icon + version info on Windows hosts
-scripts/release.sh     the release path: gates, bump, CHANGELOG rotation, tag,
-                       push (scripts/release.cmd = Windows wrapper)
-CHANGELOG.md           user-facing changes only — see policy in its header
-assets/clipcat.ico     the embedded app icon — generated, not hand-edited
-assets/screenshot.png  README screenshot (the only committed image asset)
-docs/specs/            product & technical specs
-.claude/skills/release/  project skill that drives scripts/release.sh
-.context/kb/adr/       architecture decision records (why)
-.context/kb/lnr/       lessons & near-misses (what bit us)
-.github/workflows/     CI: builds windows + macos (no Linux build; changelog
-                       lint runs on macos); v tags publish the GitHub release
-                       + the binaries the in-app updater downloads
-```
+One platform-agnostic core (`src/*.rs`, no OS calls) plus exactly one compiled-in
+backend under `src/platform/` (native Win32, or portable winit/softbuffer/rdev/
+arboard). The full file-by-file map lives in
+[`.context/repo-map.md`](.context/repo-map.md) — reference, read on demand (kept
+out of this always-loaded file on purpose).
 
 ## Architecture
 
@@ -201,13 +136,10 @@ a Linux build can't reach.
 - Prefer generating assets in code over bundling files.
 - Every user-visible string goes through `i18n::t` / an `i18n` helper —
   never hardcode English or Korean in render/backends.
-- `unsafe` is confined to `platform/windows.rs` (Win32 FFI),
-  `platform/mac_input.rs` (the macOS CoreGraphics event tap),
-  `platform/mac_present.rs` (Objective-C / CoreGraphics for the transparent
-  CALayer present), `platform/mac_menu.rs` + `platform/mac_dialogs.rs`
-  (Objective-C for the right-click NSMenu and its NSAlert dialogs), and the
-  small WAV/icon byte-buffer builders; document the safety invariant inline.
-  (`platform/mac_autostart.rs` is plain `std::fs`, no `unsafe`.)
+- `unsafe` is confined to the OS-FFI leaves — `platform/windows.rs` (Win32) and
+  the macOS `mac_input` / `mac_present` / `mac_menu` / `mac_dialogs` files
+  (CoreGraphics / Objective-C) — plus the small WAV/icon byte-buffer builders;
+  document the safety invariant inline. (`mac_autostart.rs` is plain `std::fs`.)
 - Keep both backends' interaction set in parity (drag, single-click bounce,
   double-click pet, hover stats, middle-click/hotkey panel, panel keyboard
   control incl. Ctrl+0-9 quick copy, panel header-drag move + grip-drag
@@ -225,11 +157,10 @@ a Linux build can't reach.
   changes, fixes — written for users). Refactors, CI, docs and other
   dev-environment work stay out; git history covers those. Every PR with a
   user-visible change adds a bullet under `[Unreleased]`.
-- Releasing is `scripts/release.sh <bump>` (or the `release` project skill):
-  it refuses an empty `[Unreleased]`, runs the quality gates, bumps
-  `Cargo.toml`/`Cargo.lock`, rotates `[Unreleased]` into `## [X.Y.Z] - date`,
-  commits, tags `vX.Y.Z` (notes in the annotated tag) and pushes.
-  `scripts/release.sh verify` lints the changelog format in CI.
+- Cutting a release is `scripts/release.sh <bump>` (or the `release` skill — see
+  Commands): it refuses an empty `[Unreleased]`, runs the gates, bumps the
+  version, rotates `[Unreleased]` into `## [X.Y.Z] - date`, tags `vX.Y.Z` (notes
+  in the annotated tag) and pushes. `scripts/release.sh verify` lints it in CI.
 
 ## Knowledge base — when to write what
 
@@ -245,13 +176,12 @@ relative markdown links.
 
 ## Verifying a change
 
-1. `cargo build --release`, `cargo clippy --release`, `cargo test --release`
-   (plus `--features portable` lint where applicable).
+1. Run the quality gates (see Commands: `build`, `clippy` ± `portable`, `test`).
 2. `cargo run --release --example preview` and actually look at the PNGs
    (cat, fish, panel in both languages, Hangul sample, icon).
 3. On a Windows dev machine: launch the exe, copy text from a couple of apps,
-   confirm the fish + history; screenshot the result. Confirm CPU is a few
-   percent and memory ~12–16 MB on release.
+   confirm the fish + history; screenshot. CPU a few percent, memory ~12–16 MB
+   on release.
 4. If you touched the clip-pick / paste path (`Pet::run_action`, `ClipPick`,
    `copy_back` / `set_clipboard`, or any panel setting): on Windows exercise
    **both** trigger paths — the hotkey **flyout** (focus a text field, press the
@@ -265,21 +195,15 @@ relative markdown links.
    code review — say so honestly in summaries. Note CI has **no Linux job**;
    Linux-affecting changes need a local Linux build/test pass.
 
-## Gotchas (see LNR for detail)
+## Gotchas
 
-- softbuffer can't do per-pixel desktop alpha → portable uses an opaque card.
-- Debug builds render ~10× slower; never judge CPU off a debug run.
-- `rdev::listen` blocks → it runs on its own thread; macOS needs Accessibility
-  permission, Wayland blocks global capture (and `arboard` without its wayland
-  feature needs XWayland for the clipboard).
-- macOS does **not** use `rdev::listen` — it translates every keypress via Text
-  Input Source APIs that hard-crash (SIGTRAP) off the main thread on macOS 15.
-  Global input there is our own event tap (`platform/mac_input.rs`); never
-  reintroduce a TIS/HIToolbox call on a tap/background thread
-  ([LNR-0005](.context/kb/lnr/0005-macos-tis-eventtap-crash.md)).
-- The dual optional/`[target.'cfg(...)']` dependency layout is deliberate;
-  don't "simplify" it without re-reading
-  [LNR-0004](.context/kb/lnr/0004-cargo-cross-platform-deps.md).
+Before touching rendering, global input, the cross-platform dependency layout or
+the macOS path, read the [LNR index](.context/kb/lnr/README.md) first — the
+recurring traps (softbuffer's lack of per-pixel alpha, debug-vs-release CPU,
+`rdev::listen` threading + macOS Accessibility/Wayland, the macOS
+TIS-off-the-main-thread SIGTRAP crash, the deliberate optional/`cfg` dep layout)
+each have a record. Three live invariants with no LNR home:
+
 - The clipboard watcher must skip the app's own copy-backs exactly once
   (suppression marker), or every panel click would spawn a fish.
 - The native window is `WS_EX_NOACTIVATE`; the panel temporarily removes that
