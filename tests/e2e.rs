@@ -570,6 +570,8 @@ fn stats_bubble_renders_with_system_font() {
         sleep: 0.0,
         excite: 0.0,
         squash: 0.0,
+        blank: 0.0,
+        surprise: None,
         breath: 0.0,
         tail_phase: 0.0,
         mouth_open: 0.0,

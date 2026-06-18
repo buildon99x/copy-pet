@@ -280,6 +280,30 @@ pub fn today_string() -> String {
     }
 }
 
+/// Local hour of day (0..=23). Like `today_string`, a tiny sanctioned per-OS
+/// leaf the core may call — used only to pick the late-night line texture, and
+/// never stored or transmitted (`std` has no local-time support).
+#[cfg(windows)]
+pub fn local_hour() -> u32 {
+    use windows_sys::Win32::System::SystemInformation::GetLocalTime;
+    let mut st = unsafe { std::mem::zeroed::<windows_sys::Win32::Foundation::SYSTEMTIME>() };
+    unsafe { GetLocalTime(&mut st) };
+    st.wHour as u32
+}
+
+#[cfg(unix)]
+pub fn local_hour() -> u32 {
+    // SAFETY: localtime_r writes into our stack `tm`; time() takes a null arg.
+    unsafe {
+        let now = libc::time(std::ptr::null_mut());
+        let mut tm: libc::tm = std::mem::zeroed();
+        if libc::localtime_r(&now, &mut tm).is_null() {
+            return 12;
+        }
+        tm.tm_hour.clamp(0, 23) as u32
+    }
+}
+
 // ---- progression ----------------------------------------------------------
 
 /// XP needed to go from `level` to `level + 1`.

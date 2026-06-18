@@ -177,6 +177,14 @@ pub struct Scene<'a> {
     pub sleep: f32,
     pub excite: f32,
     pub squash: f32,
+    /// Deadpan baseline strength (derived in `Pet::draw`, not a stored state):
+    /// when high and no other emotion dominates, the face goes to dot eyes +
+    /// flat mouth — the low baseline that makes the surprise expressions pop.
+    pub blank: f32,
+    /// Rare "gap-moe" surprise expression index, set briefly by event hooks.
+    /// `None` most of the time; `Some(i)` selects one of the variants in
+    /// [`draw_surprise_eye`]. A `u8` index keeps it enum-free.
+    pub surprise: Option<u8>,
     pub breath: f32,
     pub tail_phase: f32,
     pub mouth_open: f32,
@@ -485,15 +493,27 @@ fn draw_face(cv: &mut Cv, sc: &Scene, t: Transform) {
     let closed = sc.blink.max(sc.sleep);
     let happy = sc.happy > 0.35 && sc.sleep < 0.5;
     let chase = sc.mouth_open > 0.05 && sc.sleep < 0.5; // eyeing the fish
+    let surprise = sc.surprise.filter(|_| sc.sleep < 0.5);
+    // deadpan baseline: dot eyes + flat mouth when nothing else is going on.
+    let blank = surprise.is_none()
+        && !happy
+        && !chase
+        && closed < 0.4
+        && sc.mouth_open <= 0.05
+        && sc.blank > 0.6;
 
     for (ex, dir) in [(92.0f32, -1.0f32), (148.0, 1.0)] {
-        let _ = dir;
-        if happy && !chase {
+        if let Some(s) = surprise {
+            draw_surprise_eye(cv, ex, dir, s, t);
+        } else if happy && !chase {
             // ∩ shaped happy eyes
             let mut pb = PathBuilder::new();
             pb.move_to(ex - 7.0, 124.0);
             pb.quad_to(ex, 115.0, ex + 7.0, 124.0);
             cv.stroke_t(&pb.finish(), OUTLINE, 3.0, t);
+        } else if blank {
+            // tiny deadpan dot
+            cv.fill_t(&oval(ex, 122.0, 2.0, 2.0), OUTLINE, t);
         } else if closed > 0.8 {
             // gently closed
             let mut pb = PathBuilder::new();
@@ -511,12 +531,26 @@ fn draw_face(cv: &mut Cv, sc: &Scene, t: Transform) {
         }
     }
 
-    if sc.mouth_open > 0.05 {
+    if surprise == Some(1) {
+        // tongue-out (메롱): a small open mouth with a red tongue peeking out
+        let mouth = oval(120.0, 137.0, 5.0, 3.4);
+        cv.fill_t(&mouth, (164, 88, 92, 255), t);
+        cv.stroke_t(&mouth, OUTLINE, 2.2, t);
+        let tongue = round_rect(116.0, 138.5, 8.0, 6.5, 3.0);
+        cv.fill_t(&tongue, (224, 122, 132, 255), t);
+        cv.stroke_t(&tongue, OUTLINE, 1.8, t);
+    } else if sc.mouth_open > 0.05 {
         // open mouth, ready to nom
         let o = sc.mouth_open.clamp(0.0, 1.0);
         let mouth = oval(120.0, 138.0, 4.5 + 3.5 * o, 3.0 + 5.5 * o);
         cv.fill_t(&mouth, (164, 88, 92, 255), t);
         cv.stroke_t(&mouth, OUTLINE, 2.2, t);
+    } else if blank {
+        // flat deadpan mouth
+        let mut pb = PathBuilder::new();
+        pb.move_to(114.0, 137.5);
+        pb.line_to(126.0, 137.5);
+        cv.stroke_t(&pb.finish(), OUTLINE, 2.4, t);
     } else {
         // ω mouth
         let mut pb = PathBuilder::new();
@@ -540,6 +574,49 @@ fn draw_face(cv: &mut Cv, sc: &Scene, t: Transform) {
         pb.quad_to(176.0, 104.0, 183.0, 94.0);
         pb.close();
         cv.fill_t(&pb.finish(), fade((154, 200, 240, 235), a), t);
+    }
+}
+
+/// One eye of a rare "gap-moe" surprise expression. `dir` is -1.0 for the left
+/// eye, +1.0 for the right. Enum-free: the variant is a small `u8` index, so
+/// adding a face needs no type change (just bump the pet's surprise count).
+fn draw_surprise_eye(cv: &mut Cv, ex: f32, dir: f32, variant: u8, t: Transform) {
+    match variant {
+        // 0: cross-eyed (사팔눈) — white eyeball with the pupil pulled inward.
+        0 => {
+            cv.fill_t(&oval(ex, 122.0, 5.4, 5.4), (255, 255, 255, 235), t);
+            cv.stroke_t(&oval(ex, 122.0, 5.4, 5.4), OUTLINE, 2.0, t);
+            // pupil pulled hard toward the nose (inward) for a clear cross-eye
+            cv.fill_t(&oval(ex - dir * 3.3, 122.8, 2.2, 2.5), OUTLINE, t);
+        }
+        // 1: tongue-out (메롱) — cheerful ∩ eyes; tongue is drawn in the mouth.
+        1 => {
+            let mut pb = PathBuilder::new();
+            pb.move_to(ex - 7.0, 124.0);
+            pb.quad_to(ex, 116.0, ex + 7.0, 124.0);
+            cv.stroke_t(&pb.finish(), OUTLINE, 3.0, t);
+        }
+        // 2: one-eye wink — the left eye snaps shut, the right stays wide.
+        2 if dir < 0.0 => {
+            let mut pb = PathBuilder::new();
+            pb.move_to(ex - 6.5, 122.0);
+            pb.quad_to(ex, 126.0, ex + 6.5, 122.0);
+            cv.stroke_t(&pb.finish(), OUTLINE, 2.8, t);
+        }
+        // 3: comic asymmetry (삑사리) — one big eye, one tiny dot.
+        3 => {
+            if dir < 0.0 {
+                cv.fill_t(&oval(ex, 121.5, 5.6, 6.4), OUTLINE, t);
+                cv.fill_t(&oval(ex - 1.6, 119.5, 1.8, 2.0), (255, 255, 255, 230), t);
+            } else {
+                cv.fill_t(&oval(ex, 122.0, 2.1, 2.1), OUTLINE, t);
+            }
+        }
+        // default (incl. the wink's open right eye): a normal sparkly eye.
+        _ => {
+            cv.fill_t(&oval(ex, 122.0, 5.2, 5.2), OUTLINE, t);
+            cv.fill_t(&oval(ex - 1.6, 120.2, 1.7, 1.7), (255, 255, 255, 230), t);
+        }
     }
 }
 

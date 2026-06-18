@@ -390,6 +390,88 @@ pub fn about_text(
     }
 }
 
+// ---- mood lines (direction 2: emotion/voice engine) -----------------------
+
+/// Local-activity "texture" that colors the cat's one-liner. The base character
+/// (a fish-obsessed glutton) is invariant; the mood only changes *what it says
+/// about the fish* — except [`Mood::IdMirror`], which drops the fish metaphor
+/// and voices the user's own feeling in the first person. The mood is chosen
+/// purely from local activity signals (see `Pet::pick_mood`): typing rate, idle,
+/// the local hour, and recent direct interaction — never key contents, window
+/// titles or clip text.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Mood {
+    /// Fast typing → terse snark about the catch.
+    Focus,
+    /// Gone idle → goofy, half-asleep muttering.
+    Idle,
+    /// Local late hours → tender, no guilt.
+    LateNight,
+    /// Just petted / clicked → tsundere.
+    Tsundere,
+    /// id-mirror register: fish metaphor off, speaks the user's mind (1st person).
+    IdMirror,
+}
+
+impl Mood {
+    /// All moods, for enumeration in tests / weighted picks.
+    pub const ALL: [Mood; 5] = [
+        Mood::Focus,
+        Mood::Idle,
+        Mood::LateNight,
+        Mood::Tsundere,
+        Mood::IdMirror,
+    ];
+}
+
+/// The (English, Korean) line pool for a mood. Kept short on purpose — Korean
+/// renders wider than English and must still fit the toast pill (see the
+/// preview width check). Final copy/voice is owned by direction 5; these are
+/// the mechanism's placeholder lines.
+fn mood_pool(mood: Mood) -> &'static [(&'static str, &'static str)] {
+    // Korean lines are kept to ≤ 11 chars so the toast pill never overflows the
+    // 240-unit canvas even at full-width Hangul (see `mood_lines_fit_the_pill`).
+    match mood {
+        Mood::Focus => &[
+            ("Re-copy it. It's off.", "비려. 다시 복사."),
+            ("Sloppy. Do it again.", "어설퍼. 다시 해."),
+        ],
+        Mood::Idle => &[
+            ("fiiish… where… fiiish…", "생선… 어디…"),
+            ("zzz… one more fish…", "쿨… 생선 더…"),
+        ],
+        Mood::LateNight => &[
+            ("Up late? Rest soon.", "고생했어. 쉬어."),
+            ("I'll warm a fish for you.", "생선 데워줄게."),
+        ],
+        Mood::Tsundere => &[
+            ("Don't pet me…", "쓰다듬지 마…"),
+            ("Not like I waited.", "안 기다렸어."),
+        ],
+        Mood::IdMirror => &[
+            ("I'll be mad for you.", "나 대신 빡쳐줄게."),
+            ("Lie down. Fish tomorrow.", "눕자. 생선은 내일."),
+            ("You did enough today.", "오늘 충분히 잘했어."),
+        ],
+    }
+}
+
+/// One line from a mood's pool, in `lang`. `idx` wraps around the pool so the
+/// caller can keep a simple running index.
+pub fn mood_line(lang: Lang, mood: Mood, idx: usize) -> &'static str {
+    let pool = mood_pool(mood);
+    let (en, ko) = pool[idx % pool.len()];
+    match lang {
+        Lang::En => en,
+        Lang::Ko => ko,
+    }
+}
+
+/// How many distinct lines a mood's pool holds.
+pub fn mood_line_count(mood: Mood) -> usize {
+    mood_pool(mood).len()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -432,6 +514,44 @@ mod tests {
             assert!(menu_update(lang, "2.1.0").contains("v2.1.0"));
             let fb = hotkey_fallback(lang, "WIN+SHIFT+V", "CTRL+SHIFT+V");
             assert!(fb.contains("WIN+SHIFT+V") && fb.contains("CTRL+SHIFT+V"));
+        }
+    }
+
+    #[test]
+    fn every_mood_line_has_both_translations() {
+        for mood in Mood::ALL {
+            let n = mood_line_count(mood);
+            assert!(n > 0, "{mood:?} pool is empty");
+            for idx in 0..n {
+                assert!(!mood_line(Lang::En, mood, idx).is_empty(), "{mood:?}#{idx} EN empty");
+                assert!(!mood_line(Lang::Ko, mood, idx).is_empty(), "{mood:?}#{idx} KO empty");
+            }
+        }
+    }
+
+    #[test]
+    fn mood_lines_fit_the_toast_pill() {
+        // Toasts render at px 2.0; the pill is `measure + 20`, centered in the
+        // 240-unit canvas. Keep a small margin so it never clips off-screen.
+        const MAX_PILL: f32 = 232.0;
+        for mood in Mood::ALL {
+            for idx in 0..mood_line_count(mood) {
+                for lang in [Lang::En, Lang::Ko] {
+                    let s = mood_line(lang, mood, idx);
+                    let has_hangul = s.chars().any(|c| ('\u{AC00}'..='\u{D7A3}').contains(&c));
+                    if has_hangul {
+                        // Korean fonts may be absent in CI, so bound by char
+                        // count: no glyph exceeds one em (~18.2 units at px 2.0),
+                        // so ≤ 11 chars keeps the pill under MAX_PILL.
+                        let n = s.chars().count();
+                        assert!(n <= 11, "KO {mood:?}#{idx} '{s}' has {n} chars (>11)");
+                    } else {
+                        // Latin is covered by the bundled fallback: measure exactly.
+                        let pill = crate::sysfont::measure(s, 2.0) + 20.0;
+                        assert!(pill <= MAX_PILL, "EN {mood:?}#{idx} '{s}' pill {pill}");
+                    }
+                }
+            }
         }
     }
 

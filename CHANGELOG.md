@@ -16,6 +16,15 @@ versions follow [SemVer](https://semver.org/). Maintenance rules:
 
 ## [Unreleased]
 
+### Added
+- **The cat shows moods and the occasional one-liner**: it now settles into a
+  deadpan resting face, flashes a rare surprise expression (cross-eyes, a wink,
+  a tongue-out), and once in a while mutters a short line that follows your
+  rhythm — snark when you're typing fast, sleepy nonsense when idle, something
+  tender late at night, and a tsundere quip when you pet it. Lines come in
+  English and Korean and stay rare on purpose. (Moods are read only from local
+  activity counts and the clock — never from what you copy or type.)
+
 ## [2.2.0] - 2026-06-17
 
 ### Added

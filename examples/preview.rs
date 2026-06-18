@@ -5,7 +5,7 @@
 //! Usage: cargo run --release --example preview [out_dir]
 
 use clipcat::clipboard::ClipStore;
-use clipcat::i18n::Lang;
+use clipcat::i18n::{self, Lang, Mood};
 use clipcat::panel::Panel;
 use clipcat::render::{self, Accessory, Badge, BubbleData, FishView, PanelView, Scene};
 use tiny_skia::Pixmap;
@@ -19,6 +19,8 @@ fn base_scene(lang: Lang) -> Scene<'static> {
         sleep: 0.0,
         excite: 0.0,
         squash: 0.0,
+        blank: 0.0,
+        surprise: None,
         breath: 0.3,
         tail_phase: 1.2,
         mouth_open: 0.0,
@@ -282,6 +284,51 @@ fn main() {
         };
         render::draw_panel(&mut pm, &view);
         save(&pm, &dir, "4-panel-pintip");
+    }
+
+    // 4e. emotion engine (direction 2): deadpan baseline, the gap-moe surprise
+    //     faces, and mood/id-mirror toast lines (check Korean fits the pill).
+    {
+        // deadpan baseline: all emotion low -> dot eyes + flat mouth
+        let mut sc = base_scene(Lang::Ko);
+        sc.accessory = render::Accessory::None;
+        sc.blank = 1.0;
+        let mut pm = Pixmap::new(240, 256).unwrap();
+        render::render_card(&mut pm, &sc, 1.0);
+        save(&pm, &dir, "4e-face-blank");
+
+        // each surprise variant
+        for v in 0..4u8 {
+            let mut sc = base_scene(Lang::Ko);
+            sc.accessory = render::Accessory::None;
+            sc.surprise = Some(v);
+            let mut pm = Pixmap::new(240, 256).unwrap();
+            render::render_card(&mut pm, &sc, 1.0);
+            save(&pm, &dir, &format!("4e-surprise-{v}"));
+        }
+
+        // mood/id-mirror toast lines — the widest Korean lines must fit the pill
+        let lines: [(Lang, Mood, &str); 6] = [
+            (Lang::Ko, Mood::Focus, "4e-line-focus-ko"),
+            (Lang::Ko, Mood::Idle, "4e-line-idle-ko"),
+            (Lang::Ko, Mood::LateNight, "4e-line-latenight-ko"),
+            (Lang::Ko, Mood::Tsundere, "4e-line-tsundere-ko"),
+            (Lang::Ko, Mood::IdMirror, "4e-line-idmirror-ko"),
+            (Lang::En, Mood::LateNight, "4e-line-latenight-en"),
+        ];
+        for (lang, mood, name) in lines {
+            // pick the longest line in the pool to stress the toast width
+            let n = i18n::mood_line_count(mood);
+            let (idx, _) = (0..n)
+                .map(|i| (i, i18n::mood_line(lang, mood, i).chars().count()))
+                .max_by_key(|&(_, len)| len)
+                .unwrap();
+            let mut sc = base_scene(lang);
+            sc.toast = Some((i18n::mood_line(lang, mood, idx), 1.0));
+            let mut pm = Pixmap::new(240, 256).unwrap();
+            render::render_card(&mut pm, &sc, 1.0);
+            save(&pm, &dir, name);
+        }
     }
 
     // 5. the app icon (64 px)

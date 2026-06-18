@@ -5,7 +5,7 @@
 //! events, calling [`Pet::advance`] each tick and presenting [`Pet::render`].
 
 use crate::clipboard::{ClipStore, RichFormats};
-use crate::i18n::{self, t, Lang, Msg};
+use crate::i18n::{self, t, Lang, Mood, Msg};
 use crate::menu::{MenuAction, MenuEntry, MenuItem, MenuOutcome};
 use crate::panel::{NavKey, Panel, PanelAction, PanelDrag};
 use crate::render::{self, Accessory, Badge, BubbleData, FishView, Particle, ParticleKind, Scene};
@@ -41,6 +41,12 @@ const FISH_SECS: f32 = 0.9;
 /// At most this many fish queue up during copy bursts.
 const FISH_QUEUE_MAX: usize = 3;
 
+/// Number of "gap-moe" surprise expression variants (see `draw_surprise_eye`).
+const SURPRISE_COUNT: u8 = 4;
+/// Typing rate (keys+clicks per second, smoothed) above which the cat reads as
+/// "focused" — the threshold that selects the snarky [`Mood::Focus`] texture.
+const FOCUS_RATE: f32 = 4.0;
+
 /// Logical window size in physical pixels for a given scale (cat only).
 pub fn window_size(scale: f32) -> (i32, i32) {
     (
@@ -56,6 +62,31 @@ fn rand_f(seed: &mut u32) -> f32 {
     x ^= x << 5;
     *seed = x;
     (x as f32) / (u32::MAX as f32)
+}
+
+/// Picks the line "texture" (mood) from local activity signals alone — the only
+/// inputs are the smoothed typing `rate`, the `sleep` ease, the local `hour`,
+/// and whether the user just petted/clicked. Returns `None` for calm daytime
+/// with no signal, so the cat stays quiet rather than chattering into a void.
+/// Pure (no `self`, no clock) so the mapping is unit-testable.
+fn texture_for(rate: f32, sleep: f32, hour: u32, interacted: bool) -> Option<Mood> {
+    if interacted {
+        Some(Mood::Tsundere)
+    } else if rate > FOCUS_RATE {
+        Some(Mood::Focus)
+    } else if sleep > 0.5 {
+        Some(Mood::Idle)
+    } else if !(5..23).contains(&hour) {
+        Some(Mood::LateNight)
+    } else {
+        None
+    }
+}
+
+/// Encodes `(mood, line idx)` into the dedupe key stored in `last_line_key`.
+fn line_key(mood: Mood, idx: usize) -> u32 {
+    let m = Mood::ALL.iter().position(|&x| x == mood).unwrap_or(0) as u32;
+    m * 16 + idx as u32
 }
 
 fn ease_press(p: f32) -> f32 {
@@ -133,6 +164,19 @@ pub struct Pet {
     /// Set when a flyout grip-resize changed the card size; the flyout window
     /// drains it via [`Pet::take_flyout_resized`] to rebuild its surface.
     flyout_resized: bool,
+    // ---- emotion/voice engine (direction 2) --------------------------------
+    /// Active rare surprise expression: `(variant index, expiry t)`. Derived
+    /// from local event hooks only (blink/nom/pet); never from clip contents.
+    surprise: Option<(u8, f32)>,
+    /// Earliest `t` at which another surprise may be rolled (rate-limit).
+    surprise_next: f32,
+    /// Earliest `t` at which the cat may speak another mood line (cooldown).
+    mood_next: f32,
+    /// Encoded `(mood, line idx)` of the last spoken line, so the next pick
+    /// avoids an immediate repeat. `u32::MAX` = nothing said yet.
+    last_line_key: u32,
+    /// `t` of the last direct interaction (pet/click), for the tsundere texture.
+    interact_t: f32,
 }
 
 impl Pet {
@@ -183,6 +227,11 @@ impl Pet {
             drag: None,
             flyout: false,
             flyout_resized: false,
+            surprise: None,
+            surprise_next: 0.0,
+            mood_next: 8.0, // stay quiet for a beat after launch
+            last_line_key: u32::MAX,
+            interact_t: -100.0,
         }
     }
 
@@ -983,6 +1032,16 @@ impl Pet {
             }
         }
 
+        // emotion/voice engine (direction 2): rare surprise face + spoken mood
+        // line, both driven only by local activity state (never clip/key data).
+        if let Some((_, until)) = self.surprise {
+            if until <= t {
+                self.surprise = None;
+            }
+        }
+        self.maybe_surprise(t);
+        self.maybe_speak(t);
+
         // day rollover (platform drives the throttled autosave so it can
         // capture the live window position first — see `should_autosave`)
         if self.st.roll_day() {
@@ -1017,6 +1076,8 @@ impl Pet {
         if self.st.sound_mode >= 1 {
             sound::play_nom();
         }
+        // a fresh crunch is a natural beat for a rare surprise face
+        self.roll_surprise(self.now_t(), 0.12);
     }
 
     /// Fish position along its arc into the mouth (cat-local coords).
@@ -1070,6 +1131,16 @@ impl Pet {
         let excite = (self.rate / 7.0).clamp(0.0, 1.0);
         let breath = (t * (2.2 - self.sleep * 1.2)).sin();
 
+        // deadpan baseline strength (derived, not stored): high only when no
+        // emotion dominates and no fish is in flight.
+        let blank = if self.fish.is_none() {
+            (1.0 - self.happy.max(excite).max(self.sleep)).clamp(0.0, 1.0)
+        } else {
+            0.0
+        };
+        // rare surprise expression, only while unexpired
+        let surprise = self.surprise.and_then(|(i, until)| (until > t).then_some(i));
+
         let toast_view = self
             .toast
             .as_ref()
@@ -1110,6 +1181,8 @@ impl Pet {
             sleep: self.sleep,
             excite,
             squash: self.squash,
+            blank,
+            surprise,
             breath,
             tail_phase: self.tail_phase,
             mouth_open,
@@ -1155,6 +1228,9 @@ impl Pet {
         self.happy = 1.0;
         self.st.total_xp += 10;
         self.dirty = true;
+        let t = self.now_t();
+        self.interact_t = t; // feeds the tsundere line texture
+        self.roll_surprise(t, 0.15);
         for _ in 0..6 {
             let r1 = rand_f(&mut self.rng);
             let r2 = rand_f(&mut self.rng);
@@ -1181,6 +1257,7 @@ impl Pet {
         self.squash = 1.0;
         self.st.total_xp += 1;
         self.dirty = true;
+        self.interact_t = self.now_t(); // a body tap counts as direct interaction
         let r = rand_f(&mut self.rng);
         self.particles.push(Particle {
             x: cx,
@@ -1439,6 +1516,79 @@ impl Pet {
     fn set_toast(&mut self, text: String, secs: f32) {
         let t = self.now_t();
         self.toast = Some((text, t + secs));
+    }
+
+    /// Maybe trigger a rare "gap-moe" surprise expression. Rolled at most once
+    /// per rate-limit window with a low probability so it stays unpredictable
+    /// and never fatigues. Skipped while one is already showing or while asleep.
+    fn maybe_surprise(&mut self, t: f32) {
+        if self.surprise.is_some() || self.sleep > 0.5 || t < self.surprise_next {
+            return;
+        }
+        self.surprise_next = t + 6.0 + rand_f(&mut self.rng) * 8.0;
+        self.roll_surprise(t, 0.10);
+    }
+
+    /// Rolls a surprise expression with probability `chance`. Shared by the
+    /// periodic [`maybe_surprise`](Pet::maybe_surprise) and the event hooks
+    /// (nom/pet), where a fresh crunch or pat is a natural moment for one.
+    fn roll_surprise(&mut self, t: f32, chance: f32) {
+        if self.surprise.is_some() {
+            return;
+        }
+        if rand_f(&mut self.rng) < chance {
+            let idx = (rand_f(&mut self.rng) * SURPRISE_COUNT as f32) as u8 % SURPRISE_COUNT;
+            let dur = 0.8 + rand_f(&mut self.rng) * 0.7;
+            self.surprise = Some((idx, t + dur));
+        }
+    }
+
+    /// Maybe speak a one-line mood texture (or an id-mirror line). Attempts are
+    /// spaced by a randomized cooldown; each attempt only sometimes speaks, so
+    /// lines stay low-frequency. The mood comes only from local activity state.
+    fn maybe_speak(&mut self, t: f32) {
+        if t < self.mood_next {
+            return;
+        }
+        // schedule the next attempt window regardless of outcome (keeps it rare)
+        self.mood_next = t + 12.0 + rand_f(&mut self.rng) * 10.0;
+        if self.toast.is_some() || self.panel.open {
+            return;
+        }
+        let Some(texture) = self.pick_texture(t) else {
+            return;
+        };
+        // ~half the eligible windows stay silent — unpredictability over chatter
+        if rand_f(&mut self.rng) >= 0.5 {
+            return;
+        }
+        // texture pool vs id-mirror register (~25% id-mirror)
+        let mood = if rand_f(&mut self.rng) < 0.25 {
+            Mood::IdMirror
+        } else {
+            texture
+        };
+        let line = self.next_line(mood).to_string();
+        self.set_toast(line, 2.6);
+    }
+
+    /// Current line texture from live local signals (wraps the pure
+    /// [`texture_for`] with the cat's state + the local hour).
+    fn pick_texture(&self, t: f32) -> Option<Mood> {
+        let interacted = t - self.interact_t < 3.0;
+        texture_for(self.rate, self.sleep, crate::state::local_hour(), interacted)
+    }
+
+    /// Picks a line from `mood`'s pool, avoiding an immediate repeat, and
+    /// records it in `last_line_key`.
+    fn next_line(&mut self, mood: Mood) -> &'static str {
+        let n = i18n::mood_line_count(mood).max(1);
+        let mut idx = (rand_f(&mut self.rng) * n as f32) as usize % n;
+        if n > 1 && line_key(mood, idx) == self.last_line_key {
+            idx = (idx + 1) % n;
+        }
+        self.last_line_key = line_key(mood, idx);
+        i18n::mood_line(self.lang(), mood, idx)
     }
 
     fn spawn_stars(&mut self, n: usize) {
@@ -1959,5 +2109,54 @@ mod tests {
         p.render_card(&mut pm);
         let drawn = pm.data().chunks_exact(4).any(|px| px[3] > 0);
         assert!(drawn);
+    }
+
+    #[test]
+    fn texture_for_maps_local_signals_to_moods() {
+        // direct interaction wins over everything else
+        assert_eq!(texture_for(99.0, 1.0, 3, true), Some(Mood::Tsundere));
+        // fast typing -> focus snark
+        assert_eq!(texture_for(FOCUS_RATE + 1.0, 0.0, 12, false), Some(Mood::Focus));
+        // idle -> goofy
+        assert_eq!(texture_for(0.0, 0.8, 12, false), Some(Mood::Idle));
+        // local late hour -> tender (and not in the 5..23 daytime band)
+        assert_eq!(texture_for(0.0, 0.0, 2, false), Some(Mood::LateNight));
+        assert_eq!(texture_for(0.0, 0.0, 23, false), Some(Mood::LateNight));
+        // calm daytime with no signal -> stay quiet
+        assert_eq!(texture_for(0.0, 0.0, 14, false), None);
+    }
+
+    #[test]
+    fn next_line_avoids_immediate_repeat() {
+        let mut p = pet();
+        // IdMirror has a multi-line pool, so consecutive picks must differ
+        assert!(i18n::mood_line_count(Mood::IdMirror) > 1);
+        let mut prev = p.next_line(Mood::IdMirror).to_string();
+        for _ in 0..20 {
+            let cur = p.next_line(Mood::IdMirror).to_string();
+            assert_ne!(cur, prev, "spoke the same line twice in a row");
+            prev = cur;
+        }
+    }
+
+    #[test]
+    fn render_surprise_faces_smoke() {
+        for variant in 0..SURPRISE_COUNT {
+            let mut p = pet();
+            p.surprise = Some((variant, 1000.0));
+            let (w, h) = p.canvas_size();
+            let mut pm = Pixmap::new(w as u32, h as u32).unwrap();
+            p.render(&mut pm); // each surprise face must rasterize without panic
+            assert!(pm.data().chunks_exact(4).any(|px| px[3] > 0));
+        }
+    }
+
+    #[test]
+    fn render_blank_baseline_smoke() {
+        let p = pet(); // fresh, idle: all emotion floats low, no fish
+        let (w, h) = p.canvas_size();
+        let mut pm = Pixmap::new(w as u32, h as u32).unwrap();
+        p.render(&mut pm); // deadpan dot-eye face; must not panic
+        assert!(pm.data().chunks_exact(4).any(|px| px[3] > 0));
     }
 }
