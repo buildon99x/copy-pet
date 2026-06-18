@@ -22,6 +22,8 @@ versions follow [SemVer](https://semver.org/). Maintenance rules:
   then clicking a clip — or selecting it and pressing **Enter** — now pastes it
   straight into that field, instead of only copying it. (The separate
   "Paste on select" setting still controls the middle-click panel by the cat.)
+- **The blue beanie's pom-pom no longer floats above the hat** — it now rests on
+  the crown so it reads as a bobble hat instead of a detached dot over the cat.
 
 ## [2.2.0] - 2026-06-17
 
