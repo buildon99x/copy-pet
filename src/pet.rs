@@ -177,6 +177,12 @@ pub struct Pet {
     last_line_key: u32,
     /// `t` of the last direct interaction (pet/click), for the tsundere texture.
     interact_t: f32,
+    /// Decaying cheek-blush boost for the kama-muta beat (level-up/milestone).
+    kama: f32,
+    /// A forced `(mood, line idx)` to speak once after a milestone (the #5
+    /// id-mirror line after a level-up, the #6 tsundere line after an unlock),
+    /// delivered by [`maybe_speak`](Pet::maybe_speak) once `mood_next` elapses.
+    pending_line: Option<(Mood, usize)>,
 }
 
 impl Pet {
@@ -232,6 +238,8 @@ impl Pet {
             mood_next: 8.0, // stay quiet for a beat after launch
             last_line_key: u32::MAX,
             interact_t: -100.0,
+            kama: 0.0,
+            pending_line: None,
         }
     }
 
@@ -950,6 +958,7 @@ impl Pet {
         self.paw_r = (self.paw_r - dt * 10.0).max(0.0);
         self.happy = (self.happy - dt / 1.8).max(0.0);
         self.squash = (self.squash - dt * 6.0).max(0.0);
+        self.kama = (self.kama - dt / 1.4).max(0.0);
 
         let inst_rate = (k + c) as f32 / dt;
         self.rate += (inst_rate - self.rate) * (dt * 2.5).min(1.0);
@@ -1183,6 +1192,7 @@ impl Pet {
             squash: self.squash,
             blank,
             surprise,
+            blush_boost: self.kama,
             breath,
             tail_phase: self.tail_phase,
             mouth_open,
@@ -1231,20 +1241,7 @@ impl Pet {
         let t = self.now_t();
         self.interact_t = t; // feeds the tsundere line texture
         self.roll_surprise(t, 0.15);
-        for _ in 0..6 {
-            let r1 = rand_f(&mut self.rng);
-            let r2 = rand_f(&mut self.rng);
-            self.particles.push(Particle {
-                x: 95.0 + r1 * 50.0,
-                y: 92.0 + r2 * 16.0,
-                vx: (r1 - 0.5) * 30.0,
-                vy: -35.0 - r2 * 25.0,
-                life: 1.0,
-                kind: ParticleKind::Heart,
-                size: 4.5 + r1 * 3.0,
-                spin: 0.0,
-            });
-        }
+        self.spawn_hearts(6);
         if self.st.sound_mode >= 1 {
             sound::play_pop();
         }
@@ -1498,15 +1495,30 @@ impl Pet {
         self.level_changed = true;
         self.happy = 1.0;
         self.spawn_stars(12);
+        // kama-muta beat (#5): a strong cheek blush + a rising heart burst
+        self.kama = 1.0;
+        self.spawn_hearts(6);
         let mut text = i18n::level_up(self.lang(), lv);
+        let mut unlocked = false;
         for (i, acc) in ACCESSORIES.iter().enumerate() {
             if acc.level == lv {
                 self.st.accessory = i + 1;
                 text = i18n::new_accessory(self.lang(), acc.name(self.lang()));
                 self.spawn_sparkles(8, 120.0, 80.0);
+                unlocked = true;
             }
         }
         self.toast = Some((text, t + 3.2));
+        // a spoken line just after the level toast clears: the cody tsundere
+        // line when an accessory unlocked (#6, with a wink), else the kama-muta
+        // id-mirror line (#5).
+        self.mood_next = t + 3.4;
+        if unlocked {
+            self.surprise = Some((2, t + 1.4)); // wink at the new look
+            self.pending_line = Some((Mood::Tsundere, 2));
+        } else {
+            self.pending_line = Some((Mood::IdMirror, 3));
+        }
         if self.st.sound_mode >= 1 {
             sound::play_chime();
         }
@@ -1548,6 +1560,19 @@ impl Pet {
     /// lines stay low-frequency. The mood comes only from local activity state.
     fn maybe_speak(&mut self, t: f32) {
         if t < self.mood_next {
+            return;
+        }
+        // a forced milestone line (level-up / unlock) takes priority and waits
+        // for the toast to clear, then speaks exactly once.
+        if let Some((mood, idx)) = self.pending_line {
+            if self.toast.is_some() || self.panel.open {
+                return; // keep waiting; don't burn the schedule below
+            }
+            self.pending_line = None;
+            self.last_line_key = line_key(mood, idx);
+            let line = i18n::mood_line(self.lang(), mood, idx).to_string();
+            self.set_toast(line, 2.8);
+            self.mood_next = t + 12.0 + rand_f(&mut self.rng) * 10.0;
             return;
         }
         // schedule the next attempt window regardless of outcome (keeps it rare)
@@ -1605,6 +1630,25 @@ impl Pet {
                 kind: ParticleKind::Star,
                 size: 5.0 + r * 3.5,
                 spin: r * 6.0,
+            });
+        }
+    }
+
+    /// A rising burst of hearts above the cat (shared by `pet` and the
+    /// kama-muta level-up beat).
+    fn spawn_hearts(&mut self, n: usize) {
+        for _ in 0..n {
+            let r1 = rand_f(&mut self.rng);
+            let r2 = rand_f(&mut self.rng);
+            self.particles.push(Particle {
+                x: 95.0 + r1 * 50.0,
+                y: 92.0 + r2 * 16.0,
+                vx: (r1 - 0.5) * 30.0,
+                vy: -35.0 - r2 * 25.0,
+                life: 1.0,
+                kind: ParticleKind::Heart,
+                size: 4.5 + r1 * 3.0,
+                spin: 0.0,
             });
         }
     }
@@ -2158,5 +2202,70 @@ mod tests {
         let mut pm = Pixmap::new(w as u32, h as u32).unwrap();
         p.render(&mut pm); // deadpan dot-eye face; must not panic
         assert!(pm.data().chunks_exact(4).any(|px| px[3] > 0));
+    }
+
+    #[test]
+    fn render_sleepy_and_panting_faces_smoke() {
+        let (w, h) = pet().canvas_size();
+        // mid-sleep droop (#4): eyelids partly lowered
+        let mut p = pet();
+        p.sleep = 0.6;
+        let mut pm = Pixmap::new(w as u32, h as u32).unwrap();
+        p.render(&mut pm);
+        assert!(pm.data().chunks_exact(4).any(|px| px[3] > 0));
+        // high-excite panting (#4): excite = rate/7 clamped above the pant gate
+        let mut p = pet();
+        p.rate = 9.0;
+        let mut pm = Pixmap::new(w as u32, h as u32).unwrap();
+        p.render(&mut pm);
+        assert!(pm.data().chunks_exact(4).any(|px| px[3] > 0));
+    }
+
+    #[test]
+    fn level_up_triggers_kama_muta_beat() {
+        let mut p = pet();
+        let hearts = |p: &Pet| {
+            p.particles
+                .iter()
+                .filter(|x| matches!(x.kind, ParticleKind::Heart))
+                .count()
+        };
+        let before = hearts(&p);
+        // pick a plain level-up (no accessory unlock) so the id-mirror line is queued
+        let mut lv = p.level + 1;
+        while ACCESSORIES.iter().any(|a| a.level == lv) {
+            lv += 1;
+        }
+        p.level = lv - 1;
+        p.level_up(lv, 0.0);
+        assert!(p.kama > 0.5, "level-up boosts the cheek blush");
+        assert!(hearts(&p) > before, "level-up bursts hearts");
+        assert_eq!(
+            p.pending_line,
+            Some((Mood::IdMirror, 3)),
+            "queues the id-mirror milestone line",
+        );
+    }
+
+    #[test]
+    fn accessory_unlock_winks_and_queues_the_cody_line() {
+        let mut p = pet();
+        let lv = ACCESSORIES[0].level; // first unlock level
+        p.level = lv - 1;
+        p.level_up(lv, 0.0);
+        assert_eq!(p.st.accessory, 1, "equips the unlocked accessory");
+        assert_eq!(p.surprise.map(|(i, _)| i), Some(2), "winks at the new look");
+        assert_eq!(p.pending_line, Some((Mood::Tsundere, 2)), "queues the cody line");
+    }
+
+    #[test]
+    fn pending_line_is_spoken_once_after_the_toast_clears() {
+        let mut p = pet();
+        p.toast = None;
+        p.mood_next = 0.0;
+        p.pending_line = Some((Mood::IdMirror, 3));
+        p.maybe_speak(p.now_t());
+        assert!(p.toast.is_some(), "spoke the queued milestone line");
+        assert!(p.pending_line.is_none(), "and cleared the queue");
     }
 }

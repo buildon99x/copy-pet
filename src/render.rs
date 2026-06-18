@@ -185,6 +185,9 @@ pub struct Scene<'a> {
     /// `None` most of the time; `Some(i)` selects one of the variants in
     /// [`draw_surprise_eye`]. A `u8` index keeps it enum-free.
     pub surprise: Option<u8>,
+    /// Extra cheek-blush strength for the kama-muta (level-up/milestone) beat,
+    /// on top of the happiness blush. Decays in `Pet::advance`.
+    pub blush_boost: f32,
     pub breath: f32,
     pub tail_phase: f32,
     pub mouth_open: f32,
@@ -531,6 +534,18 @@ fn draw_face(cv: &mut Cv, sc: &Scene, t: Transform) {
         }
     }
 
+    // drooping eyelids as it gets sleepy (mid sleep, before the eyes fully shut)
+    if surprise.is_none() && !happy && sc.blink < 0.5 && (0.4..0.8).contains(&sc.sleep) {
+        let drop = ((sc.sleep - 0.4) / 0.4).clamp(0.0, 1.0);
+        for ex in [92.0f32, 148.0] {
+            let lid_y = 117.5 + drop * 4.0;
+            let mut pb = PathBuilder::new();
+            pb.move_to(ex - 6.5, lid_y);
+            pb.quad_to(ex, lid_y + 2.0, ex + 6.5, lid_y);
+            cv.stroke_t(&pb.finish(), OUTLINE, 2.4, t);
+        }
+    }
+
     if surprise == Some(1) {
         // tongue-out (메롱): a small open mouth with a red tongue peeking out
         let mouth = oval(120.0, 137.0, 5.0, 3.4);
@@ -551,6 +566,13 @@ fn draw_face(cv: &mut Cv, sc: &Scene, t: Transform) {
         pb.move_to(114.0, 137.5);
         pb.line_to(126.0, 137.5);
         cv.stroke_t(&pb.finish(), OUTLINE, 2.4, t);
+    } else if sc.excite > 0.7 && sc.sleep < 0.3 {
+        // panting (헥헥) when typing hard: a small open mouth + tongue tip
+        let mouth = oval(120.0, 138.0, 4.0, 3.6);
+        cv.fill_t(&mouth, (164, 88, 92, 255), t);
+        cv.stroke_t(&mouth, OUTLINE, 2.2, t);
+        let tongue = round_rect(117.5, 139.5, 5.0, 4.0, 2.0);
+        cv.fill_t(&tongue, (224, 122, 132, 255), t);
     } else {
         // ω mouth
         let mut pb = PathBuilder::new();
@@ -560,10 +582,13 @@ fn draw_face(cv: &mut Cv, sc: &Scene, t: Transform) {
         cv.stroke_t(&pb.finish(), OUTLINE, 2.4, t);
     }
 
-    // blush
-    let blush_a = 0.45 + sc.happy * 0.5;
-    cv.fill_t(&oval(78.0, 134.0, 9.0, 4.5), fade(BLUSH, blush_a), t);
-    cv.fill_t(&oval(162.0, 134.0, 9.0, 4.5), fade(BLUSH, blush_a), t);
+    // blush (boosted briefly at level-up / milestones for a kama-muta beat)
+    let boost = sc.blush_boost.clamp(0.0, 1.0);
+    let blush_a = (0.45 + sc.happy * 0.5 + boost * 0.5).min(1.0);
+    let br = 9.0 + boost * 2.5;
+    let bh = 4.5 + boost * 1.2;
+    cv.fill_t(&oval(78.0, 134.0, br, bh), fade(BLUSH, blush_a), t);
+    cv.fill_t(&oval(162.0, 134.0, br, bh), fade(BLUSH, blush_a), t);
 
     // sweat drop when very excited
     if sc.excite > 0.65 && sc.sleep < 0.3 {

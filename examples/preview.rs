@@ -21,6 +21,7 @@ fn base_scene(lang: Lang) -> Scene<'static> {
         squash: 0.0,
         blank: 0.0,
         surprise: None,
+        blush_boost: 0.0,
         breath: 0.3,
         tail_phase: 1.2,
         mouth_open: 0.0,
@@ -305,6 +306,30 @@ fn main() {
             let mut pm = Pixmap::new(240, 256).unwrap();
             render::render_card(&mut pm, &sc, 1.0);
             save(&pm, &dir, &format!("4e-surprise-{v}"));
+        }
+
+        // #4 activity faces: sleepy droop and high-excite panting
+        for (name, set) in [
+            ("4e-droop", (|sc: &mut Scene| sc.sleep = 0.6) as fn(&mut Scene)),
+            ("4e-pant", |sc: &mut Scene| sc.excite = 1.0),
+        ] {
+            let mut sc = base_scene(Lang::Ko);
+            sc.accessory = render::Accessory::None;
+            set(&mut sc);
+            let mut pm = Pixmap::new(240, 256).unwrap();
+            render::render_card(&mut pm, &sc, 1.0);
+            save(&pm, &dir, name);
+        }
+
+        // #5 kama-muta beat: boosted blush + hearts + the milestone line
+        {
+            let mut sc = base_scene(Lang::Ko);
+            sc.happy = 1.0;
+            sc.blush_boost = 1.0;
+            sc.toast = Some((i18n::mood_line(Lang::En, Mood::IdMirror, 3), 1.0));
+            let mut pm = Pixmap::new(240, 256).unwrap();
+            render::render_card(&mut pm, &sc, 1.0);
+            save(&pm, &dir, "4e-kama-muta");
         }
 
         // mood/id-mirror toast lines — the widest Korean lines must fit the pill

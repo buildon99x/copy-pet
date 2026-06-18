@@ -24,6 +24,10 @@ versions follow [SemVer](https://semver.org/). Maintenance rules:
   tender late at night, and a tsundere quip when you pet it. Lines come in
   English and Korean and stay rare on purpose. (Moods are read only from local
   activity counts and the clock — never from what you copy or type.)
+- **The cat reacts to your pace and to milestones**: it pants with a little
+  sweat when you're typing fast and its eyelids droop when you go idle; on a
+  level-up its cheeks flush with a burst of hearts and it shares a warm line,
+  and when a new accessory unlocks it winks and shows it off.
 
 ## [2.2.0] - 2026-06-17
 

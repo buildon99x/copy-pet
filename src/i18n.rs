@@ -447,11 +447,15 @@ fn mood_pool(mood: Mood) -> &'static [(&'static str, &'static str)] {
         Mood::Tsundere => &[
             ("Don't pet me…", "쓰다듬지 마…"),
             ("Not like I waited.", "안 기다렸어."),
+            // index 2: the cody reaction shown when a new accessory unlocks (#6)
+            ("Suits me, right?", "나름 어울리지?"),
         ],
         Mood::IdMirror => &[
             ("I'll be mad for you.", "나 대신 빡쳐줄게."),
             ("Lie down. Fish tomorrow.", "눕자. 생선은 내일."),
             ("You did enough today.", "오늘 충분히 잘했어."),
+            // index 3: the kama-muta beat shared at a level-up milestone (#5)
+            ("We both did great.", "우리 둘 다 잘했어."),
         ],
     }
 }

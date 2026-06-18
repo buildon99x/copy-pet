@@ -572,6 +572,7 @@ fn stats_bubble_renders_with_system_font() {
         squash: 0.0,
         blank: 0.0,
         surprise: None,
+        blush_boost: 0.0,
         breath: 0.0,
         tail_phase: 0.0,
         mouth_open: 0.0,
