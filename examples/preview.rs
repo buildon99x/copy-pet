@@ -22,6 +22,13 @@ fn base_scene(lang: Lang) -> Scene<'static> {
         breath: 0.3,
         tail_phase: 1.2,
         mouth_open: 0.0,
+        head_yaw: 0.0,
+        stretch: 0.0,
+        groom: 0.0,
+        yawn: 0.0,
+        ear_twitch: 0.0,
+        tail_lag: 0.0,
+        whisker: 0.0,
         accessory: Accessory::Scarf,
         particles: &[],
         fish: None,
@@ -110,6 +117,27 @@ fn main() {
     ] {
         let mut sc = base_scene(lang);
         sc.hotkey_hint = Some(hint);
+        let mut pm = Pixmap::new(240, 256).unwrap();
+        render::render_card(&mut pm, &sc, 1.0);
+        save(&pm, &dir, name);
+    }
+
+    // 2c. idle micro-behaviours (#1/#2): stretch, yawn, grooming, look-around
+    for (name, tweak) in [
+        ("2c-idle-stretch", (|s: &mut Scene| s.stretch = 1.0) as fn(&mut Scene)),
+        ("2c-idle-yawn", |s: &mut Scene| {
+            s.yawn = 1.0;
+            s.mouth_open = 1.0; // the live pet derives this as max(fish, yawn)
+        }),
+        ("2c-idle-groom", |s: &mut Scene| s.groom = 1.0),
+        ("2c-idle-look", |s: &mut Scene| {
+            s.head_yaw = 9.0;
+            s.ear_twitch = 5.0;
+            s.whisker = 0.8;
+        }),
+    ] {
+        let mut sc = base_scene(Lang::Ko);
+        tweak(&mut sc);
         let mut pm = Pixmap::new(240, 256).unwrap();
         render::render_card(&mut pm, &sc, 1.0);
         save(&pm, &dir, name);

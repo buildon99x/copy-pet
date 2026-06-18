@@ -180,6 +180,20 @@ pub struct Scene<'a> {
     pub breath: f32,
     pub tail_phase: f32,
     pub mouth_open: f32,
+    /// Idle look-around: horizontal head turn, in degrees.
+    pub head_yaw: f32,
+    /// Idle stretch pose amount (0..1): body elongates and leans.
+    pub stretch: f32,
+    /// Idle grooming amount (0..1): a paw lifts to the cheek.
+    pub groom: f32,
+    /// Idle yawn amount (0..1): drives droopy eyes alongside `mouth_open`.
+    pub yawn: f32,
+    /// Ear rotation this frame (degrees): gentle sway + flicks + follow-through.
+    pub ear_twitch: f32,
+    /// Follow-through amount the tail trails the body squash by.
+    pub tail_lag: f32,
+    /// Whisker tremble amplitude (0 when idle, small on hover).
+    pub whisker: f32,
     pub accessory: Accessory,
     pub particles: &'a [Particle],
     pub fish: Option<FishView<'a>>,
@@ -333,7 +347,10 @@ fn draw_scene(pm: &mut Pixmap, sc: &Scene, scale: f32) {
     let breath_dy = -sc.breath * 1.6;
     // sleeping head droop
     let tilt = -7.0 * sc.sleep;
-    let head_t = Transform::from_rotate_at(tilt, 120.0, 166.0).post_translate(0.0, breath_dy);
+    // idle look-around turns the head; idle stretch lifts it a touch
+    let head_lift = -4.0 * sc.stretch;
+    let head_t = Transform::from_rotate_at(tilt, 120.0, 166.0)
+        .post_translate(sc.head_yaw, breath_dy + head_lift);
     // click squash: compress vertically around desk line
     let squash_t = if sc.squash > 0.0 {
         let s = 1.0 - 0.06 * sc.squash;
@@ -343,19 +360,34 @@ fn draw_scene(pm: &mut Pixmap, sc: &Scene, scale: f32) {
     } else {
         Transform::identity()
     };
-    let body_t = squash_t.pre_translate(0.0, breath_dy * 0.5);
-    let head_t = head_t.post_concat(squash_t);
+    // idle stretch: the body arches taller and a hair narrower
+    let stretch_t = if sc.stretch > 0.0 {
+        let sx = 1.0 - 0.02 * sc.stretch;
+        let sy = 1.0 + 0.07 * sc.stretch;
+        Transform::from_translate(0.0, 212.0)
+            .pre_scale(sx, sy)
+            .pre_translate(0.0, -212.0)
+    } else {
+        Transform::identity()
+    };
+    let pose_t = squash_t.pre_concat(stretch_t);
+    let body_t = pose_t.pre_translate(0.0, breath_dy * 0.5);
+    let head_t = head_t.post_concat(pose_t);
+    // ears flick / trail the body with their own pivots (#2/#3)
+    let ear_lt = Transform::from_rotate_at(-sc.ear_twitch, 96.0, 92.0).post_concat(head_t);
+    let ear_rt = Transform::from_rotate_at(sc.ear_twitch, 144.0, 92.0).post_concat(head_t);
 
     // ground shadow
     cv.fill(&oval(120.0, 244.0, 102.0, 8.0), (0, 0, 0, 26));
 
     // tail (behind everything)
     {
+        let flick = sc.tail_lag * 14.0; // follow-through overlap (#3)
         let sway = (sc.tail_phase).sin() * 7.0;
         let sway2 = (sc.tail_phase * 0.7 + 1.2).sin() * 5.0;
         let mut pb = PathBuilder::new();
         pb.move_to(64.0, 196.0);
-        pb.quad_to(28.0 + sway2, 188.0, 30.0 + sway, 156.0);
+        pb.quad_to(28.0 + sway2 + flick * 0.5, 188.0, 30.0 + sway + flick, 156.0);
         let p = pb.finish();
         cv.stroke_t(&p, OUTLINE, 14.0, body_t);
         cv.stroke_t(&p, FUR, 9.0, body_t);
@@ -380,23 +412,23 @@ fn draw_scene(pm: &mut Pixmap, sc: &Scene, scale: f32) {
         re.line_to(132.0, 76.0);
         re.close();
         let re = re.finish();
-        cv.fill_t(&le, FUR, head_t);
-        cv.stroke_t(&le, OUTLINE, 3.0, head_t);
-        cv.fill_t(&re, FUR, head_t);
-        cv.stroke_t(&re, OUTLINE, 3.0, head_t);
+        cv.fill_t(&le, FUR, ear_lt);
+        cv.stroke_t(&le, OUTLINE, 3.0, ear_lt);
+        cv.fill_t(&re, FUR, ear_rt);
+        cv.stroke_t(&re, OUTLINE, 3.0, ear_rt);
         // inner pink
         let mut li = PathBuilder::new();
         li.move_to(80.0, 90.0);
         li.line_to(83.0, 66.0);
         li.line_to(100.0, 78.0);
         li.close();
-        cv.fill_t(&li.finish(), EAR_PINK, head_t);
+        cv.fill_t(&li.finish(), EAR_PINK, ear_lt);
         let mut ri = PathBuilder::new();
         ri.move_to(160.0, 90.0);
         ri.line_to(157.0, 66.0);
         ri.line_to(140.0, 78.0);
         ri.close();
-        cv.fill_t(&ri.finish(), EAR_PINK, head_t);
+        cv.fill_t(&ri.finish(), EAR_PINK, ear_rt);
     }
 
     // head
@@ -438,6 +470,21 @@ fn draw_scene(pm: &mut Pixmap, sc: &Scene, scale: f32) {
     // paws
     draw_paw(&mut cv, 96.0, sc.paw_l, false, breath_dy);
     draw_paw(&mut cv, 144.0, sc.paw_r, true, breath_dy);
+
+    // idle grooming: a forepaw lifts to the cheek for a quick wash (#1).
+    // Tracks the head so it stays put under a look-around / stretch.
+    if sc.groom > 0.05 {
+        let gy = lerp(150.0, 136.0, sc.groom);
+        let paw = oval(150.0, gy, 11.0, 8.0);
+        cv.fill_t(&paw, FUR, head_t);
+        cv.stroke_t(&paw, OUTLINE, 3.0, head_t);
+        for dx in [-4.0f32, 4.0] {
+            let mut pb = PathBuilder::new();
+            pb.move_to(150.0 + dx, gy + 1.0);
+            pb.line_to(150.0 + dx, gy + 6.0);
+            cv.stroke_t(&pb.finish(), fade(OUTLINE, 0.5), 2.0, head_t);
+        }
+    }
 
     // in-flight fish (over the cat, under particles/toast)
     if let Some(f) = &sc.fish {
@@ -482,8 +529,8 @@ fn draw_scene(pm: &mut Pixmap, sc: &Scene, scale: f32) {
 }
 
 fn draw_face(cv: &mut Cv, sc: &Scene, t: Transform) {
-    let closed = sc.blink.max(sc.sleep);
-    let happy = sc.happy > 0.35 && sc.sleep < 0.5;
+    let closed = sc.blink.max(sc.sleep).max(sc.yawn * 0.75);
+    let happy = sc.happy > 0.35 && sc.sleep < 0.5 && sc.yawn < 0.2;
     let chase = sc.mouth_open > 0.05 && sc.sleep < 0.5; // eyeing the fish
 
     for (ex, dir) in [(92.0f32, -1.0f32), (148.0, 1.0)] {
@@ -524,6 +571,20 @@ fn draw_face(cv: &mut Cv, sc: &Scene, t: Transform) {
         pb.quad_to(116.0, 141.0, 120.0, 136.5);
         pb.quad_to(124.0, 141.0, 128.0, 136.0);
         cv.stroke_t(&pb.finish(), OUTLINE, 2.4, t);
+    }
+
+    // whiskers (#2): three per cheek; a tiny tremble on hover
+    {
+        let tr = sc.whisker;
+        for (sx, dir) in [(86.0f32, -1.0f32), (154.0, 1.0)] {
+            for dy in [-4.0f32, 0.0, 4.0] {
+                let y0 = 134.0 + dy;
+                let mut pb = PathBuilder::new();
+                pb.move_to(sx, y0);
+                pb.line_to(sx + dir * 22.0, y0 + dy * 0.4 + tr);
+                cv.stroke_t(&pb.finish(), fade(OUTLINE, 0.5), 1.4, t);
+            }
+        }
     }
 
     // blush

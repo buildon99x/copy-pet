@@ -16,6 +16,12 @@ versions follow [SemVer](https://semver.org/). Maintenance rules:
 
 ## [Unreleased]
 
+### Added
+- **The cat feels more alive when left alone**: while awake but idle it now
+  plays small ±randomly-timed actions — stretching, yawning, grooming and
+  glancing around — and its ears flick, whiskers tremble when you hover, and
+  its tail and ears trail the body with a little bounce. All local, no tracking.
+
 ### Fixed
 - **Picking a clip from the hotkey panel now pastes it** (Win+V parity, Windows):
   opening the clipboard with the panel hotkey while typing in a text field and

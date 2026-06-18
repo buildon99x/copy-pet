@@ -63,6 +63,46 @@ fn ease_press(p: f32) -> f32 {
     1.0 - (1.0 - p) * (1.0 - p)
 }
 
+/// A short idle micro-behaviour the cat plays when awake but left alone, to
+/// keep "doing nothing" from reading as a tight loop. Selection and timing are
+/// driven purely by `self.rng` and local emotion floats — never by clip text,
+/// the source app or input timing (privacy golden rule). All of them reuse the
+/// existing emotion floats / particle system; no new assets.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum IdleAct {
+    None,
+    Groom,
+    Stretch,
+    Yawn,
+    Look,
+    TailChase,
+}
+
+impl IdleAct {
+    /// How long the act plays, in seconds.
+    fn dur(self) -> f32 {
+        match self {
+            IdleAct::None => 0.0,
+            IdleAct::Groom => 2.4,
+            IdleAct::Stretch => 1.5,
+            IdleAct::Yawn => 1.2,
+            IdleAct::Look => 1.9,
+            IdleAct::TailChase => 1.7,
+        }
+    }
+
+    /// Picks one act from a uniform `r` in 0..1.
+    fn pick(r: f32) -> IdleAct {
+        match (r * 5.0) as u32 {
+            0 => IdleAct::Groom,
+            1 => IdleAct::Stretch,
+            2 => IdleAct::Yawn,
+            3 => IdleAct::Look,
+            _ => IdleAct::TailChase,
+        }
+    }
+}
+
 /// A seed derived from the wall clock; avoids `rand` as a dependency.
 fn seed() -> u32 {
     0x1234_5678
@@ -93,6 +133,18 @@ pub struct Pet {
     squash: f32,
     rate: f32,
     tail_phase: f32,
+    // idle micro-behaviours (#1): a tiny state machine that plays a short act
+    // every few ±random seconds while awake-but-idle.
+    idle_act: IdleAct,
+    idle_act_until: f32, // now_t() at which the current act ends
+    idle_act_dur: f32,   // the chosen act's total duration (for the envelope)
+    idle_act_next: f32,  // earliest now_t() the next act may start
+    // secondary motion (#2) + follow-through (#3)
+    ear_phase: f32,       // ever-advancing phase for the gentle ear sway
+    ear_spike_until: f32, // now_t() until which an ear flick is active
+    ear_spike_next: f32,  // earliest now_t() for the next ear flick
+    tail_lag: f32,        // follow-through: trails `squash` (tail overlap)
+    ear_lag: f32,         // follow-through: trails `squash` (ear overlap)
     last_event: Instant,
     particles: Vec<Particle>,
     zzz_next: f32,
@@ -160,6 +212,15 @@ impl Pet {
             squash: 0.0,
             rate: 0.0,
             tail_phase: 0.0,
+            idle_act: IdleAct::None,
+            idle_act_until: 0.0,
+            idle_act_dur: 0.0,
+            idle_act_next: 0.0,
+            ear_phase: 0.0,
+            ear_spike_until: 0.0,
+            ear_spike_next: 0.0,
+            tail_lag: 0.0,
+            ear_lag: 0.0,
             last_event: now,
             particles: Vec::new(),
             zzz_next: 0.0,
@@ -868,6 +929,9 @@ impl Pet {
                 self.spawn_sparkles(3, 120.0, 100.0); // waking up
             }
             self.last_event = now;
+            // input interrupts any idle micro-behaviour and re-arms the timer
+            self.idle_act = IdleAct::None;
+            self.idle_act_next = t + 4.0 + rand_f(&mut self.rng) * 5.0;
             self.st.total_keys += k;
             self.st.total_clicks += c;
             self.st.keys_today += k;
@@ -915,13 +979,45 @@ impl Pet {
         self.sleep += (sleep_target - self.sleep) * (dt * 1.5).min(1.0);
         self.sleep = self.sleep.clamp(0.0, 1.0);
 
+        // idle micro-behaviours (#1): when awake-but-idle, play a short act
+        // every few ±random seconds. Selection is rng-only (privacy).
+        if self.idle_act != IdleAct::None && t >= self.idle_act_until {
+            self.idle_act = IdleAct::None;
+        }
+        if self.idle_act == IdleAct::None
+            && t >= self.idle_act_next
+            && self.sleep < 0.5
+            && idle_secs > 4.0
+        {
+            let act = IdleAct::pick(rand_f(&mut self.rng));
+            self.idle_act = act;
+            self.idle_act_dur = act.dur();
+            self.idle_act_until = t + act.dur();
+            self.idle_act_next = t + 5.0 + rand_f(&mut self.rng) * 6.0;
+        }
+
+        // ear sway phase + the occasional flick (#2)
+        self.ear_phase += dt;
+        if t >= self.ear_spike_next {
+            self.ear_spike_next = t + 3.0 + rand_f(&mut self.rng) * 5.0;
+            self.ear_spike_until = t + 0.35;
+        }
+
+        // follow-through / overlap (#3): tail and ears trail the body squash
+        // with a lower gain so they arrive ~15-25% late and bounce back.
+        let lag_target = self.squash;
+        self.tail_lag += (lag_target - self.tail_lag) * (dt * 4.5).min(1.0);
+        self.ear_lag += (lag_target - self.ear_lag) * (dt * 5.5).min(1.0);
+
         if t >= self.blink_next {
             self.blink_start = t;
             self.blink_next = t + 2.2 + rand_f(&mut self.rng) * 3.5;
         }
 
         let excite = (self.rate / 7.0).clamp(0.0, 1.0);
-        self.tail_phase += dt * (1.3 + excite * 5.0 + self.happy * 2.0 - self.sleep * 0.9);
+        let chase_boost = if self.idle_act == IdleAct::TailChase { 6.0 } else { 0.0 };
+        self.tail_phase +=
+            dt * (1.3 + excite * 5.0 + self.happy * 2.0 + chase_boost - self.sleep * 0.9);
 
         // fish flight
         if self.fish.is_none() {
@@ -1073,7 +1169,30 @@ impl Pet {
             0.0
         };
         let excite = (self.rate / 7.0).clamp(0.0, 1.0);
-        let breath = (t * (2.2 - self.sleep * 1.2)).sin();
+        // breath (#2): faster & deeper when happy/excited, slow & shallow when
+        // sleepy — the chest visibly "perks up" with mood.
+        let breath = (t * (2.2 - self.sleep * 1.2 + self.happy * 0.8)).sin()
+            * (1.0 + self.happy * 0.35 - self.sleep * 0.15);
+
+        // idle micro-behaviour pose (#1)
+        let (head_yaw, stretch, groom, yawn) = self.idle_visuals(t);
+
+        // ear sway + flick + follow-through (#2/#3), in degrees
+        let ear_spike = if t < self.ear_spike_until {
+            let p = (self.ear_spike_until - t) / 0.35; // 1 -> 0
+            (p * std::f32::consts::PI * 3.0).sin() * 4.5 * p
+        } else {
+            0.0
+        };
+        let ear_twitch = (self.ear_phase * 1.7).sin() * 0.6 + ear_spike + self.ear_lag * 6.0;
+
+        // whisker tremble (#2): only when the cursor hovers (pet-about-to-happen
+        // anticipation); a tiny fast jitter amplitude.
+        let whisker = if self.hover {
+            (t * 22.0).sin() * 0.8
+        } else {
+            0.0
+        };
 
         let toast_view = self
             .toast
@@ -1095,11 +1214,12 @@ impl Pet {
         };
 
         let fish = self.fish.as_ref().map(|(b, ft)| Self::fish_view(b, *ft));
-        // mouth opens as the fish closes in
-        let mouth_open = match &self.fish {
+        // mouth opens as the fish closes in, or for an idle yawn
+        let fish_mouth = match &self.fish {
             Some((_, ft)) => ((ft - 0.45) / 0.4).clamp(0.0, 1.0),
             None => 0.0,
         };
+        let mouth_open = fish_mouth.max(yawn);
 
         // first-run hint banner: the live panel hotkey, until the panel opens once
         let hint_text = self.show_hint().then(|| {
@@ -1118,6 +1238,13 @@ impl Pet {
             breath,
             tail_phase: self.tail_phase,
             mouth_open,
+            head_yaw,
+            stretch,
+            groom,
+            yawn,
+            ear_twitch,
+            tail_lag: self.tail_lag,
+            whisker,
             accessory: Accessory::from_id(self.st.accessory),
             particles: &self.particles,
             fish,
@@ -1487,6 +1614,29 @@ impl Pet {
         self.start.elapsed().as_secs_f32()
     }
 
+    /// Derives this frame's idle-act pose from the active [`IdleAct`]. Returns
+    /// `(head_yaw, stretch, groom, yawn)`; all zero when no act is playing. The
+    /// shared `env` is a smooth 0→1→0 bell over the act's duration so each act
+    /// eases in and settles back rather than snapping.
+    fn idle_visuals(&self, t: f32) -> (f32, f32, f32, f32) {
+        if self.idle_act == IdleAct::None || self.idle_act_dur <= 0.0 {
+            return (0.0, 0.0, 0.0, 0.0);
+        }
+        let elapsed = (self.idle_act_dur - (self.idle_act_until - t)).clamp(0.0, self.idle_act_dur);
+        let p = elapsed / self.idle_act_dur;
+        let env = (p * std::f32::consts::PI).sin(); // 0 -> 1 -> 0
+        match self.idle_act {
+            IdleAct::Groom => (0.0, 0.0, env, 0.0),
+            IdleAct::Stretch => (0.0, env, 0.0, 0.0),
+            IdleAct::Yawn => (0.0, 0.0, 0.0, env),
+            // glance left then right
+            IdleAct::Look => ((p * std::f32::consts::TAU).sin() * 9.0 * env, 0.0, 0.0, 0.0),
+            // small head wobble while chasing the tail
+            IdleAct::TailChase => ((p * std::f32::consts::TAU * 2.0).sin() * 5.0 * env, 0.0, 0.0, 0.0),
+            IdleAct::None => (0.0, 0.0, 0.0, 0.0),
+        }
+    }
+
     /// True when there are unsaved changes and enough time has elapsed that
     /// the platform should capture the window position and persist.
     pub fn should_autosave(&self) -> bool {
@@ -1771,6 +1921,46 @@ mod tests {
         assert!(p.fish.is_none());
         assert!(p.fish_queue.is_empty());
         assert!(p.happy > 0.0, "nom should make the cat happy");
+    }
+
+    #[test]
+    fn idle_act_triggers_when_awake_and_idle() {
+        let mut p = pet();
+        // appear idle for a while, but not long enough to fall asleep
+        p.last_event -= std::time::Duration::from_secs(10);
+        let mut fired = false;
+        for _ in 0..10 {
+            p.last_tick -= std::time::Duration::from_millis(33);
+            p.advance(0, 0, 0);
+            if p.idle_act != IdleAct::None {
+                fired = true;
+                break;
+            }
+        }
+        assert!(fired, "an idle micro-behaviour should start when awake but idle");
+        assert!(p.sleep < 0.5, "the cat is still awake");
+    }
+
+    #[test]
+    fn idle_act_suppressed_while_asleep() {
+        let mut p = pet();
+        p.sleep = 1.0;
+        // deeply idle so sleep stays pinned high
+        p.last_event -= std::time::Duration::from_secs(120);
+        for _ in 0..10 {
+            p.last_tick -= std::time::Duration::from_millis(33);
+            p.advance(0, 0, 0);
+        }
+        assert_eq!(p.idle_act, IdleAct::None, "a sleeping cat plays no idle acts");
+    }
+
+    #[test]
+    fn input_cancels_idle_act() {
+        let mut p = pet();
+        p.idle_act = IdleAct::Yawn;
+        p.idle_act_until = p.now_t() + 5.0;
+        p.advance(1, 0, 0); // a keypress
+        assert_eq!(p.idle_act, IdleAct::None, "input interrupts the idle act");
     }
 
     #[test]
