@@ -28,6 +28,7 @@ const KEY_CAP: (u8, u8, u8, u8) = (153, 161, 181, 255);
 const TEXT: (u8, u8, u8, u8) = (84, 72, 58, 255);
 const TEXT_DIM: (u8, u8, u8, u8) = (149, 138, 124, 255);
 const FISH_BLUE: (u8, u8, u8) = (108, 160, 220);
+const GOLD: (u8, u8, u8) = (242, 201, 76);
 const ROW_SEL: (u8, u8, u8, u8) = (208, 228, 248, 200);
 const ROW_HOVER: (u8, u8, u8, u8) = (226, 238, 250, 150);
 const PIN_GOLD: (u8, u8, u8, u8) = (242, 201, 76, 255);
@@ -95,6 +96,9 @@ pub struct Badge {
     pub letter: char,
     pub color: (u8, u8, u8),
     pub icon: Option<Pixmap>,
+    /// Rare "golden fish" easter egg: drawn with an extra glow and eaten with
+    /// an exaggerated celebration. Gated purely on rng (see `Pet::on_copy_rich`).
+    pub golden: bool,
 }
 
 const BADGE_PALETTE: [(u8, u8, u8); 8] = [
@@ -126,6 +130,7 @@ impl Badge {
                 letter: '*',
                 color: FISH_BLUE,
                 icon: None,
+                golden: false,
             };
         };
         let letter = name
@@ -137,6 +142,7 @@ impl Badge {
             letter,
             color: source_color(name),
             icon: None,
+            golden: false,
         }
     }
 
@@ -194,6 +200,8 @@ pub struct Scene<'a> {
     pub tail_lag: f32,
     /// Whisker tremble amplitude (0 when idle, small on hover).
     pub whisker: f32,
+    /// Day/night mood (0 day .. 1 deep night): a faint cool tint over the cat.
+    pub night: f32,
     pub accessory: Accessory,
     pub particles: &'a [Particle],
     pub fish: Option<FishView<'a>>,
@@ -486,6 +494,16 @@ fn draw_scene(pm: &mut Pixmap, sc: &Scene, scale: f32) {
         }
     }
 
+    // day/night mood (#6): a faint cool tint over the cat at night. Painted on
+    // the cat's own silhouette (head + body), never the full window, so the
+    // transparent layered-window backend keeps its empty corners clear.
+    if sc.night > 0.01 {
+        let a = (sc.night * 46.0).clamp(0.0, 255.0) as u8;
+        let tint = (96, 108, 170, a);
+        cv.fill_t(&body, tint, body_t);
+        cv.fill_t(&head, tint, head_t);
+    }
+
     // in-flight fish (over the cat, under particles/toast)
     if let Some(f) = &sc.fish {
         draw_fish(&mut cv, f);
@@ -641,8 +659,15 @@ fn draw_fish(cv: &mut Cv, f: &FishView) {
     let t = Transform::from_rotate_at(f.rot, f.x, f.y).pre_concat(s_at);
     let (x, y) = (f.x, f.y);
 
-    let body_c = lighten(f.badge.color, 0.35);
-    let dark_c = darken(f.badge.color, 0.18);
+    // a golden fish glows and turns to gold regardless of the source color
+    let base = if f.badge.golden { GOLD } else { f.badge.color };
+    if f.badge.golden {
+        for (r, a) in [(26.0f32, 50u8), (21.0, 70), (17.0, 110)] {
+            cv.fill_t(&oval(x, y, r, r * 0.7), (GOLD.0, GOLD.1, GOLD.2, a), t);
+        }
+    }
+    let body_c = lighten(base, 0.35);
+    let dark_c = darken(base, 0.18);
 
     // tail (two-lobe fin at the right/back)
     {

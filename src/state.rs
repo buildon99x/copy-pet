@@ -280,6 +280,31 @@ pub fn today_string() -> String {
     }
 }
 
+/// Local hour of day (0..=23). A privacy-safe sibling of [`today_string`]: the
+/// same native call already fills the hour, and we return *only* the hour —
+/// never minutes/seconds, and nothing is stored, logged or transmitted. Used
+/// for the cat's gentle day/night mood (sleepier + a faint tint at night).
+#[cfg(windows)]
+pub fn local_hour() -> u8 {
+    use windows_sys::Win32::System::SystemInformation::GetLocalTime;
+    let mut st = unsafe { std::mem::zeroed::<windows_sys::Win32::Foundation::SYSTEMTIME>() };
+    unsafe { GetLocalTime(&mut st) };
+    (st.wHour as u8).min(23)
+}
+
+#[cfg(unix)]
+pub fn local_hour() -> u8 {
+    // SAFETY: localtime_r writes into our stack `tm`; time() takes a null arg.
+    unsafe {
+        let now = libc::time(std::ptr::null_mut());
+        let mut tm: libc::tm = std::mem::zeroed();
+        if libc::localtime_r(&now, &mut tm).is_null() {
+            return 12;
+        }
+        (tm.tm_hour.clamp(0, 23)) as u8
+    }
+}
+
 // ---- progression ----------------------------------------------------------
 
 /// XP needed to go from `level` to `level + 1`.

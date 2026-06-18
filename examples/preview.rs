@@ -29,6 +29,7 @@ fn base_scene(lang: Lang) -> Scene<'static> {
         ear_twitch: 0.0,
         tail_lag: 0.0,
         whisker: 0.0,
+        night: 0.0,
         accessory: Accessory::Scarf,
         particles: &[],
         fish: None,
@@ -120,6 +121,32 @@ fn main() {
         let mut pm = Pixmap::new(240, 256).unwrap();
         render::render_card(&mut pm, &sc, 1.0);
         save(&pm, &dir, name);
+    }
+
+    // 2d. rare golden-fish easter egg (#4): glowing gold fish mid-flight, and
+    //     the night-time mood tint (#6) over the cat.
+    {
+        let mut badge = Badge::from_source(Some("Code"));
+        badge.golden = true;
+        let mut sc = base_scene(Lang::Ko);
+        sc.mouth_open = 0.7;
+        sc.fish = Some(FishView {
+            x: 165.0,
+            y: 80.0,
+            rot: 25.0,
+            scale: 1.0,
+            badge: &badge,
+        });
+        let mut pm = Pixmap::new(240, 256).unwrap();
+        render::render_card(&mut pm, &sc, 1.0);
+        save(&pm, &dir, "2d-golden-fish");
+
+        let mut sc = base_scene(Lang::Ko);
+        sc.night = 1.0;
+        sc.sleep = 0.4;
+        let mut pm = Pixmap::new(240, 256).unwrap();
+        render::render_card(&mut pm, &sc, 1.0);
+        save(&pm, &dir, "2d-night");
     }
 
     // 2c. idle micro-behaviours (#1/#2): stretch, yawn, grooming, look-around

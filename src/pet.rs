@@ -40,6 +40,9 @@ pub struct ClipPick {
 const FISH_SECS: f32 = 0.9;
 /// At most this many fish queue up during copy bursts.
 const FISH_QUEUE_MAX: usize = 3;
+/// Probability that a captured copy spawns the rare "golden fish" easter egg.
+/// Gated purely on `self.rng` — never on the clip text, source app or timing.
+const GOLDEN_FISH_CHANCE: f32 = 0.012;
 
 /// Logical window size in physical pixels for a given scale (cat only).
 pub fn window_size(scale: f32) -> (i32, i32) {
@@ -61,6 +64,25 @@ fn rand_f(seed: &mut u32) -> f32 {
 fn ease_press(p: f32) -> f32 {
     // snappy down, smooth up
     1.0 - (1.0 - p) * (1.0 - p)
+}
+
+/// Maps a local hour (0..=23) to a "nocturnal mood" 0 (broad day) .. 1 (the
+/// small hours), ramping at dusk/dawn. Drives sleepiness and the night tint
+/// (#6). Hour is the *only* time input the cat ever reads — see
+/// [`crate::state::local_hour`].
+fn night_amount(hour: u8) -> f32 {
+    match hour {
+        0..=4 => 1.0,
+        5 => 0.6,
+        6 => 0.3,
+        7 => 0.1,
+        8..=18 => 0.0,
+        19 => 0.2,
+        20 => 0.45,
+        21 => 0.7,
+        22 => 0.9,
+        _ => 1.0, // 23
+    }
 }
 
 /// A short idle micro-behaviour the cat plays when awake but left alone, to
@@ -145,6 +167,11 @@ pub struct Pet {
     ear_spike_next: f32,  // earliest now_t() for the next ear flick
     tail_lag: f32,        // follow-through: trails `squash` (tail overlap)
     ear_lag: f32,         // follow-through: trails `squash` (ear overlap)
+    // local day/night mood (#6): sleepier + a faint tint at night. Derived
+    // from the local hour only (privacy), refreshed once a minute.
+    night: f32,         // eased current mood, 0 (day) .. 1 (deep night)
+    night_target: f32,  // latest hour-derived target
+    night_minute: u64,  // last wall-clock minute the hour was sampled
     last_event: Instant,
     particles: Vec<Particle>,
     zzz_next: f32,
@@ -191,6 +218,7 @@ impl Pet {
     pub fn new(st: Persist) -> Pet {
         let now = Instant::now();
         let (level, _, _) = level_progress(st.total_xp);
+        let night = night_amount(crate::state::local_hour());
         let mut panel = Panel::with_geometry(st.panel_w, st.panel_h, (st.panel_off_x, st.panel_off_y));
         panel.cat_scale = SCALES[st.scale_idx.min(2)];
         panel.view = st.panel_view.min(1);
@@ -221,6 +249,9 @@ impl Pet {
             ear_spike_next: 0.0,
             tail_lag: 0.0,
             ear_lag: 0.0,
+            night,
+            night_target: night,
+            night_minute: 0,
             last_event: now,
             particles: Vec::new(),
             zzz_next: 0.0,
@@ -508,9 +539,13 @@ impl Pet {
         if !self.st.clip_capture {
             return;
         }
-        let badge = badge.unwrap_or_else(|| Badge::from_source(source.as_deref()));
+        let mut badge = badge.unwrap_or_else(|| Badge::from_source(source.as_deref()));
         if !self.clips.add_copy_rich(text, source, formats) {
             return;
+        }
+        // rare golden-fish easter egg — rng only, never tied to clip content
+        if rand_f(&mut self.rng) < GOLDEN_FISH_CHANCE {
+            badge.golden = true;
         }
         if self.fish_queue.len() >= FISH_QUEUE_MAX {
             self.fish_queue.pop_front();
@@ -974,8 +1009,21 @@ impl Pet {
         let inst_rate = (k + c) as f32 / dt;
         self.rate += (inst_rate - self.rate) * (dt * 2.5).min(1.0);
 
+        // day/night mood (#6): resample the local hour once a minute (cheap,
+        // privacy-safe — hour only), then ease toward it so dusk/dawn glide.
+        if let Ok(d) = SystemTime::now().duration_since(UNIX_EPOCH) {
+            let minute = d.as_secs() / 60;
+            if minute != self.night_minute {
+                self.night_minute = minute;
+                self.night_target = night_amount(crate::state::local_hour());
+            }
+        }
+        self.night += (self.night_target - self.night) * (dt * 0.5).min(1.0);
+
         let idle_secs = (now - self.last_event).as_secs_f32();
-        let sleep_target = if idle_secs > 75.0 { 1.0 } else { 0.0 };
+        // the cat nods off sooner at night (75s by day → ~30s in the small hours)
+        let sleep_after = 75.0 - self.night * 45.0;
+        let sleep_target = if idle_secs > sleep_after { 1.0 } else { 0.0 };
         self.sleep += (sleep_target - self.sleep) * (dt * 1.5).min(1.0);
         self.sleep = self.sleep.clamp(0.0, 1.0);
 
@@ -1025,11 +1073,12 @@ impl Pet {
                 self.fish = Some((badge, 0.0));
             }
         }
-        if let Some((_, ft)) = &mut self.fish {
+        if let Some((badge, ft)) = &mut self.fish {
             *ft += dt / FISH_SECS;
             if *ft >= 1.0 {
+                let golden = badge.golden;
                 self.fish = None;
-                self.nom();
+                self.nom(golden);
             }
         }
 
@@ -1099,22 +1148,32 @@ impl Pet {
         !(resting && self.frame.is_multiple_of(2))
     }
 
-    /// The fish reached the mouth: crunch, sparkles, a happy bump.
-    fn nom(&mut self) {
-        self.happy = (self.happy + 0.5).min(1.0);
-        self.squash = 0.6;
-        self.spawn_sparkles(4, 120.0, 130.0);
-        let r = rand_f(&mut self.rng);
-        self.particles.push(Particle {
-            x: 120.0,
-            y: 118.0,
-            vx: (r - 0.5) * 18.0,
-            vy: -32.0,
-            life: 1.0,
-            kind: ParticleKind::Heart,
-            size: 4.0,
-            spin: 0.0,
-        });
+    /// The fish reached the mouth: crunch, sparkles, a happy bump. A `golden`
+    /// fish (the rare easter egg) triggers an exaggerated celebration — a full
+    /// star burst, extra sparkles and a flurry of hearts.
+    fn nom(&mut self, golden: bool) {
+        self.happy = (self.happy + if golden { 1.0 } else { 0.5 }).min(1.0);
+        self.squash = if golden { 0.95 } else { 0.6 };
+        if golden {
+            self.spawn_stars(10);
+            self.spawn_sparkles(8, 120.0, 120.0);
+        } else {
+            self.spawn_sparkles(4, 120.0, 130.0);
+        }
+        let hearts = if golden { 4 } else { 1 };
+        for _ in 0..hearts {
+            let r = rand_f(&mut self.rng);
+            self.particles.push(Particle {
+                x: 120.0 + (r - 0.5) * 24.0,
+                y: 118.0,
+                vx: (r - 0.5) * 18.0,
+                vy: -32.0,
+                life: 1.0,
+                kind: ParticleKind::Heart,
+                size: if golden { 5.5 } else { 4.0 },
+                spin: 0.0,
+            });
+        }
         if self.st.sound_mode >= 1 {
             sound::play_nom();
         }
@@ -1245,6 +1304,7 @@ impl Pet {
             ear_twitch,
             tail_lag: self.tail_lag,
             whisker,
+            night: self.night,
             accessory: Accessory::from_id(self.st.accessory),
             particles: &self.particles,
             fish,
@@ -1961,6 +2021,63 @@ mod tests {
         p.idle_act_until = p.now_t() + 5.0;
         p.advance(1, 0, 0); // a keypress
         assert_eq!(p.idle_act, IdleAct::None, "input interrupts the idle act");
+    }
+
+    #[test]
+    fn golden_fish_is_rng_gated_and_rare() {
+        // Goldenness must come from rng alone, never the clip content; over many
+        // copies the easter egg shows up sometimes but stays rare.
+        let mut p = pet();
+        let (mut golden, mut total) = (0u32, 0u32);
+        for i in 0..4000 {
+            p.on_copy(format!("clip {i}"), None, None);
+            if let Some(b) = p.fish_queue.back() {
+                total += 1;
+                if b.golden {
+                    golden += 1;
+                }
+            }
+            p.fish_queue.clear(); // keep the cap from dropping our sample
+        }
+        assert_eq!(total, 4000, "every unique clip queues a fish");
+        assert!(golden > 0, "the golden fish should appear sometimes");
+        assert!(golden * 10 < total, "but it should stay rare (~1%)");
+    }
+
+    #[test]
+    fn golden_fish_celebration_is_bigger() {
+        let mut p = pet();
+        p.nom(false);
+        let normal = p.particles.len();
+        p.particles.clear();
+        p.nom(true);
+        assert!(
+            p.particles.len() > normal,
+            "a golden fish triggers a bigger celebration"
+        );
+    }
+
+    #[test]
+    fn night_makes_the_cat_drowsier_than_day() {
+        let minute = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs()
+            / 60;
+        let drowse = |night: f32| {
+            let mut p = pet();
+            p.night = night;
+            p.night_target = night;
+            p.night_minute = minute; // pin so advance won't resample the real hour
+            p.last_event -= std::time::Duration::from_secs(40); // 40s idle: >30s, <75s
+            for _ in 0..40 {
+                p.last_tick -= std::time::Duration::from_millis(60);
+                p.advance(0, 0, 0);
+            }
+            p.sleep
+        };
+        assert!(drowse(1.0) > 0.5, "at night, 40s idle is enough to drowse");
+        assert!(drowse(0.0) < 0.2, "by day, 40s idle keeps the cat awake");
     }
 
     #[test]

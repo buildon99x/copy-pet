@@ -21,6 +21,12 @@ versions follow [SemVer](https://semver.org/). Maintenance rules:
   plays small ±randomly-timed actions — stretching, yawning, grooming and
   glancing around — and its ears flick, whiskers tremble when you hover, and
   its tail and ears trail the body with a little bounce. All local, no tracking.
+- **Rare golden fish**: once in a while a copied clip arrives as a glowing
+  golden fish, and the cat celebrates eating it with an extra burst of stars
+  and hearts. (Pure chance — never based on what you copied.)
+- **Day/night mood**: the cat dozes off a little sooner late at night and
+  takes on a faint cool tint, going by your computer's local clock only (just
+  the hour — nothing is recorded or sent).
 
 ### Fixed
 - **Picking a clip from the hotkey panel now pastes it** (Win+V parity, Windows):

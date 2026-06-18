@@ -580,6 +580,7 @@ fn stats_bubble_renders_with_system_font() {
         ear_twitch: 0.0,
         tail_lag: 0.0,
         whisker: 0.0,
+        night: 0.0,
         accessory: Accessory::None,
         particles: &[],
         fish: None,
