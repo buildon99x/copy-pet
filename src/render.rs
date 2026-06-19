@@ -64,6 +64,7 @@ pub enum Accessory {
     Butterfly,
     Cherry,
     Cloud,
+    Clover,
 }
 
 impl Accessory {
@@ -88,19 +89,20 @@ impl Accessory {
             16 => Accessory::Nightcap,
             17 => Accessory::FishHat,
             18 => Accessory::Bungeoppang,
+            19 => Accessory::Clover,
             // drawn designs held for a future drop (not yet in state::ACCESSORIES,
             // so not offered in any menu — promoting one is a single array row)
-            19 => Accessory::Ribbon,
-            20 => Accessory::Flower,
-            21 => Accessory::Beret,
-            22 => Accessory::Hood,
-            23 => Accessory::BlanketCape,
-            24 => Accessory::StarPin,
-            25 => Accessory::Halo,
-            26 => Accessory::Strawberry,
-            27 => Accessory::Pudding,
-            28 => Accessory::MoonStar,
-            29 => Accessory::Cloud,
+            20 => Accessory::Ribbon,
+            21 => Accessory::Flower,
+            22 => Accessory::Beret,
+            23 => Accessory::Hood,
+            24 => Accessory::BlanketCape,
+            25 => Accessory::StarPin,
+            26 => Accessory::Halo,
+            27 => Accessory::Strawberry,
+            28 => Accessory::Pudding,
+            29 => Accessory::MoonStar,
+            30 => Accessory::Cloud,
             _ => Accessory::None,
         }
     }
@@ -1234,6 +1236,31 @@ fn draw_accessory(cv: &mut Cv, acc: Accessory, t: Transform) {
             let sparkle = star_path(150.0, 44.0, 5.5, 0.0);
             cv.fill_t(&sparkle, (255, 246, 200, 255), t);
             cv.stroke_t(&sparkle, (228, 206, 120, 255), 1.4, t);
+        }
+        Accessory::Clover => {
+            // a lucky four-leaf clover on the crown: one heart-leaf, tip at the
+            // center, rotated into four; a curved stem trailing down
+            let (cx, cy) = (120.0f32, 62.0f32);
+            let green = (118, 192, 96, 255);
+            let edge = (86, 150, 68, 255);
+            let mut stem = PathBuilder::new();
+            stem.move_to(cx + 2.0, cy + 3.0);
+            stem.quad_to(cx + 11.0, cy + 16.0, cx + 6.0, cy + 27.0);
+            cv.stroke_t(&stem.finish(), edge, 3.0, t);
+            let leaf = heart_path(cx, cy - 9.0 * 1.05, 9.0);
+            let vein = {
+                let mut pb = PathBuilder::new();
+                pb.move_to(cx, cy - 1.0);
+                pb.line_to(cx, cy - 14.0);
+                pb.finish()
+            };
+            for deg in [45.0f32, 135.0, 225.0, 315.0] {
+                let lt = t.pre_concat(Transform::from_rotate_at(deg, cx, cy));
+                cv.fill_t(&leaf, green, lt);
+                cv.stroke_t(&leaf, edge, 2.0, lt);
+                cv.stroke_t(&vein, fade(edge, 0.5), 1.3, lt);
+            }
+            cv.fill_t(&oval(cx, cy, 2.2, 2.2), edge, t);
         }
     }
 }

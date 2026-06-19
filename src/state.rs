@@ -318,7 +318,7 @@ impl AccessoryDef {
 
 /// Index in this array + 1 == Persist::accessory id (0 = none).
 /// Order must match `render::Accessory::from_id` for the same ids.
-pub const ACCESSORIES: [AccessoryDef; 18] = [
+pub const ACCESSORIES: [AccessoryDef; 19] = [
     AccessoryDef { level: 2, name_kr: "빨간 목도리", name_en: "RED SCARF" },
     AccessoryDef { level: 3, name_kr: "동그란 안경", name_en: "GLASSES" },
     AccessoryDef { level: 5, name_kr: "파란 비니", name_en: "BLUE BEANIE" },
@@ -337,6 +337,7 @@ pub const ACCESSORIES: [AccessoryDef; 18] = [
     AccessoryDef { level: 45, name_kr: "수면 모자", name_en: "NIGHTCAP" },
     AccessoryDef { level: 48, name_kr: "생선 모자", name_en: "FISH HAT" },
     AccessoryDef { level: 50, name_kr: "붕어빵", name_en: "FISH BREAD" },
+    AccessoryDef { level: 54, name_kr: "네잎클로버", name_en: "LUCKY CLOVER" },
 ];
 
 #[cfg(test)]

@@ -486,4 +486,13 @@ fn main() {
         }
         save(&sheet, &dir, "10-collection");
     }
+
+    // 11. four-leaf clover (just added)
+    {
+        let mut sc = base_scene(Lang::Ko);
+        sc.accessory = Accessory::Clover;
+        let mut pm = Pixmap::new(480, 512).unwrap();
+        render::render_card(&mut pm, &sc, 2.0);
+        save(&pm, &dir, "11-clover");
+    }
 }
