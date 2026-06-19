@@ -317,13 +317,14 @@ impl AccessoryDef {
 }
 
 /// Index in this array + 1 == Persist::accessory id (0 = none).
-pub const ACCESSORIES: [AccessoryDef; 6] = [
+pub const ACCESSORIES: [AccessoryDef; 7] = [
     AccessoryDef { level: 2, name_kr: "빨간 목도리", name_en: "RED SCARF" },
     AccessoryDef { level: 3, name_kr: "동그란 안경", name_en: "GLASSES" },
     AccessoryDef { level: 5, name_kr: "파란 비니", name_en: "BLUE BEANIE" },
     AccessoryDef { level: 7, name_kr: "헤드폰", name_en: "HEADPHONES" },
     AccessoryDef { level: 10, name_kr: "황금 왕관", name_en: "GOLD CROWN" },
     AccessoryDef { level: 15, name_kr: "마법사 모자", name_en: "WIZARD HAT" },
+    AccessoryDef { level: 20, name_kr: "푸딩", name_en: "PUDDING" },
 ];
 
 #[cfg(test)]

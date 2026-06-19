@@ -16,6 +16,9 @@ versions follow [SemVer](https://semver.org/). Maintenance rules:
 
 ## [Unreleased]
 
+### Added
+- **Pudding accessory** — a Japanese-style caramel pudding hat (custard body, caramel glaze with a drip, and a cherry on top) unlocks at level 20.
+
 ### Fixed
 - **Picking a clip from the hotkey panel now pastes it** (Win+V parity, Windows):
   opening the clipboard with the panel hotkey while typing in a text field and

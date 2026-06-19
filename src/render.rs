@@ -41,6 +41,7 @@ pub enum Accessory {
     Headphones,
     Crown,
     Wizard,
+    Pudding,
 }
 
 impl Accessory {
@@ -52,6 +53,7 @@ impl Accessory {
             4 => Accessory::Headphones,
             5 => Accessory::Crown,
             6 => Accessory::Wizard,
+            7 => Accessory::Pudding,
             _ => Accessory::None,
         }
     }
@@ -725,6 +727,38 @@ fn draw_accessory(cv: &mut Cv, acc: Accessory, t: Transform) {
             star_at(cv, 120.0, 56.0, 9.0, 0.0, (250, 220, 90, 255), t);
             star_at(cv, 102.0, 74.0, 4.5, 0.6, (250, 220, 90, 220), t);
             star_at(cv, 140.0, 70.0, 4.5, 1.2, (250, 220, 90, 220), t);
+        }
+        Accessory::Pudding => {
+            // custard body: trapezoid wider at base, narrower at top
+            let mut pb = PathBuilder::new();
+            pb.move_to(88.0, 98.0);
+            pb.line_to(152.0, 98.0);
+            pb.line_to(140.0, 60.0);
+            pb.line_to(100.0, 60.0);
+            pb.close();
+            let body = pb.finish();
+            cv.fill_t(&body, (248, 222, 148, 255), t);
+            cv.stroke_t(&body, OUTLINE, 2.5, t);
+            // base disc grounding the pudding on the cat's head
+            let base = oval(120.0, 100.0, 34.0, 6.0);
+            cv.fill_t(&base, (220, 185, 100, 255), t);
+            cv.stroke_t(&base, OUTLINE, 2.0, t);
+            // caramel glaze pooled on top
+            cv.fill_t(&oval(120.0, 63.0, 22.0, 6.0), (200, 115, 25, 230), t);
+            // caramel drip down the right side
+            let mut drip = PathBuilder::new();
+            drip.move_to(138.0, 67.0);
+            drip.quad_to(146.0, 76.0, 143.0, 86.0);
+            drip.quad_to(144.0, 91.0, 140.0, 94.0);
+            cv.stroke_t(&drip.finish(), (180, 95, 18, 255), 4.0, t);
+            // cherry
+            cv.fill_t(&oval(120.0, 53.0, 6.5, 6.5), (210, 45, 45, 255), t);
+            cv.stroke_t(&oval(120.0, 53.0, 6.5, 6.5), (155, 28, 28, 255), 1.5, t);
+            // cherry stem
+            let mut stem = PathBuilder::new();
+            stem.move_to(120.0, 47.0);
+            stem.quad_to(123.0, 41.0, 119.0, 37.0);
+            cv.stroke_t(&stem.finish(), (75, 120, 50, 255), 2.0, t);
         }
     }
 }
