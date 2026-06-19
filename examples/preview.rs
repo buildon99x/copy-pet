@@ -290,4 +290,209 @@ fn main() {
         render::draw_icon_scaled(&mut pm, 2.0);
         save(&pm, &dir, "5-icon");
     }
+
+    // 6. accessory sheet: every accessory on the cat, for visual review.
+    // Order matches Accessory::from_id (existing 1-6, then the new 7-14).
+    {
+        let all = [
+            Accessory::Scarf,
+            Accessory::Glasses,
+            Accessory::Beanie,
+            Accessory::Headphones,
+            Accessory::Crown,
+            Accessory::Wizard,
+            Accessory::Ribbon,
+            Accessory::BunnyEars,
+            Accessory::Flower,
+            Accessory::Beret,
+            Accessory::Hood,
+            Accessory::BlanketCape,
+            Accessory::SleepMask,
+            Accessory::FishHat,
+        ];
+        let cols = 4u32;
+        let (cw, ch) = (240u32, 256u32);
+        let rows = (all.len() as u32).div_ceil(cols);
+        let mut sheet = Pixmap::new(cw * cols, ch * rows).unwrap();
+        sheet.fill(tiny_skia::Color::from_rgba8(245, 242, 236, 255));
+        for (i, acc) in all.iter().enumerate() {
+            let mut sc = base_scene(Lang::Ko);
+            sc.accessory = *acc;
+            let mut cell = Pixmap::new(cw, ch).unwrap();
+            render::render_card(&mut cell, &sc, 1.0);
+            let x = (i as u32 % cols) * cw;
+            let y = (i as u32 / cols) * ch;
+            sheet.draw_pixmap(
+                0,
+                0,
+                cell.as_ref(),
+                &tiny_skia::PixmapPaint::default(),
+                tiny_skia::Transform::from_translate(x as f32, y as f32),
+                None,
+            );
+        }
+        save(&sheet, &dir, "6-accessories");
+
+        // high-res individual cuts of the new accessories for close review
+        let new_acc = [
+            ("ribbon", Accessory::Ribbon),
+            ("bunny", Accessory::BunnyEars),
+            ("flower", Accessory::Flower),
+            ("beret", Accessory::Beret),
+            ("hood", Accessory::Hood),
+            ("cape", Accessory::BlanketCape),
+            ("mask", Accessory::SleepMask),
+            ("fishhat", Accessory::FishHat),
+        ];
+        for (name, acc) in new_acc {
+            let mut sc = base_scene(Lang::Ko);
+            sc.accessory = acc;
+            let mut pm = Pixmap::new(480, 512).unwrap();
+            render::render_card(&mut pm, &sc, 2.0);
+            save(&pm, &dir, &format!("6-{name}"));
+        }
+    }
+
+    // 7. candidate accessories (cape replacements) for review
+    {
+        let candidates = [
+            ("nightcap", Accessory::Nightcap),
+            ("flowercrown", Accessory::FlowerCrown),
+            ("starpin", Accessory::StarPin),
+            ("sprout", Accessory::Sprout),
+            ("bearears", Accessory::BearEars),
+            ("halo", Accessory::Halo),
+        ];
+        let cols = 3u32;
+        let (cw, ch) = (240u32, 256u32);
+        let rows = (candidates.len() as u32).div_ceil(cols);
+        let mut sheet = Pixmap::new(cw * cols, ch * rows).unwrap();
+        sheet.fill(tiny_skia::Color::from_rgba8(245, 242, 236, 255));
+        for (i, (name, acc)) in candidates.iter().enumerate() {
+            let mut sc = base_scene(Lang::Ko);
+            sc.accessory = *acc;
+            let mut cell = Pixmap::new(cw, ch).unwrap();
+            render::render_card(&mut cell, &sc, 1.0);
+            let x = (i as u32 % cols) * cw;
+            let y = (i as u32 / cols) * ch;
+            sheet.draw_pixmap(
+                0,
+                0,
+                cell.as_ref(),
+                &tiny_skia::PixmapPaint::default(),
+                tiny_skia::Transform::from_translate(x as f32, y as f32),
+                None,
+            );
+            let mut pm = Pixmap::new(480, 512).unwrap();
+            render::render_card(&mut pm, &sc, 2.0);
+            save(&pm, &dir, &format!("7-{name}"));
+        }
+        save(&sheet, &dir, "7-candidates");
+    }
+
+    // 8. second candidate batch: food / fruit / celestial themes
+    {
+        let candidates = [
+            ("bungeoppang", Accessory::Bungeoppang),
+            ("strawberry", Accessory::Strawberry),
+            ("pudding", Accessory::Pudding),
+            ("heartglasses", Accessory::HeartGlasses),
+            ("moonstar", Accessory::MoonStar),
+            ("chick", Accessory::Chick),
+        ];
+        let cols = 3u32;
+        let (cw, ch) = (240u32, 256u32);
+        let rows = (candidates.len() as u32).div_ceil(cols);
+        let mut sheet = Pixmap::new(cw * cols, ch * rows).unwrap();
+        sheet.fill(tiny_skia::Color::from_rgba8(245, 242, 236, 255));
+        for (i, (name, acc)) in candidates.iter().enumerate() {
+            let mut sc = base_scene(Lang::Ko);
+            sc.accessory = *acc;
+            let mut cell = Pixmap::new(cw, ch).unwrap();
+            render::render_card(&mut cell, &sc, 1.0);
+            let x = (i as u32 % cols) * cw;
+            let y = (i as u32 / cols) * ch;
+            sheet.draw_pixmap(
+                0,
+                0,
+                cell.as_ref(),
+                &tiny_skia::PixmapPaint::default(),
+                tiny_skia::Transform::from_translate(x as f32, y as f32),
+                None,
+            );
+            let mut pm = Pixmap::new(480, 512).unwrap();
+            render::render_card(&mut pm, &sc, 2.0);
+            save(&pm, &dir, &format!("8-{name}"));
+        }
+        save(&sheet, &dir, "8-candidates2");
+    }
+
+    // 9. extra cute trio
+    {
+        let candidates = [
+            ("butterfly", Accessory::Butterfly),
+            ("cherry", Accessory::Cherry),
+            ("cloud", Accessory::Cloud),
+        ];
+        let cols = 3u32;
+        let (cw, ch) = (240u32, 256u32);
+        let mut sheet = Pixmap::new(cw * cols, ch).unwrap();
+        sheet.fill(tiny_skia::Color::from_rgba8(245, 242, 236, 255));
+        for (i, (name, acc)) in candidates.iter().enumerate() {
+            let mut sc = base_scene(Lang::Ko);
+            sc.accessory = *acc;
+            let mut cell = Pixmap::new(cw, ch).unwrap();
+            render::render_card(&mut cell, &sc, 1.0);
+            sheet.draw_pixmap(
+                0,
+                0,
+                cell.as_ref(),
+                &tiny_skia::PixmapPaint::default(),
+                tiny_skia::Transform::from_translate((i as u32 * cw) as f32, 0.0),
+                None,
+            );
+            let mut pm = Pixmap::new(480, 512).unwrap();
+            render::render_card(&mut pm, &sc, 2.0);
+            save(&pm, &dir, &format!("9-{name}"));
+        }
+        save(&sheet, &dir, "9-cute-trio");
+    }
+
+    // 10. shipped collection: every unlockable accessory, rendered via from_id
+    // (canonical check that the ids line up with state::ACCESSORIES)
+    {
+        let n = clipcat::state::ACCESSORIES.len();
+        let cols = 6u32;
+        let (cw, ch) = (240u32, 256u32);
+        let rows = (n as u32).div_ceil(cols);
+        let mut sheet = Pixmap::new(cw * cols, ch * rows).unwrap();
+        sheet.fill(tiny_skia::Color::from_rgba8(245, 242, 236, 255));
+        for id in 1..=n {
+            let mut sc = base_scene(Lang::Ko);
+            sc.accessory = Accessory::from_id(id);
+            let mut cell = Pixmap::new(cw, ch).unwrap();
+            render::render_card(&mut cell, &sc, 1.0);
+            let idx = (id - 1) as u32;
+            let x = (idx % cols) * cw;
+            let y = (idx / cols) * ch;
+            sheet.draw_pixmap(
+                0,
+                0,
+                cell.as_ref(),
+                &tiny_skia::PixmapPaint::default(),
+                tiny_skia::Transform::from_translate(x as f32, y as f32),
+                None,
+            );
+        }
+        save(&sheet, &dir, "10-collection");
+    }
+
+    // 11. four-leaf clover (just added)
+    {
+        let mut sc = base_scene(Lang::Ko);
+        sc.accessory = Accessory::Clover;
+        let mut pm = Pixmap::new(480, 512).unwrap();
+        render::render_card(&mut pm, &sc, 2.0);
+        save(&pm, &dir, "11-clover");
+    }
 }

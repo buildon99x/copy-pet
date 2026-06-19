@@ -317,14 +317,28 @@ impl AccessoryDef {
 }
 
 /// Index in this array + 1 == Persist::accessory id (0 = none).
-pub const ACCESSORIES: [AccessoryDef; 7] = [
+/// Order must match `render::Accessory::from_id` for the same ids.
+pub const ACCESSORIES: [AccessoryDef; 20] = [
     AccessoryDef { level: 2, name_kr: "빨간 목도리", name_en: "RED SCARF" },
     AccessoryDef { level: 3, name_kr: "동그란 안경", name_en: "GLASSES" },
     AccessoryDef { level: 5, name_kr: "파란 비니", name_en: "BLUE BEANIE" },
     AccessoryDef { level: 7, name_kr: "헤드폰", name_en: "HEADPHONES" },
     AccessoryDef { level: 10, name_kr: "황금 왕관", name_en: "GOLD CROWN" },
     AccessoryDef { level: 15, name_kr: "마법사 모자", name_en: "WIZARD HAT" },
-    AccessoryDef { level: 20, name_kr: "푸딩", name_en: "PUDDING" },
+    AccessoryDef { level: 18, name_kr: "토끼 귀", name_en: "BUNNY EARS" },
+    AccessoryDef { level: 21, name_kr: "새싹", name_en: "SPROUT" },
+    AccessoryDef { level: 24, name_kr: "데이지 화관", name_en: "DAISY CROWN" },
+    AccessoryDef { level: 27, name_kr: "곰 귀", name_en: "BEAR EARS" },
+    AccessoryDef { level: 30, name_kr: "체리", name_en: "CHERRY" },
+    AccessoryDef { level: 33, name_kr: "나비", name_en: "BUTTERFLY" },
+    AccessoryDef { level: 36, name_kr: "하트 선글라스", name_en: "HEART SHADES" },
+    AccessoryDef { level: 39, name_kr: "병아리", name_en: "CHICK" },
+    AccessoryDef { level: 42, name_kr: "수면 안대", name_en: "SLEEP MASK" },
+    AccessoryDef { level: 45, name_kr: "수면 모자", name_en: "NIGHTCAP" },
+    AccessoryDef { level: 48, name_kr: "생선 모자", name_en: "FISH HAT" },
+    AccessoryDef { level: 50, name_kr: "붕어빵", name_en: "FISH BREAD" },
+    AccessoryDef { level: 54, name_kr: "네잎클로버", name_en: "LUCKY CLOVER" },
+    AccessoryDef { level: 57, name_kr: "푸딩", name_en: "PUDDING" },
 ];
 
 #[cfg(test)]

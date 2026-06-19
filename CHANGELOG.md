@@ -17,7 +17,13 @@ versions follow [SemVer](https://semver.org/). Maintenance rules:
 ## [Unreleased]
 
 ### Added
-- **Pudding accessory** — a Japanese-style caramel pudding hat (custard body, caramel glaze with a drip, and a cherry on top) unlocks at level 20.
+- **13 new accessories to unlock** as your cat levels up: bunny ears, a sprout,
+  a daisy crown, bear ears, cherries, a butterfly, heart sunglasses, a chick, a
+  sleep mask, a nightcap, a fish hat, a fish-shaped pastry and — at the very top
+  — a lucky four-leaf clover. Equip them from the tray/right-click menu like the
+  others.
+- **Pudding accessory** — a Japanese-style caramel pudding hat (custard body,
+  caramel glaze with a drip, and a cherry on top) unlocks at level 57.
 
 ### Fixed
 - **Picking a clip from the hotkey panel now pastes it** (Win+V parity, Windows):
