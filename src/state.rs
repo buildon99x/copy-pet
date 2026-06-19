@@ -6,7 +6,7 @@
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
-use crate::i18n::Lang;
+use crate::i18n::{Lang, Msg};
 
 #[derive(Serialize, Deserialize, Clone)]
 #[serde(default)]
@@ -303,27 +303,23 @@ pub fn level_progress(total_xp: u64) -> (u32, u64, u64) {
 
 pub struct AccessoryDef {
     pub level: u32,
-    pub name_kr: &'static str,
-    pub name_en: &'static str,
+    pub name: Msg,
 }
 
 impl AccessoryDef {
     pub fn name(&self, lang: Lang) -> &'static str {
-        match lang {
-            Lang::En => self.name_en,
-            Lang::Ko => self.name_kr,
-        }
+        crate::i18n::t(lang, self.name)
     }
 }
 
 /// Index in this array + 1 == Persist::accessory id (0 = none).
 pub const ACCESSORIES: [AccessoryDef; 6] = [
-    AccessoryDef { level: 2, name_kr: "빨간 목도리", name_en: "RED SCARF" },
-    AccessoryDef { level: 3, name_kr: "동그란 안경", name_en: "GLASSES" },
-    AccessoryDef { level: 5, name_kr: "파란 비니", name_en: "BLUE BEANIE" },
-    AccessoryDef { level: 7, name_kr: "헤드폰", name_en: "HEADPHONES" },
-    AccessoryDef { level: 10, name_kr: "황금 왕관", name_en: "GOLD CROWN" },
-    AccessoryDef { level: 15, name_kr: "마법사 모자", name_en: "WIZARD HAT" },
+    AccessoryDef { level: 2,  name: Msg::AccRedScarf },
+    AccessoryDef { level: 3,  name: Msg::AccGlasses },
+    AccessoryDef { level: 5,  name: Msg::AccBlueBeanie },
+    AccessoryDef { level: 7,  name: Msg::AccHeadphones },
+    AccessoryDef { level: 10, name: Msg::AccGoldCrown },
+    AccessoryDef { level: 15, name: Msg::AccWizardHat },
 ];
 
 #[cfg(test)]
@@ -356,8 +352,8 @@ mod tests {
     fn every_accessory_has_a_reachable_level() {
         for acc in ACCESSORIES.iter() {
             assert!(acc.level >= 2 && acc.level <= 99);
-            assert!(!acc.name_en.is_empty());
-            assert!(!acc.name_kr.is_empty());
+            assert!(!acc.name(crate::i18n::Lang::En).is_empty());
+            assert!(!acc.name(crate::i18n::Lang::Ko).is_empty());
         }
     }
 

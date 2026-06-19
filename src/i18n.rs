@@ -105,6 +105,13 @@ pub enum Msg {
     BubbleClicks,
     BubbleClips,
     BubbleActive,
+    // accessories
+    AccRedScarf,
+    AccGlasses,
+    AccBlueBeanie,
+    AccHeadphones,
+    AccGoldCrown,
+    AccWizardHat,
 }
 
 /// Looks up a fixed string for the language.
@@ -237,6 +244,18 @@ pub fn t(lang: Lang, msg: Msg) -> &'static str {
         (BubbleClips, Lang::Ko) => "복사",
         (BubbleActive, Lang::En) => "ACTIVE",
         (BubbleActive, Lang::Ko) => "활동",
+        (AccRedScarf, Lang::En) => "RED SCARF",
+        (AccRedScarf, Lang::Ko) => "빨간 목도리",
+        (AccGlasses, Lang::En) => "GLASSES",
+        (AccGlasses, Lang::Ko) => "동그란 안경",
+        (AccBlueBeanie, Lang::En) => "BLUE BEANIE",
+        (AccBlueBeanie, Lang::Ko) => "파란 비니",
+        (AccHeadphones, Lang::En) => "HEADPHONES",
+        (AccHeadphones, Lang::Ko) => "헤드폰",
+        (AccGoldCrown, Lang::En) => "GOLD CROWN",
+        (AccGoldCrown, Lang::Ko) => "황금 왕관",
+        (AccWizardHat, Lang::En) => "WIZARD HAT",
+        (AccWizardHat, Lang::Ko) => "마법사 모자",
     }
 }
 
@@ -420,6 +439,7 @@ mod tests {
             MenuAutoUpdate, ToastUpdateDownloading,
             ToastUpdateFailed, ToastAccessibility, BubbleKeys, BubbleClicks, BubbleClips,
             BubbleActive,
+            AccRedScarf, AccGlasses, AccBlueBeanie, AccHeadphones, AccGoldCrown, AccWizardHat,
         ];
         for msg in all {
             assert!(!t(Lang::En, msg).is_empty());
