@@ -677,7 +677,7 @@ fn draw_accessory(cv: &mut Cv, acc: Accessory, t: Transform) {
             let brim = round_rect(62.0, 86.0, 116.0, 13.0, 6.0);
             cv.fill_t(&brim, (74, 118, 184, 255), t);
             cv.stroke_t(&brim, OUTLINE, 2.5, t);
-            let pom = oval(120.0, 38.0, 9.0, 9.0);
+            let pom = oval(120.0, 54.0, 9.0, 9.0);
             cv.fill_t(&pom, (240, 240, 240, 255), t);
             cv.stroke_t(&pom, OUTLINE, 2.5, t);
         }
