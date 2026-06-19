@@ -41,6 +41,30 @@ pub enum Accessory {
     Headphones,
     Crown,
     Wizard,
+    Ribbon,
+    BunnyEars,
+    Flower,
+    Beret,
+    Hood,
+    BlanketCape,
+    SleepMask,
+    FishHat,
+    Nightcap,
+    FlowerCrown,
+    StarPin,
+    Sprout,
+    BearEars,
+    Halo,
+    Bungeoppang,
+    Strawberry,
+    Pudding,
+    HeartGlasses,
+    MoonStar,
+    Chick,
+    Butterfly,
+    Cherry,
+    Cloud,
+    Clover,
 }
 
 impl Accessory {
@@ -52,6 +76,33 @@ impl Accessory {
             4 => Accessory::Headphones,
             5 => Accessory::Crown,
             6 => Accessory::Wizard,
+            // collectible lineup — these ids line up 1:1 with state::ACCESSORIES
+            7 => Accessory::BunnyEars,
+            8 => Accessory::Sprout,
+            9 => Accessory::FlowerCrown,
+            10 => Accessory::BearEars,
+            11 => Accessory::Cherry,
+            12 => Accessory::Butterfly,
+            13 => Accessory::HeartGlasses,
+            14 => Accessory::Chick,
+            15 => Accessory::SleepMask,
+            16 => Accessory::Nightcap,
+            17 => Accessory::FishHat,
+            18 => Accessory::Bungeoppang,
+            19 => Accessory::Clover,
+            // drawn designs held for a future drop (not yet in state::ACCESSORIES,
+            // so not offered in any menu — promoting one is a single array row)
+            20 => Accessory::Ribbon,
+            21 => Accessory::Flower,
+            22 => Accessory::Beret,
+            23 => Accessory::Hood,
+            24 => Accessory::BlanketCape,
+            25 => Accessory::StarPin,
+            26 => Accessory::Halo,
+            27 => Accessory::Strawberry,
+            28 => Accessory::Pudding,
+            29 => Accessory::MoonStar,
+            30 => Accessory::Cloud,
             _ => Accessory::None,
         }
     }
@@ -725,6 +776,491 @@ fn draw_accessory(cv: &mut Cv, acc: Accessory, t: Transform) {
             star_at(cv, 120.0, 56.0, 9.0, 0.0, (250, 220, 90, 255), t);
             star_at(cv, 102.0, 74.0, 4.5, 0.6, (250, 220, 90, 220), t);
             star_at(cv, 140.0, 70.0, 4.5, 1.2, (250, 220, 90, 220), t);
+        }
+        Accessory::Ribbon => {
+            // a soft bow perched on the crown, between the ears
+            let fill = (244, 162, 184, 255);
+            let knot_c = (214, 122, 150, 255);
+            for (ax, ay, bx, by) in [(98.0f32, 70.0f32, 98.0f32, 92.0f32), (142.0, 70.0, 142.0, 92.0)] {
+                let mut pb = PathBuilder::new();
+                pb.move_to(120.0, 81.0);
+                pb.line_to(ax, ay);
+                pb.line_to(bx, by);
+                pb.close();
+                let loop_ = pb.finish();
+                cv.fill_t(&loop_, fill, t);
+                cv.stroke_t(&loop_, OUTLINE, 2.5, t);
+            }
+            let knot = round_rect(114.0, 74.0, 12.0, 15.0, 4.0);
+            cv.fill_t(&knot, knot_c, t);
+            cv.stroke_t(&knot, OUTLINE, 2.5, t);
+        }
+        Accessory::BunnyEars => {
+            // two upright ears rising from behind the head
+            for (cx, lean) in [(104.0f32, -4.0f32), (136.0, 4.0)] {
+                let outer = oval(cx + lean, 58.0, 9.0, 28.0);
+                cv.fill_t(&outer, FUR, t);
+                cv.stroke_t(&outer, OUTLINE, 3.0, t);
+                cv.fill_t(&oval(cx + lean, 60.0, 4.0, 19.0), EAR_PINK, t);
+            }
+        }
+        Accessory::Flower => {
+            // a little flower tucked by the right ear
+            let (cx, cy) = (150.0f32, 86.0f32);
+            for i in 0..5 {
+                let a = i as f32 * std::f32::consts::TAU / 5.0 - std::f32::consts::FRAC_PI_2;
+                let petal = oval(cx + a.cos() * 8.0, cy + a.sin() * 8.0, 5.5, 5.5);
+                cv.fill_t(&petal, (247, 180, 210, 255), t);
+                cv.stroke_t(&petal, OUTLINE, 1.8, t);
+            }
+            let center = oval(cx, cy, 4.5, 4.5);
+            cv.fill_t(&center, (250, 214, 96, 255), t);
+            cv.stroke_t(&center, (210, 170, 60, 255), 1.6, t);
+        }
+        Accessory::Beret => {
+            // a flat beret resting on the crown
+            let cap = oval(120.0, 70.0, 42.0, 17.0);
+            cv.fill_t(&cap, (198, 86, 92, 255), t);
+            cv.stroke_t(&cap, OUTLINE, 3.0, t);
+            let band = round_rect(86.0, 78.0, 68.0, 9.0, 4.0);
+            cv.fill_t(&band, (170, 66, 72, 255), t);
+            cv.stroke_t(&band, OUTLINE, 2.2, t);
+            let stalk = oval(140.0, 56.0, 3.5, 3.5);
+            cv.fill_t(&stalk, (170, 66, 72, 255), t);
+            cv.stroke_t(&stalk, OUTLINE, 1.8, t);
+        }
+        Accessory::Hood => {
+            // a cozy raised hood: a filled crescent hugging the head, framing the face
+            let outer = {
+                let mut pb = PathBuilder::new();
+                pb.move_to(58.0, 146.0);
+                pb.quad_to(56.0, 62.0, 120.0, 48.0);
+                pb.quad_to(184.0, 62.0, 182.0, 146.0);
+                pb.line_to(166.0, 146.0);
+                pb.quad_to(168.0, 80.0, 120.0, 68.0);
+                pb.quad_to(72.0, 80.0, 74.0, 146.0);
+                pb.close();
+                pb.finish()
+            };
+            cv.fill_t(&outer, (126, 142, 174, 255), t);
+            cv.stroke_t(&outer, OUTLINE, 2.6, t);
+            let lining = {
+                let mut pb = PathBuilder::new();
+                pb.move_to(74.0, 140.0);
+                pb.quad_to(72.0, 82.0, 120.0, 70.0);
+                pb.quad_to(168.0, 82.0, 166.0, 140.0);
+                pb.finish()
+            };
+            cv.stroke_t(&lining, (198, 208, 228, 255), 4.0, t);
+        }
+        Accessory::BlanketCape => {
+            // a blanket draped over the shoulders (desk/keyboard/paws draw over it)
+            let cloth = (180, 205, 224, 255);
+            let fold = (150, 180, 205, 255);
+            let mut pb = PathBuilder::new();
+            pb.move_to(92.0, 162.0);
+            pb.quad_to(70.0, 178.0, 68.0, 210.0);
+            pb.quad_to(120.0, 220.0, 172.0, 210.0);
+            pb.quad_to(170.0, 178.0, 148.0, 162.0);
+            pb.close();
+            let cape = pb.finish();
+            cv.fill_t(&cape, cloth, t);
+            cv.stroke_t(&cape, OUTLINE, 2.6, t);
+            for fx in [104.0f32, 120.0, 136.0] {
+                let mut fl = PathBuilder::new();
+                fl.move_to(fx, 170.0);
+                fl.line_to(fx - 2.0, 206.0);
+                cv.stroke_t(&fl.finish(), fold, 2.0, t);
+            }
+            let collar = round_rect(92.0, 158.0, 56.0, 12.0, 6.0);
+            cv.fill_t(&collar, fold, t);
+            cv.stroke_t(&collar, OUTLINE, 2.4, t);
+        }
+        Accessory::SleepMask => {
+            // an opaque sleep mask over the eyes, with a strap around the head
+            let mask = round_rect(76.0, 112.0, 88.0, 20.0, 9.0);
+            cv.fill_t(&mask, (126, 132, 196, 255), t);
+            cv.stroke_t(&mask, OUTLINE, 2.6, t);
+            for (sx, ex, ey) in [(76.0f32, 56.0f32, 96.0f32), (164.0, 184.0, 96.0)] {
+                let mut pb = PathBuilder::new();
+                pb.move_to(sx, 118.0);
+                pb.quad_to(ex, 110.0, ex + (sx - ex) * 0.05, ey);
+                cv.stroke_t(&pb.finish(), (126, 132, 196, 255), 4.0, t);
+            }
+            let mut hl = PathBuilder::new();
+            hl.move_to(96.0, 126.0);
+            hl.quad_to(120.0, 121.0, 144.0, 126.0);
+            cv.stroke_t(&hl.finish(), (180, 186, 226, 255), 2.0, t);
+        }
+        Accessory::FishHat => {
+            // the self-parody: a little fish perched on the head, facing left
+            let body_c = lighten(FISH_BLUE, 0.30);
+            let dark_c = darken(FISH_BLUE, 0.18);
+            let (x, y) = (120.0f32, 68.0f32);
+            let mut tb = PathBuilder::new();
+            tb.move_to(x + 15.0, y);
+            tb.line_to(x + 27.0, y - 8.0);
+            tb.quad_to(x + 23.0, y, x + 27.0, y + 8.0);
+            tb.close();
+            let tail = tb.finish();
+            cv.fill_t(&tail, dark_c, t);
+            cv.stroke_t(&tail, OUTLINE, 2.2, t);
+            let body = oval(x, y, 20.0, 9.5);
+            cv.fill_t(&body, body_c, t);
+            cv.stroke_t(&body, OUTLINE, 2.6, t);
+            let mut fb = PathBuilder::new();
+            fb.move_to(x - 4.0, y - 8.0);
+            fb.quad_to(x + 2.0, y - 15.0, x + 8.0, y - 7.5);
+            let fin = fb.finish();
+            cv.fill_t(&fin, dark_c, t);
+            cv.stroke_t(&fin, OUTLINE, 2.0, t);
+            cv.fill_t(&oval(x - 12.0, y - 2.0, 1.9, 1.9), OUTLINE, t);
+        }
+        Accessory::Nightcap => {
+            // a floppy sleeping cap drooping to one side, with a pompom
+            let body = (197, 186, 230, 255);
+            let band = (170, 158, 210, 255);
+            let mut pb = PathBuilder::new();
+            pb.move_to(66.0, 90.0);
+            pb.quad_to(104.0, 28.0, 150.0, 40.0);
+            pb.quad_to(184.0, 50.0, 196.0, 70.0);
+            pb.line_to(176.0, 92.0);
+            pb.quad_to(120.0, 84.0, 66.0, 90.0);
+            pb.close();
+            let cap = pb.finish();
+            cv.fill_t(&cap, body, t);
+            cv.stroke_t(&cap, OUTLINE, 3.0, t);
+            let brim = round_rect(60.0, 84.0, 120.0, 13.0, 6.0);
+            cv.fill_t(&brim, band, t);
+            cv.stroke_t(&brim, OUTLINE, 2.5, t);
+            let pom = oval(199.0, 71.0, 9.0, 9.0);
+            cv.fill_t(&pom, (245, 245, 250, 255), t);
+            cv.stroke_t(&pom, OUTLINE, 2.5, t);
+        }
+        Accessory::FlowerCrown => {
+            // a ring of little daisies arching across the crown
+            for (cx, cy) in [(80.0f32, 98.0f32), (98.0, 85.0), (120.0, 81.0), (142.0, 85.0), (160.0, 98.0)] {
+                for i in 0..5 {
+                    let a = i as f32 * std::f32::consts::TAU / 5.0 - std::f32::consts::FRAC_PI_2;
+                    let petal = oval(cx + a.cos() * 5.0, cy + a.sin() * 5.0, 3.6, 3.6);
+                    cv.fill_t(&petal, (252, 250, 245, 255), t);
+                    cv.stroke_t(&petal, fade(OUTLINE, 0.7), 1.4, t);
+                }
+                cv.fill_t(&oval(cx, cy, 2.7, 2.7), (250, 214, 96, 255), t);
+            }
+        }
+        Accessory::StarPin => {
+            // a gold star hairpin by the right ear, with a tiny companion
+            for (sx, sy, r) in [(150.0f32, 86.0f32, 11.0f32), (133.0, 97.0, 5.5)] {
+                let star = star_path(sx, sy, r, 0.0);
+                cv.fill_t(&star, (250, 210, 90, 255), t);
+                cv.stroke_t(&star, (210, 168, 56, 255), 2.0, t);
+            }
+        }
+        Accessory::Sprout => {
+            // a tiny sprout poking from the top of the head (cute meme)
+            let green = (126, 201, 110, 255);
+            let stem = {
+                let mut pb = PathBuilder::new();
+                pb.move_to(120.0, 82.0);
+                pb.line_to(120.0, 66.0);
+                pb.finish()
+            };
+            cv.stroke_t(&stem, (96, 168, 84, 255), 3.0, t);
+            let left = {
+                let mut pb = PathBuilder::new();
+                pb.move_to(120.0, 73.0);
+                pb.quad_to(102.0, 64.0, 109.0, 77.0);
+                pb.quad_to(115.0, 75.0, 120.0, 73.0);
+                pb.close();
+                pb.finish()
+            };
+            cv.fill_t(&left, green, t);
+            cv.stroke_t(&left, (96, 168, 84, 255), 1.8, t);
+            let right = {
+                let mut pb = PathBuilder::new();
+                pb.move_to(120.0, 70.0);
+                pb.quad_to(138.0, 58.0, 134.0, 72.0);
+                pb.quad_to(127.0, 70.0, 120.0, 70.0);
+                pb.close();
+                pb.finish()
+            };
+            cv.fill_t(&right, green, t);
+            cv.stroke_t(&right, (96, 168, 84, 255), 1.8, t);
+        }
+        Accessory::BearEars => {
+            // round bear ears on a headband
+            let band_c = (198, 170, 140, 255);
+            let inner_c = (236, 212, 186, 255);
+            let arc = {
+                let mut pb = PathBuilder::new();
+                pb.move_to(92.0, 92.0);
+                pb.quad_to(120.0, 72.0, 148.0, 92.0);
+                pb.finish()
+            };
+            cv.stroke_t(&arc, band_c, 6.0, t);
+            for cx in [96.0f32, 144.0] {
+                let ear = oval(cx, 82.0, 15.0, 15.0);
+                cv.fill_t(&ear, band_c, t);
+                cv.stroke_t(&ear, OUTLINE, 3.0, t);
+                cv.fill_t(&oval(cx, 82.0, 8.0, 8.0), inner_c, t);
+            }
+        }
+        Accessory::Halo => {
+            // a golden halo floating above the head
+            let ring = oval(120.0, 54.0, 30.0, 9.0);
+            cv.stroke_t(&ring, (250, 215, 110, 255), 7.0, t);
+            cv.stroke_t(&ring, (255, 240, 190, 255), 3.0, t);
+        }
+        Accessory::Bungeoppang => {
+            // a golden fish-shaped pastry on the head (doubles the fish pun)
+            let dough = (226, 180, 116, 255);
+            let crust = (186, 134, 74, 255);
+            let (x, y) = (120.0f32, 66.0f32);
+            let tail = {
+                let mut pb = PathBuilder::new();
+                pb.move_to(x + 18.0, y);
+                pb.line_to(x + 31.0, y - 9.0);
+                pb.quad_to(x + 26.0, y, x + 31.0, y + 9.0);
+                pb.close();
+                pb.finish()
+            };
+            cv.fill_t(&tail, dough, t);
+            cv.stroke_t(&tail, crust, 2.4, t);
+            let body = oval(x, y, 22.0, 12.5);
+            cv.fill_t(&body, dough, t);
+            cv.stroke_t(&body, crust, 2.6, t);
+            let fin = {
+                let mut pb = PathBuilder::new();
+                pb.move_to(x - 2.0, y - 11.0);
+                pb.quad_to(x + 4.0, y - 17.0, x + 10.0, y - 10.0);
+                pb.finish()
+            };
+            cv.fill_t(&fin, dough, t);
+            cv.stroke_t(&fin, crust, 2.0, t);
+            for dx in [-8.0f32, 0.0, 8.0] {
+                let mut pb = PathBuilder::new();
+                pb.move_to(x + dx + 2.0, y - 5.0);
+                pb.line_to(x + dx - 2.0, y + 5.0);
+                cv.stroke_t(&pb.finish(), fade(crust, 0.55), 1.4, t);
+            }
+            cv.fill_t(&oval(x - 13.0, y - 3.0, 2.0, 2.0), crust, t);
+        }
+        Accessory::Strawberry => {
+            // a strawberry beanie: red dome, seeds, leafy crown
+            let red = (228, 86, 86, 255);
+            let green = (120, 182, 96, 255);
+            let seed = (252, 226, 130, 255);
+            let dome = {
+                let mut pb = PathBuilder::new();
+                pb.move_to(64.0, 92.0);
+                pb.quad_to(120.0, 32.0, 176.0, 92.0);
+                pb.close();
+                pb.finish()
+            };
+            cv.fill_t(&dome, red, t);
+            cv.stroke_t(&dome, OUTLINE, 3.0, t);
+            for (sx, sy) in [(98.0f32, 74.0f32), (120.0, 66.0), (142.0, 74.0), (108.0, 86.0), (132.0, 86.0)] {
+                cv.fill_t(&oval(sx, sy, 2.2, 3.0), seed, t);
+            }
+            let leaf = star_path(120.0, 42.0, 9.0, 0.3);
+            cv.fill_t(&leaf, green, t);
+            cv.stroke_t(&leaf, (88, 148, 70, 255), 1.8, t);
+            let mut stem = PathBuilder::new();
+            stem.move_to(120.0, 40.0);
+            stem.line_to(120.0, 30.0);
+            cv.stroke_t(&stem.finish(), (88, 148, 70, 255), 3.0, t);
+        }
+        Accessory::Pudding => {
+            // a caramel pudding perched on the head, cherry on top
+            let custard = (246, 224, 150, 255);
+            let caramel = (190, 130, 70, 255);
+            let body = {
+                let mut pb = PathBuilder::new();
+                pb.move_to(102.0, 58.0);
+                pb.line_to(138.0, 58.0);
+                pb.line_to(152.0, 92.0);
+                pb.quad_to(120.0, 99.0, 88.0, 92.0);
+                pb.close();
+                pb.finish()
+            };
+            cv.fill_t(&body, custard, t);
+            cv.stroke_t(&body, OUTLINE, 2.6, t);
+            let glaze = oval(120.0, 58.0, 20.0, 6.5);
+            cv.fill_t(&glaze, caramel, t);
+            cv.stroke_t(&glaze, OUTLINE, 2.0, t);
+            for (dx, dy) in [(-12.0f32, 64.0f32), (10.0, 65.0)] {
+                let mut pb = PathBuilder::new();
+                pb.move_to(120.0 + dx, 58.0);
+                pb.quad_to(120.0 + dx + 1.0, dy, 120.0 + dx - 1.0, dy + 3.0);
+                cv.stroke_t(&pb.finish(), caramel, 3.0, t);
+            }
+            cv.fill_t(&oval(120.0, 49.0, 4.5, 4.5), (216, 72, 80, 255), t);
+            cv.stroke_t(&oval(120.0, 49.0, 4.5, 4.5), OUTLINE, 1.6, t);
+            let mut stem = PathBuilder::new();
+            stem.move_to(122.0, 46.0);
+            stem.line_to(126.0, 40.0);
+            cv.stroke_t(&stem.finish(), (120, 90, 60, 255), 2.0, t);
+        }
+        Accessory::HeartGlasses => {
+            // heart-shaped sunglasses over the eyes
+            let frame = (206, 64, 96, 255);
+            for ex in [92.0f32, 148.0] {
+                let lens = heart_path(ex, 120.0, 11.0);
+                cv.fill_t(&lens, (242, 132, 160, 110), t);
+                cv.stroke_t(&lens, frame, 3.0, t);
+            }
+            let mut bridge = PathBuilder::new();
+            bridge.move_to(106.0, 116.0);
+            bridge.quad_to(120.0, 112.0, 134.0, 116.0);
+            cv.stroke_t(&bridge.finish(), frame, 3.0, t);
+        }
+        Accessory::MoonStar => {
+            // a crescent moon and a star floating above the head
+            let gold = (250, 214, 110, 255);
+            let edge = (210, 168, 56, 255);
+            let moon = {
+                let mut pb = PathBuilder::new();
+                pb.move_to(108.0, 40.0);
+                pb.quad_to(123.0, 52.0, 108.0, 64.0);
+                pb.quad_to(117.0, 52.0, 108.0, 40.0);
+                pb.close();
+                pb.finish()
+            };
+            cv.fill_t(&moon, gold, t);
+            cv.stroke_t(&moon, edge, 2.0, t);
+            let star = star_path(136.0, 46.0, 6.0, 0.2);
+            cv.fill_t(&star, gold, t);
+            cv.stroke_t(&star, edge, 1.8, t);
+        }
+        Accessory::Chick => {
+            // a tiny chick nestled on the head
+            let body_c = (250, 224, 120, 255);
+            let beak_c = (240, 160, 70, 255);
+            let body = oval(124.0, 66.0, 14.0, 12.0);
+            cv.fill_t(&body, body_c, t);
+            cv.stroke_t(&body, OUTLINE, 2.6, t);
+            let head = oval(108.0, 58.0, 9.0, 9.0);
+            cv.fill_t(&head, body_c, t);
+            cv.stroke_t(&head, OUTLINE, 2.6, t);
+            let beak = {
+                let mut pb = PathBuilder::new();
+                pb.move_to(100.0, 57.0);
+                pb.line_to(94.0, 59.5);
+                pb.line_to(100.0, 62.0);
+                pb.close();
+                pb.finish()
+            };
+            cv.fill_t(&beak, beak_c, t);
+            cv.stroke_t(&beak, OUTLINE, 1.5, t);
+            cv.fill_t(&oval(106.0, 56.0, 1.7, 1.7), OUTLINE, t);
+            let mut wing = PathBuilder::new();
+            wing.move_to(124.0, 62.0);
+            wing.quad_to(132.0, 68.0, 124.0, 74.0);
+            cv.stroke_t(&wing.finish(), fade(OUTLINE, 0.55), 2.0, t);
+        }
+        Accessory::Butterfly => {
+            // a pastel butterfly perched on the crown
+            let wing = (203, 172, 232, 255);
+            let wing2 = (182, 146, 216, 255);
+            let spot = (247, 224, 242, 255);
+            let bodyc = (96, 78, 96, 255);
+            // antennae first (behind body)
+            for ax in [-6.0f32, 6.0] {
+                let mut pb = PathBuilder::new();
+                pb.move_to(120.0, 56.0);
+                pb.quad_to(120.0 + ax, 50.0, 120.0 + ax * 1.6, 47.0);
+                cv.stroke_t(&pb.finish(), bodyc, 1.8, t);
+                cv.fill_t(&oval(120.0 + ax * 1.6, 46.5, 1.8, 1.8), bodyc, t);
+            }
+            // upper wings
+            for (wx, sx) in [(-12.0f32, -2.0f32), (12.0, 2.0)] {
+                let w = oval(120.0 + wx, 61.0, 11.0, 9.5);
+                cv.fill_t(&w, wing, t);
+                cv.stroke_t(&w, OUTLINE, 2.0, t);
+                cv.fill_t(&oval(118.0 + wx + sx, 60.0, 3.0, 3.0), spot, t);
+            }
+            // lower wings
+            for wx in [-9.0f32, 9.0] {
+                let w = oval(120.0 + wx, 74.0, 8.0, 7.0);
+                cv.fill_t(&w, wing2, t);
+                cv.stroke_t(&w, OUTLINE, 2.0, t);
+            }
+            // body
+            cv.fill_t(&oval(120.0, 67.0, 2.8, 11.0), bodyc, t);
+        }
+        Accessory::Cherry => {
+            // a pair of glossy cherries resting on the crown
+            let red = (220, 64, 72, 255);
+            let leafc = (120, 182, 96, 255);
+            for (cx, qx) in [(107.0f32, 112.0f32), (133.0, 128.0)] {
+                let mut pb = PathBuilder::new();
+                pb.move_to(120.0, 56.0);
+                pb.quad_to(qx, 66.0, cx, 72.0);
+                cv.stroke_t(&pb.finish(), (120, 160, 90, 255), 3.0, t);
+            }
+            for (cx, hx) in [(107.0f32, 104.0f32), (133.0, 130.0)] {
+                let ball = oval(cx, 79.0, 9.0, 9.0);
+                cv.fill_t(&ball, red, t);
+                cv.stroke_t(&ball, OUTLINE, 2.6, t);
+                cv.fill_t(&oval(hx, 76.0, 2.4, 2.4), (252, 220, 222, 220), t);
+            }
+            let leaf = {
+                let mut pb = PathBuilder::new();
+                pb.move_to(120.0, 56.0);
+                pb.quad_to(135.0, 47.0, 129.0, 58.0);
+                pb.quad_to(124.0, 56.0, 120.0, 56.0);
+                pb.close();
+                pb.finish()
+            };
+            cv.fill_t(&leaf, leafc, t);
+            cv.stroke_t(&leaf, (88, 148, 70, 255), 1.6, t);
+        }
+        Accessory::Cloud => {
+            // a fluffy cloud floating above the head, with a sparkle
+            let cloudc = (249, 251, 255, 255);
+            let edge = (176, 190, 210, 255);
+            let cloud = {
+                let mut pb = PathBuilder::new();
+                pb.move_to(98.0, 62.0);
+                pb.quad_to(90.0, 50.0, 104.0, 48.0);
+                pb.quad_to(108.0, 38.0, 120.0, 42.0);
+                pb.quad_to(134.0, 37.0, 138.0, 50.0);
+                pb.quad_to(151.0, 50.0, 146.0, 62.0);
+                pb.quad_to(120.0, 69.0, 98.0, 62.0);
+                pb.close();
+                pb.finish()
+            };
+            cv.fill_t(&cloud, cloudc, t);
+            cv.stroke_t(&cloud, edge, 2.4, t);
+            let sparkle = star_path(150.0, 44.0, 5.5, 0.0);
+            cv.fill_t(&sparkle, (255, 246, 200, 255), t);
+            cv.stroke_t(&sparkle, (228, 206, 120, 255), 1.4, t);
+        }
+        Accessory::Clover => {
+            // a lucky four-leaf clover on the crown: one heart-leaf, tip at the
+            // center, rotated into four; a curved stem trailing down
+            let (cx, cy) = (120.0f32, 62.0f32);
+            let green = (118, 192, 96, 255);
+            let edge = (86, 150, 68, 255);
+            let mut stem = PathBuilder::new();
+            stem.move_to(cx + 2.0, cy + 3.0);
+            stem.quad_to(cx + 11.0, cy + 16.0, cx + 6.0, cy + 27.0);
+            cv.stroke_t(&stem.finish(), edge, 3.0, t);
+            let leaf = heart_path(cx, cy - 9.0 * 1.05, 9.0);
+            let vein = {
+                let mut pb = PathBuilder::new();
+                pb.move_to(cx, cy - 1.0);
+                pb.line_to(cx, cy - 14.0);
+                pb.finish()
+            };
+            for deg in [45.0f32, 135.0, 225.0, 315.0] {
+                let lt = t.pre_concat(Transform::from_rotate_at(deg, cx, cy));
+                cv.fill_t(&leaf, green, lt);
+                cv.stroke_t(&leaf, edge, 2.0, lt);
+                cv.stroke_t(&vein, fade(edge, 0.5), 1.3, lt);
+            }
+            cv.fill_t(&oval(cx, cy, 2.2, 2.2), edge, t);
         }
     }
 }
