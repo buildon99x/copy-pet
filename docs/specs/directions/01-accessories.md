@@ -94,3 +94,20 @@
 - `src/pet.rs` (build_menu 악세사리 서브메뉴 `:1261`, apply_menu_action/SetAccessory `:1355`, level_up 자동착용 `:1419`)
 - `src/i18n.rs` (Msg 메뉴 라벨, new_accessory `:279`, accessory_locked `:286`)
 - `examples/preview.rs` (base_scene `:13`, 신규 컷 추가용 main)
+
+## 렌더 미리보기 (현재 구현)
+
+신규 악세사리는 `cargo run --release --example preview`로 헤드리스 렌더해 눈으로
+검증한다. 아래는 현재까지의 디자인 기록이다.
+
+![해금 컬렉션 19종 (기존 6 + 신규 13)](assets/accessories/collection.png)
+
+*위 그리드 = 실제 출고 라인업. `Accessory::from_id`로 id 1~19를 렌더(좌→우,
+위→아래가 해금 순서: Lv 18 토끼귀 … Lv 54 네잎클로버).*
+
+탐색 과정의 후보 시트(폐기안 포함):
+- [1차 배치](assets/accessories/explore-batch-1.png) — 리본·토끼귀·꽃·베레모·후드·담요망토(폐기)·안대·생선모자
+- [후보 A](assets/accessories/explore-candidates-a.png) — 수면모자·데이지화관·별핀·새싹·곰귀·후광
+- [후보 B](assets/accessories/explore-candidates-b.png) — 붕어빵·딸기·푸딩·하트선글라스·별달·병아리
+- [큐트 3종](assets/accessories/explore-cute-trio.png) — 나비·체리·구름
+- [네잎클로버](assets/accessories/clover.png) — 행운의 최상위 해금 (Lv 54)
