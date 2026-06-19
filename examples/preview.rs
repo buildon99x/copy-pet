@@ -457,4 +457,33 @@ fn main() {
         }
         save(&sheet, &dir, "9-cute-trio");
     }
+
+    // 10. shipped collection: every unlockable accessory, rendered via from_id
+    // (canonical check that the ids line up with state::ACCESSORIES)
+    {
+        let n = clipcat::state::ACCESSORIES.len();
+        let cols = 6u32;
+        let (cw, ch) = (240u32, 256u32);
+        let rows = (n as u32).div_ceil(cols);
+        let mut sheet = Pixmap::new(cw * cols, ch * rows).unwrap();
+        sheet.fill(tiny_skia::Color::from_rgba8(245, 242, 236, 255));
+        for id in 1..=n {
+            let mut sc = base_scene(Lang::Ko);
+            sc.accessory = Accessory::from_id(id);
+            let mut cell = Pixmap::new(cw, ch).unwrap();
+            render::render_card(&mut cell, &sc, 1.0);
+            let idx = (id - 1) as u32;
+            let x = (idx % cols) * cw;
+            let y = (idx / cols) * ch;
+            sheet.draw_pixmap(
+                0,
+                0,
+                cell.as_ref(),
+                &tiny_skia::PixmapPaint::default(),
+                tiny_skia::Transform::from_translate(x as f32, y as f32),
+                None,
+            );
+        }
+        save(&sheet, &dir, "10-collection");
+    }
 }

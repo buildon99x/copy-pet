@@ -16,6 +16,12 @@ versions follow [SemVer](https://semver.org/). Maintenance rules:
 
 ## [Unreleased]
 
+### Added
+- **12 new accessories to unlock** as your cat levels up: bunny ears, a sprout,
+  a daisy crown, bear ears, cherries, a butterfly, heart sunglasses, a chick, a
+  sleep mask, a nightcap and — for the dedicated fish-hoarder — a fish hat and a
+  fish-shaped pastry. Equip them from the tray/right-click menu like the others.
+
 ### Fixed
 - **Picking a clip from the hotkey panel now pastes it** (Win+V parity, Windows):
   opening the clipboard with the panel hotkey while typing in a text field and
