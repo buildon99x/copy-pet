@@ -199,7 +199,7 @@ impl Pet {
     }
 
     pub fn tooltip(&self) -> String {
-        format!("ClipCat — LV {}", self.level)
+        format!("ClipCat — {} {}", t(self.lang(), Msg::BubbleLv), self.level)
     }
 
     pub fn set_hover(&mut self, hover: bool) {

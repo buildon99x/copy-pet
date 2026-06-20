@@ -1370,7 +1370,7 @@ fn draw_bubble(cv: &mut Cv, b: &BubbleData, alpha: f32, lang: Lang) {
 
     let tc = fade(TEXT, a);
     // row 1: level + xp bar
-    cv.ui_text(&format!("LV {}", b.level), 24.0, 8.0, 2.0, tc);
+    cv.ui_text(&format!("{} {}", t(lang, Msg::BubbleLv), b.level), 24.0, 8.0, 2.0, tc);
     let bar_bg = round_rect(82.0, 8.5, 134.0, 12.0, 6.0);
     cv.fill(&bar_bg, fade((231, 224, 214, 255), a));
     let w = (134.0 * b.pct.clamp(0.0, 1.0)).max(10.0);
@@ -1386,7 +1386,7 @@ fn draw_bubble(cv: &mut Cv, b: &BubbleData, alpha: f32, lang: Lang) {
         (Msg::BubbleClips, fmt_thousands(b.copies)),
         (Msg::BubbleActive, {
             let (h, m) = (b.minutes / 60, b.minutes % 60);
-            format!("{}H {:02}M", h, m)
+            i18n::fmt_active(lang, h, m)
         }),
     ];
     for (i, (label, value)) in rows.iter().enumerate() {

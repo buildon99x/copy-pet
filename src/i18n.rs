@@ -121,6 +121,7 @@ pub enum Msg {
     // macOS Accessibility permission (global input tap)
     ToastAccessibility,
     // stats bubble
+    BubbleLv,
     BubbleKeys,
     BubbleClicks,
     BubbleClips,
@@ -289,6 +290,8 @@ pub fn t(lang: Lang, msg: Msg) -> &'static str {
         (ToastUpdateFailed, Lang::Ko) => "업데이트 실패",
         (ToastAccessibility, Lang::En) => "ENABLE ACCESSIBILITY IN SYSTEM SETTINGS FOR THE HOTKEY",
         (ToastAccessibility, Lang::Ko) => "단축키 사용: 시스템 설정 > 손쉬운 사용에서 권한을 허용하세요",
+        (BubbleLv, Lang::En) => "LV",
+        (BubbleLv, Lang::Ko) => "LV",
         (BubbleKeys, Lang::En) => "KEYS",
         (BubbleKeys, Lang::Ko) => "키 입력",
         (BubbleClicks, Lang::En) => "CLICKS",
@@ -333,6 +336,15 @@ pub fn level_up(lang: Lang, lv: u32) -> String {
     match lang {
         Lang::En => format!("LEVEL UP! LV {lv}"),
         Lang::Ko => format!("레벨 업! LV {lv}"),
+    }
+}
+
+/// The stats-bubble "active time" value (hours + minutes), localized so the
+/// time units read natively instead of a hardcoded English "H"/"M".
+pub fn fmt_active(lang: Lang, h: u32, m: u32) -> String {
+    match lang {
+        Lang::En => format!("{h}H {m:02}M"),
+        Lang::Ko => format!("{h}시간 {m:02}분"),
     }
 }
 
@@ -483,7 +495,7 @@ mod tests {
             ToastPastedPlain, TipView, TipFilter, TipPause, TipResume, TipClear, TipLang, TipClose,
             TipPin, TipUnpin,
             MenuAutoUpdate, ToastUpdateDownloading,
-            ToastUpdateFailed, ToastAccessibility, BubbleKeys, BubbleClicks, BubbleClips,
+            ToastUpdateFailed, ToastAccessibility, BubbleLv, BubbleKeys, BubbleClicks, BubbleClips,
             BubbleActive,
         ];
         for msg in all {
