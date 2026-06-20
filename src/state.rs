@@ -6,7 +6,7 @@
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
-use crate::i18n::Lang;
+use crate::i18n::{self, Lang};
 
 #[derive(Serialize, Deserialize, Clone)]
 #[serde(default)]
@@ -303,42 +303,38 @@ pub fn level_progress(total_xp: u64) -> (u32, u64, u64) {
 
 pub struct AccessoryDef {
     pub level: u32,
-    pub name_kr: &'static str,
-    pub name_en: &'static str,
+    pub msg: i18n::Msg,
 }
 
 impl AccessoryDef {
     pub fn name(&self, lang: Lang) -> &'static str {
-        match lang {
-            Lang::En => self.name_en,
-            Lang::Ko => self.name_kr,
-        }
+        i18n::t(lang, self.msg)
     }
 }
 
 /// Index in this array + 1 == Persist::accessory id (0 = none).
 /// Order must match `render::Accessory::from_id` for the same ids.
 pub const ACCESSORIES: [AccessoryDef; 20] = [
-    AccessoryDef { level: 2, name_kr: "빨간 목도리", name_en: "RED SCARF" },
-    AccessoryDef { level: 3, name_kr: "동그란 안경", name_en: "GLASSES" },
-    AccessoryDef { level: 5, name_kr: "파란 비니", name_en: "BLUE BEANIE" },
-    AccessoryDef { level: 7, name_kr: "헤드폰", name_en: "HEADPHONES" },
-    AccessoryDef { level: 10, name_kr: "황금 왕관", name_en: "GOLD CROWN" },
-    AccessoryDef { level: 15, name_kr: "마법사 모자", name_en: "WIZARD HAT" },
-    AccessoryDef { level: 18, name_kr: "토끼 귀", name_en: "BUNNY EARS" },
-    AccessoryDef { level: 21, name_kr: "새싹", name_en: "SPROUT" },
-    AccessoryDef { level: 24, name_kr: "데이지 화관", name_en: "DAISY CROWN" },
-    AccessoryDef { level: 27, name_kr: "곰 귀", name_en: "BEAR EARS" },
-    AccessoryDef { level: 30, name_kr: "체리", name_en: "CHERRY" },
-    AccessoryDef { level: 33, name_kr: "나비", name_en: "BUTTERFLY" },
-    AccessoryDef { level: 36, name_kr: "하트 선글라스", name_en: "HEART SHADES" },
-    AccessoryDef { level: 39, name_kr: "병아리", name_en: "CHICK" },
-    AccessoryDef { level: 42, name_kr: "수면 안대", name_en: "SLEEP MASK" },
-    AccessoryDef { level: 45, name_kr: "수면 모자", name_en: "NIGHTCAP" },
-    AccessoryDef { level: 48, name_kr: "생선 모자", name_en: "FISH HAT" },
-    AccessoryDef { level: 50, name_kr: "붕어빵", name_en: "FISH BREAD" },
-    AccessoryDef { level: 54, name_kr: "네잎클로버", name_en: "LUCKY CLOVER" },
-    AccessoryDef { level: 57, name_kr: "푸딩", name_en: "PUDDING" },
+    AccessoryDef { level: 2,  msg: i18n::Msg::AccRedScarf },
+    AccessoryDef { level: 3,  msg: i18n::Msg::AccGlasses },
+    AccessoryDef { level: 5,  msg: i18n::Msg::AccBlueBeanie },
+    AccessoryDef { level: 7,  msg: i18n::Msg::AccHeadphones },
+    AccessoryDef { level: 10, msg: i18n::Msg::AccGoldCrown },
+    AccessoryDef { level: 15, msg: i18n::Msg::AccWizardHat },
+    AccessoryDef { level: 18, msg: i18n::Msg::AccBunnyEars },
+    AccessoryDef { level: 21, msg: i18n::Msg::AccSprout },
+    AccessoryDef { level: 24, msg: i18n::Msg::AccDaisyCrown },
+    AccessoryDef { level: 27, msg: i18n::Msg::AccBearEars },
+    AccessoryDef { level: 30, msg: i18n::Msg::AccCherry },
+    AccessoryDef { level: 33, msg: i18n::Msg::AccButterfly },
+    AccessoryDef { level: 36, msg: i18n::Msg::AccHeartShades },
+    AccessoryDef { level: 39, msg: i18n::Msg::AccChick },
+    AccessoryDef { level: 42, msg: i18n::Msg::AccSleepMask },
+    AccessoryDef { level: 45, msg: i18n::Msg::AccNightcap },
+    AccessoryDef { level: 48, msg: i18n::Msg::AccFishHat },
+    AccessoryDef { level: 50, msg: i18n::Msg::AccFishBread },
+    AccessoryDef { level: 54, msg: i18n::Msg::AccLuckyClover },
+    AccessoryDef { level: 57, msg: i18n::Msg::AccPudding },
 ];
 
 #[cfg(test)]
@@ -369,10 +365,11 @@ mod tests {
 
     #[test]
     fn every_accessory_has_a_reachable_level() {
+        use crate::i18n::{t, Lang};
         for acc in ACCESSORIES.iter() {
             assert!(acc.level >= 2 && acc.level <= 99);
-            assert!(!acc.name_en.is_empty());
-            assert!(!acc.name_kr.is_empty());
+            assert!(!t(Lang::En, acc.msg).is_empty());
+            assert!(!t(Lang::Ko, acc.msg).is_empty());
         }
     }
 
