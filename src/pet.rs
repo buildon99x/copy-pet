@@ -318,15 +318,23 @@ impl Pet {
         (ox + render::CANVAS_W * s / 2.0, oy + render::CANVAS_H * s)
     }
 
-    /// Runs a canvas-layout mutation, accumulating the window shift that
-    /// keeps the cat anchored and flagging the size change for the backend.
-    fn relayout(&mut self, f: impl FnOnce(&mut Pet)) {
-        let before = self.cat_anchor();
+    /// Runs a canvas-layout mutation while keeping the screen point returned by
+    /// `anchor` fixed: it accumulates the window shift that holds that point
+    /// still across the change and flags the size change for the backend. The
+    /// cat-anchored and panel-anchored relayouts differ only in `anchor`.
+    fn relayout_with(&mut self, anchor: fn(&Pet) -> (f32, f32), f: impl FnOnce(&mut Pet)) {
+        let before = anchor(self);
         f(self);
-        let after = self.cat_anchor();
+        let after = anchor(self);
         self.pending_shift.0 += before.0 - after.0;
         self.pending_shift.1 += before.1 - after.1;
         self.size_changed = true;
+    }
+
+    /// Runs a canvas-layout mutation, accumulating the window shift that
+    /// keeps the cat anchored and flagging the size change for the backend.
+    fn relayout(&mut self, f: impl FnOnce(&mut Pet)) {
+        self.relayout_with(Pet::cat_anchor, f);
     }
 
     /// The panel card's top-left in physical pixels — the screen point a
@@ -342,12 +350,7 @@ impl Pet {
     ///
     /// [`relayout`]: Pet::relayout
     fn relayout_panel_anchored(&mut self, f: impl FnOnce(&mut Pet)) {
-        let before = self.panel_anchor();
-        f(self);
-        let after = self.panel_anchor();
-        self.pending_shift.0 += before.0 - after.0;
-        self.pending_shift.1 += before.1 - after.1;
-        self.size_changed = true;
+        self.relayout_with(Pet::panel_anchor, f);
     }
 
     /// Drags the cat by a screen-pixel delta while the panel is open: the cat
@@ -361,10 +364,9 @@ impl Pet {
             return false;
         }
         self.drag = None;
-        self.relayout_panel_anchored(|p| {
-            p.panel.off.0 = (p.panel.off.0 - dx).clamp(-crate::panel::MAX_OFF, crate::panel::MAX_OFF);
-            p.panel.off.1 = (p.panel.off.1 - dy).clamp(-crate::panel::MAX_OFF, crate::panel::MAX_OFF);
-        });
+        // moving the cat by (dx, dy) under a panel-anchored relayout is the
+        // card sliding by (-dx, -dy); drag_by applies the same MAX_OFF clamp.
+        self.relayout_panel_anchored(|p| p.panel.drag_by(PanelDrag::Move, -dx, -dy));
         self.panel.refresh(&self.clips);
         self.st.panel_off_x = self.panel.off.0;
         self.st.panel_off_y = self.panel.off.1;
