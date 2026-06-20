@@ -463,7 +463,7 @@ impl PortableApp {
     /// `Pet::apply_menu_action`; the outcomes that need OS work (confirm/reset,
     /// About dialog, autostart, update page, quit) are finished here.
     #[cfg(target_os = "macos")]
-    fn show_context_menu(&mut self, event_loop: &ActiveEventLoop) {
+    fn show_context_menu(&mut self, event_loop: &ActiveEventLoop, from_status: bool) {
         use crate::i18n::{about_text, t, Msg};
         use crate::menu::MenuOutcome;
 
@@ -472,7 +472,14 @@ impl PortableApp {
         };
         let autostart = super::mac_autostart::is_enabled();
         let entries = self.pet.build_menu(&self.hotkey_label, autostart);
-        let Some(action) = super::mac_menu::popup(&window, &entries) else {
+        // From the menu-bar item the menu pops at the cursor (under its icon);
+        // from a pet right-click it pops relative to the pet window.
+        let popped = if from_status {
+            super::mac_menu::popup_at_cursor(&entries)
+        } else {
+            super::mac_menu::popup(&window, &entries)
+        };
+        let Some(action) = popped else {
             return;
         };
         let lang = self.pet.lang();
@@ -907,6 +914,9 @@ impl ApplicationHandler for PortableApp {
         #[cfg(target_os = "macos")]
         {
             self.presenter = super::mac_present::Presenter::new(&window);
+            // menu-bar status item: created once (this body runs once, guarded
+            // by the `self.window.is_some()` early-return above).
+            super::mac_statusitem::create();
         }
 
         self.window = Some(window);
@@ -1039,7 +1049,7 @@ impl ApplicationHandler for PortableApp {
                 #[cfg(target_os = "macos")]
                 MouseButton::Right => {
                     if state == ElementState::Pressed {
-                        self.show_context_menu(event_loop);
+                        self.show_context_menu(event_loop, false);
                     }
                 }
                 _ => {}
@@ -1096,6 +1106,11 @@ impl ApplicationHandler for PortableApp {
                     self.pet.open_panel();
                     self.reveal();
                 }
+            }
+            // macOS: the menu-bar status item was clicked → open the context menu
+            #[cfg(target_os = "macos")]
+            if super::mac_statusitem::take_clicked() {
+                self.show_context_menu(event_loop, true);
             }
             // the macOS event tap couldn't start (Accessibility not granted)
             if self.perm_needed.swap(false, Ordering::Relaxed) {
@@ -1472,6 +1487,20 @@ pub fn run() {
     };
     let mut app = PortableApp::new(pet, rx, suppress, capture_flag, signals, hk.display());
 
+    // macOS: hide the Dock icon — ClipCat lives in the menu bar (NSStatusItem),
+    // so it's a menu-bar accessory, not a Dock app. This also makes "hide the
+    // pet" safe: the menu-bar icon is always there to bring it back.
+    #[cfg(target_os = "macos")]
+    let event_loop = {
+        use winit::platform::macos::{ActivationPolicy, EventLoopBuilderExtMacOS};
+        let mut builder = EventLoop::builder();
+        builder.with_activation_policy(ActivationPolicy::Accessory);
+        match builder.build() {
+            Ok(el) => el,
+            Err(_) => return,
+        }
+    };
+    #[cfg(not(target_os = "macos"))]
     let event_loop = match EventLoop::new() {
         Ok(el) => el,
         Err(_) => return,

@@ -52,6 +52,12 @@ src/
                        the platform-agnostic menu::MenuEntry tree (submenus,
                        check marks, disabled items) and returns the chosen
                        menu::MenuAction. The portable tray-menu stand-in.
+                       popup_at_cursor() variant pops it for the status item.
+    mac_statusitem.rs  macOS-only menu-bar NSStatusItem (the Dock icon is hidden
+                       via the Accessory policy, so this is the always-available
+                       surface); a click flips an atomic the main loop polls to
+                       open the mac_menu context menu. Icon = render::draw_icon
+                       as a tinted template image.
     mac_dialogs.rs     macOS-only NSAlert dialogs (About box, Reset-stats
                        confirmation) — the parity of the Windows MessageBoxW.
     mac_autostart.rs   macOS-only "run at login" via a ~/Library/LaunchAgents

@@ -32,6 +32,10 @@ mod mac_input;
 mod mac_present;
 #[cfg(all(any(not(windows), feature = "portable"), target_os = "macos"))]
 mod mac_menu;
+// menu-bar NSStatusItem: the Dock icon is hidden (Accessory policy), so this is
+// the always-available surface; a click opens the same mac_menu context menu.
+#[cfg(all(any(not(windows), feature = "portable"), target_os = "macos"))]
+mod mac_statusitem;
 #[cfg(all(any(not(windows), feature = "portable"), target_os = "macos"))]
 mod mac_dialogs;
 #[cfg(all(any(not(windows), feature = "portable"), target_os = "macos"))]

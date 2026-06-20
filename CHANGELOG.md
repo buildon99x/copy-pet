@@ -24,6 +24,11 @@ versions follow [SemVer](https://semver.org/). Maintenance rules:
   others.
 - **Pudding accessory** — a Japanese-style caramel pudding hat (custard body,
   caramel glaze with a drip, and a cherry on top) unlocks at level 57.
+- **macOS menu-bar icon** — a cat now sits in the macOS menu bar; click it to
+  open the full settings menu (size, sound, language, accessories and the rest) —
+  the same menu as right-clicking the pet. The Dock icon is hidden, so ClipCat
+  lives purely in the menu bar, and the menu-bar cat is always there to bring the
+  pet back after you hide it.
 
 ### Fixed
 - **Picking a clip from the hotkey panel now pastes it** (Win+V parity, Windows):

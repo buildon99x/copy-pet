@@ -33,3 +33,8 @@ Global typing still drives the core loop via `rdev` regardless of focus.
 - ⚠️ "Reset stats" is intentionally **not** bound to a key (too destructive for
   an accidental press); it remains a native-Windows menu action for now.
 - 🔜 Optional `tray-icon` menu for Windows/macOS could be added behind a feature.
+- 📍 Update (2026-06-20): macOS gained a native menu-bar **NSStatusItem**
+  (`platform/mac_statusitem.rs`) whose click opens the same `mac_menu` context
+  menu, and now hides the Dock icon (Accessory policy). It's a hand-rolled status
+  item — still **no** `tray-icon`/GTK dependency — so Linux/Windows-portable keep
+  the keyboard shortcuts above; this relaxes "omit the system tray" for macOS only.

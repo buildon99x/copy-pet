@@ -152,3 +152,39 @@ pub fn popup(window: &Window, entries: &[MenuEntry]) -> Option<MenuAction> {
         _ => None,
     }
 }
+
+/// Like [`popup`] but positioned at the global cursor in screen coordinates
+/// (`inView: nil`) instead of relative to a window/view — used by the menu-bar
+/// status item, whose click drops the menu just under its icon. Shares
+/// everything else (`build_into`/`handler`/`SELECTED`) with [`popup`].
+pub fn popup_at_cursor(entries: &[MenuEntry]) -> Option<MenuAction> {
+    if entries.is_empty() {
+        return None;
+    }
+    SELECTED.store(-1, Ordering::SeqCst);
+    let null: Id = std::ptr::null_mut();
+    let mut actions: Vec<MenuAction> = Vec::new();
+    unsafe {
+        let pool: Id = msg_send![class!(NSAutoreleasePool), new];
+
+        let menu: Id = msg_send![class!(NSMenu), alloc];
+        let menu: Id = msg_send![menu, init];
+        let empty = nsstring("");
+        build_into(menu, entries, &mut actions, handler(), empty);
+
+        // Current cursor in screen coords; inView: nil pops there on screen.
+        let at: CGPoint = msg_send![class!(NSEvent), mouseLocation];
+        let _: BOOL = msg_send![menu,
+            popUpMenuPositioningItem: null
+            atLocation: at
+            inView: null];
+
+        let _: () = msg_send![menu, release];
+        let _: () = msg_send![pool, drain];
+    }
+
+    match SELECTED.load(Ordering::SeqCst) {
+        i if i >= 0 => actions.get(i as usize).copied(),
+        _ => None,
+    }
+}

@@ -69,7 +69,10 @@ Two backends share one core; exactly one backend compiles per build, chosen in
   matcher; Cmd+Shift+V on macOS) + `arboard` clipboard polling. Global input
   is `rdev::listen` on Linux/Windows, but a bespoke CoreGraphics event tap
   (`platform/mac_input.rs`) on macOS — rdev's keyboard path crashes on macOS
-  15 (LNR-0005). Settings via keyboard shortcuts. Presentation: an opaque
+  15 (LNR-0005). Settings via keyboard shortcuts — plus, on macOS, a menu-bar
+  **NSStatusItem** (`platform/mac_statusitem.rs`) whose click opens the
+  right-click `NSMenu`, with the Dock icon hidden (Accessory policy) so it's a
+  pure menu-bar app (ADR-0004 update). Presentation: an opaque
   "card" via softbuffer on Linux/Windows-portable, but a **transparent**
   CALayer present on macOS (`platform/mac_present.rs`) so the pet floats like
   the Windows layered window (ADR-0003 update).
