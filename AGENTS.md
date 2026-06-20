@@ -131,6 +131,10 @@ a Linux build can't reach.
 ## Coding conventions
 
 - Match the surrounding style; module-level `//!` docs explain the "why".
+- Large `#[cfg(test)]` modules live in a sibling `*_tests.rs` file wired in
+  with `#[cfg(test)] #[path = "<mod>_tests.rs"] mod tests;`, so the module
+  file stays focused on the implementation (e.g. `pet.rs` → `pet_tests.rs`).
+  Small, tightly-coupled test modules may stay inline.
 - Core code is `#![forbid]`-clean of OS calls; platform specifics use
   `#[cfg(...)]`, never runtime OS detection.
 - Prefer generating assets in code over bundling files.

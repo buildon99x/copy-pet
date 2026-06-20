@@ -300,6 +300,19 @@ impl<'a> Cv<'a> {
     fn stroke(&mut self, p: &Option<Path>, c: (u8, u8, u8, u8), w: f32) {
         self.stroke_t(p, c, w, Transform::identity());
     }
+    /// Fill then stroke the same path — the outlined-shape pattern repeated all
+    /// over `draw_fish` / `draw_accessory`. Equivalent to `fill_t` + `stroke_t`.
+    fn filled(
+        &mut self,
+        p: &Option<Path>,
+        fill: (u8, u8, u8, u8),
+        outline: (u8, u8, u8, u8),
+        w: f32,
+        t: Transform,
+    ) {
+        self.fill_t(p, fill, t);
+        self.stroke_t(p, outline, w, t);
+    }
     fn stroke_t(&mut self, p: &Option<Path>, c: (u8, u8, u8, u8), w: f32, t: Transform) {
         if let Some(p) = p {
             let stroke = Stroke {
@@ -414,8 +427,7 @@ fn draw_scene(pm: &mut Pixmap, sc: &Scene, scale: f32) {
 
     // body
     let body = oval(120.0, 182.0, 64.0, 44.0);
-    cv.fill_t(&body, FUR, body_t);
-    cv.stroke_t(&body, OUTLINE, 3.0, body_t);
+    cv.filled(&body, FUR, OUTLINE, 3.0, body_t);
 
     // ears (under head outline)
     {
@@ -431,10 +443,8 @@ fn draw_scene(pm: &mut Pixmap, sc: &Scene, scale: f32) {
         re.line_to(132.0, 76.0);
         re.close();
         let re = re.finish();
-        cv.fill_t(&le, FUR, head_t);
-        cv.stroke_t(&le, OUTLINE, 3.0, head_t);
-        cv.fill_t(&re, FUR, head_t);
-        cv.stroke_t(&re, OUTLINE, 3.0, head_t);
+        cv.filled(&le, FUR, OUTLINE, 3.0, head_t);
+        cv.filled(&re, FUR, OUTLINE, 3.0, head_t);
         // inner pink
         let mut li = PathBuilder::new();
         li.move_to(80.0, 90.0);
@@ -452,8 +462,7 @@ fn draw_scene(pm: &mut Pixmap, sc: &Scene, scale: f32) {
 
     // head
     let head = oval(120.0, 128.0, 66.0, 52.0);
-    cv.fill_t(&head, FUR, head_t);
-    cv.stroke_t(&head, OUTLINE, 3.0, head_t);
+    cv.filled(&head, FUR, OUTLINE, 3.0, head_t);
 
     // face
     draw_face(&mut cv, sc, head_t);
@@ -566,8 +575,7 @@ fn draw_face(cv: &mut Cv, sc: &Scene, t: Transform) {
         // open mouth, ready to nom
         let o = sc.mouth_open.clamp(0.0, 1.0);
         let mouth = oval(120.0, 138.0, 4.5 + 3.5 * o, 3.0 + 5.5 * o);
-        cv.fill_t(&mouth, (164, 88, 92, 255), t);
-        cv.stroke_t(&mouth, OUTLINE, 2.2, t);
+        cv.filled(&mouth, (164, 88, 92, 255), OUTLINE, 2.2, t);
     } else {
         // ω mouth
         let mut pb = PathBuilder::new();
@@ -599,8 +607,7 @@ fn draw_paw(cv: &mut Cv, cx: f32, press: f32, right: bool, breath_dy: f32) {
     let rot = if right { 6.0 } else { -6.0 };
     let t = Transform::from_rotate_at(rot, cx, y);
     let paw = oval(cx, y, 15.0, 11.0);
-    cv.fill_t(&paw, FUR, t);
-    cv.stroke_t(&paw, OUTLINE, 3.0, t);
+    cv.filled(&paw, FUR, OUTLINE, 3.0, t);
     // toe separators, more visible when pressed
     let a = 0.35 + press * 0.45;
     for dx in [-5.0f32, 5.0] {
@@ -642,21 +649,18 @@ fn draw_fish(cv: &mut Cv, f: &FishView) {
         pb.quad_to(x + 20.0, y, x + 24.0, y + 9.0);
         pb.close();
         let tail = pb.finish();
-        cv.fill_t(&tail, dark_c, t);
-        cv.stroke_t(&tail, OUTLINE, 2.4, t);
+        cv.filled(&tail, dark_c, OUTLINE, 2.4, t);
     }
     // body
     let body = oval(x, y, 16.0, 10.0);
-    cv.fill_t(&body, body_c, t);
-    cv.stroke_t(&body, OUTLINE, 2.6, t);
+    cv.filled(&body, body_c, OUTLINE, 2.6, t);
     // top fin
     {
         let mut pb = PathBuilder::new();
         pb.move_to(x - 4.0, y - 9.0);
         pb.quad_to(x + 1.0, y - 15.0, x + 7.0, y - 8.5);
         let fin = pb.finish();
-        cv.fill_t(&fin, dark_c, t);
-        cv.stroke_t(&fin, OUTLINE, 2.2, t);
+        cv.filled(&fin, dark_c, OUTLINE, 2.2, t);
     }
     // eye
     cv.fill_t(&oval(x - 10.0, y - 2.5, 1.9, 1.9), OUTLINE, t);
@@ -665,8 +669,7 @@ fn draw_fish(cv: &mut Cv, f: &FishView) {
     if let Some(icon) = &f.badge.icon {
         let size = 13.0;
         let chip = round_rect(x - size / 2.0 - 1.5, y - size / 2.0 - 1.5, size + 3.0, size + 3.0, 4.0);
-        cv.fill_t(&chip, (255, 255, 255, 235), t);
-        cv.stroke_t(&chip, fade(OUTLINE, 0.7), 1.6, t);
+        cv.filled(&chip, (255, 255, 255, 235), fade(OUTLINE, 0.7), 1.6, t);
         let k = size / icon.width() as f32;
         let it = t
             .post_concat(cv.ts)
@@ -679,8 +682,7 @@ fn draw_fish(cv: &mut Cv, f: &FishView) {
         cv.pm.draw_pixmap(0, 0, icon.as_ref(), &pp, it, None);
     } else {
         let chip = oval(x + 1.0, y + 0.5, 7.0, 7.0);
-        cv.fill_t(&chip, (255, 255, 255, 235), t);
-        cv.stroke_t(&chip, fade(OUTLINE, 0.7), 1.6, t);
+        cv.filled(&chip, (255, 255, 255, 235), fade(OUTLINE, 0.7), 1.6, t);
         // the letter stays upright inside the round chip while the fish
         // rotates (sysfont rasterizes under scale+translate transforms only)
         let px = 1.6 * f.scale;
@@ -700,17 +702,14 @@ fn draw_accessory(cv: &mut Cv, acc: Accessory, t: Transform) {
         Accessory::None => {}
         Accessory::Scarf => {
             let band = round_rect(76.0, 168.0, 88.0, 16.0, 8.0);
-            cv.fill_t(&band, (217, 79, 79, 255), t);
-            cv.stroke_t(&band, OUTLINE, 2.5, t);
+            cv.filled(&band, (217, 79, 79, 255), OUTLINE, 2.5, t);
             let knot = round_rect(140.0, 180.0, 14.0, 22.0, 6.0);
-            cv.fill_t(&knot, (185, 61, 61, 255), t);
-            cv.stroke_t(&knot, OUTLINE, 2.5, t);
+            cv.filled(&knot, (185, 61, 61, 255), OUTLINE, 2.5, t);
         }
         Accessory::Glasses => {
             for ex in [92.0f32, 148.0] {
                 let ring = oval(ex, 122.0, 13.0, 13.0);
-                cv.fill_t(&ring, (130, 180, 230, 50), t);
-                cv.stroke_t(&ring, (63, 63, 63, 255), 3.0, t);
+                cv.filled(&ring, (130, 180, 230, 50), (63, 63, 63, 255), 3.0, t);
             }
             let mut pb = PathBuilder::new();
             pb.move_to(105.0, 120.0);
@@ -723,14 +722,11 @@ fn draw_accessory(cv: &mut Cv, acc: Accessory, t: Transform) {
             pb.quad_to(120.0, 30.0, 176.0, 92.0);
             pb.close();
             let hat = pb.finish();
-            cv.fill_t(&hat, (91, 141, 217, 255), t);
-            cv.stroke_t(&hat, OUTLINE, 3.0, t);
+            cv.filled(&hat, (91, 141, 217, 255), OUTLINE, 3.0, t);
             let brim = round_rect(62.0, 86.0, 116.0, 13.0, 6.0);
-            cv.fill_t(&brim, (74, 118, 184, 255), t);
-            cv.stroke_t(&brim, OUTLINE, 2.5, t);
+            cv.filled(&brim, (74, 118, 184, 255), OUTLINE, 2.5, t);
             let pom = oval(120.0, 54.0, 9.0, 9.0);
-            cv.fill_t(&pom, (240, 240, 240, 255), t);
-            cv.stroke_t(&pom, OUTLINE, 2.5, t);
+            cv.filled(&pom, (240, 240, 240, 255), OUTLINE, 2.5, t);
         }
         Accessory::Headphones => {
             let mut pb = PathBuilder::new();
@@ -739,8 +735,7 @@ fn draw_accessory(cv: &mut Cv, acc: Accessory, t: Transform) {
             cv.stroke_t(&pb.finish(), (61, 61, 61, 255), 7.0, t);
             for ex in [62.0f32, 178.0] {
                 let cup = oval(ex, 120.0, 11.0, 15.0);
-                cv.fill_t(&cup, (85, 85, 85, 255), t);
-                cv.stroke_t(&cup, (45, 45, 45, 255), 2.5, t);
+                cv.filled(&cup, (85, 85, 85, 255), (45, 45, 45, 255), 2.5, t);
                 cv.fill_t(&oval(ex, 120.0, 6.0, 9.5), (255, 122, 122, 255), t);
             }
         }
@@ -755,8 +750,7 @@ fn draw_accessory(cv: &mut Cv, acc: Accessory, t: Transform) {
             pb.line_to(148.0, 84.0);
             pb.close();
             let crown = pb.finish();
-            cv.fill_t(&crown, (242, 201, 76, 255), t);
-            cv.stroke_t(&crown, (180, 140, 30, 255), 3.0, t);
+            cv.filled(&crown, (242, 201, 76, 255), (180, 140, 30, 255), 3.0, t);
             cv.fill_t(&oval(120.0, 76.0, 4.0, 4.0), (217, 79, 79, 255), t);
             cv.fill_t(&oval(102.0, 78.0, 3.0, 3.0), (79, 130, 217, 255), t);
             cv.fill_t(&oval(138.0, 78.0, 3.0, 3.0), (79, 130, 217, 255), t);
@@ -768,11 +762,9 @@ fn draw_accessory(cv: &mut Cv, acc: Accessory, t: Transform) {
             pb.line_to(170.0, 88.0);
             pb.close();
             let cone = pb.finish();
-            cv.fill_t(&cone, (107, 91, 217, 255), t);
-            cv.stroke_t(&cone, OUTLINE, 3.0, t);
+            cv.filled(&cone, (107, 91, 217, 255), OUTLINE, 3.0, t);
             let brim = round_rect(56.0, 84.0, 128.0, 12.0, 6.0);
-            cv.fill_t(&brim, (88, 73, 184, 255), t);
-            cv.stroke_t(&brim, OUTLINE, 2.5, t);
+            cv.filled(&brim, (88, 73, 184, 255), OUTLINE, 2.5, t);
             star_at(cv, 120.0, 56.0, 9.0, 0.0, (250, 220, 90, 255), t);
             star_at(cv, 102.0, 74.0, 4.5, 0.6, (250, 220, 90, 220), t);
             star_at(cv, 140.0, 70.0, 4.5, 1.2, (250, 220, 90, 220), t);
@@ -788,19 +780,16 @@ fn draw_accessory(cv: &mut Cv, acc: Accessory, t: Transform) {
                 pb.line_to(bx, by);
                 pb.close();
                 let loop_ = pb.finish();
-                cv.fill_t(&loop_, fill, t);
-                cv.stroke_t(&loop_, OUTLINE, 2.5, t);
+                cv.filled(&loop_, fill, OUTLINE, 2.5, t);
             }
             let knot = round_rect(114.0, 74.0, 12.0, 15.0, 4.0);
-            cv.fill_t(&knot, knot_c, t);
-            cv.stroke_t(&knot, OUTLINE, 2.5, t);
+            cv.filled(&knot, knot_c, OUTLINE, 2.5, t);
         }
         Accessory::BunnyEars => {
             // two upright ears rising from behind the head
             for (cx, lean) in [(104.0f32, -4.0f32), (136.0, 4.0)] {
                 let outer = oval(cx + lean, 58.0, 9.0, 28.0);
-                cv.fill_t(&outer, FUR, t);
-                cv.stroke_t(&outer, OUTLINE, 3.0, t);
+                cv.filled(&outer, FUR, OUTLINE, 3.0, t);
                 cv.fill_t(&oval(cx + lean, 60.0, 4.0, 19.0), EAR_PINK, t);
             }
         }
@@ -810,24 +799,19 @@ fn draw_accessory(cv: &mut Cv, acc: Accessory, t: Transform) {
             for i in 0..5 {
                 let a = i as f32 * std::f32::consts::TAU / 5.0 - std::f32::consts::FRAC_PI_2;
                 let petal = oval(cx + a.cos() * 8.0, cy + a.sin() * 8.0, 5.5, 5.5);
-                cv.fill_t(&petal, (247, 180, 210, 255), t);
-                cv.stroke_t(&petal, OUTLINE, 1.8, t);
+                cv.filled(&petal, (247, 180, 210, 255), OUTLINE, 1.8, t);
             }
             let center = oval(cx, cy, 4.5, 4.5);
-            cv.fill_t(&center, (250, 214, 96, 255), t);
-            cv.stroke_t(&center, (210, 170, 60, 255), 1.6, t);
+            cv.filled(&center, (250, 214, 96, 255), (210, 170, 60, 255), 1.6, t);
         }
         Accessory::Beret => {
             // a flat beret resting on the crown
             let cap = oval(120.0, 70.0, 42.0, 17.0);
-            cv.fill_t(&cap, (198, 86, 92, 255), t);
-            cv.stroke_t(&cap, OUTLINE, 3.0, t);
+            cv.filled(&cap, (198, 86, 92, 255), OUTLINE, 3.0, t);
             let band = round_rect(86.0, 78.0, 68.0, 9.0, 4.0);
-            cv.fill_t(&band, (170, 66, 72, 255), t);
-            cv.stroke_t(&band, OUTLINE, 2.2, t);
+            cv.filled(&band, (170, 66, 72, 255), OUTLINE, 2.2, t);
             let stalk = oval(140.0, 56.0, 3.5, 3.5);
-            cv.fill_t(&stalk, (170, 66, 72, 255), t);
-            cv.stroke_t(&stalk, OUTLINE, 1.8, t);
+            cv.filled(&stalk, (170, 66, 72, 255), OUTLINE, 1.8, t);
         }
         Accessory::Hood => {
             // a cozy raised hood: a filled crescent hugging the head, framing the face
@@ -842,8 +826,7 @@ fn draw_accessory(cv: &mut Cv, acc: Accessory, t: Transform) {
                 pb.close();
                 pb.finish()
             };
-            cv.fill_t(&outer, (126, 142, 174, 255), t);
-            cv.stroke_t(&outer, OUTLINE, 2.6, t);
+            cv.filled(&outer, (126, 142, 174, 255), OUTLINE, 2.6, t);
             let lining = {
                 let mut pb = PathBuilder::new();
                 pb.move_to(74.0, 140.0);
@@ -864,8 +847,7 @@ fn draw_accessory(cv: &mut Cv, acc: Accessory, t: Transform) {
             pb.quad_to(170.0, 178.0, 148.0, 162.0);
             pb.close();
             let cape = pb.finish();
-            cv.fill_t(&cape, cloth, t);
-            cv.stroke_t(&cape, OUTLINE, 2.6, t);
+            cv.filled(&cape, cloth, OUTLINE, 2.6, t);
             for fx in [104.0f32, 120.0, 136.0] {
                 let mut fl = PathBuilder::new();
                 fl.move_to(fx, 170.0);
@@ -873,14 +855,12 @@ fn draw_accessory(cv: &mut Cv, acc: Accessory, t: Transform) {
                 cv.stroke_t(&fl.finish(), fold, 2.0, t);
             }
             let collar = round_rect(92.0, 158.0, 56.0, 12.0, 6.0);
-            cv.fill_t(&collar, fold, t);
-            cv.stroke_t(&collar, OUTLINE, 2.4, t);
+            cv.filled(&collar, fold, OUTLINE, 2.4, t);
         }
         Accessory::SleepMask => {
             // an opaque sleep mask over the eyes, with a strap around the head
             let mask = round_rect(76.0, 112.0, 88.0, 20.0, 9.0);
-            cv.fill_t(&mask, (126, 132, 196, 255), t);
-            cv.stroke_t(&mask, OUTLINE, 2.6, t);
+            cv.filled(&mask, (126, 132, 196, 255), OUTLINE, 2.6, t);
             for (sx, ex, ey) in [(76.0f32, 56.0f32, 96.0f32), (164.0, 184.0, 96.0)] {
                 let mut pb = PathBuilder::new();
                 pb.move_to(sx, 118.0);
@@ -903,17 +883,14 @@ fn draw_accessory(cv: &mut Cv, acc: Accessory, t: Transform) {
             tb.quad_to(x + 23.0, y, x + 27.0, y + 8.0);
             tb.close();
             let tail = tb.finish();
-            cv.fill_t(&tail, dark_c, t);
-            cv.stroke_t(&tail, OUTLINE, 2.2, t);
+            cv.filled(&tail, dark_c, OUTLINE, 2.2, t);
             let body = oval(x, y, 20.0, 9.5);
-            cv.fill_t(&body, body_c, t);
-            cv.stroke_t(&body, OUTLINE, 2.6, t);
+            cv.filled(&body, body_c, OUTLINE, 2.6, t);
             let mut fb = PathBuilder::new();
             fb.move_to(x - 4.0, y - 8.0);
             fb.quad_to(x + 2.0, y - 15.0, x + 8.0, y - 7.5);
             let fin = fb.finish();
-            cv.fill_t(&fin, dark_c, t);
-            cv.stroke_t(&fin, OUTLINE, 2.0, t);
+            cv.filled(&fin, dark_c, OUTLINE, 2.0, t);
             cv.fill_t(&oval(x - 12.0, y - 2.0, 1.9, 1.9), OUTLINE, t);
         }
         Accessory::Nightcap => {
@@ -928,14 +905,11 @@ fn draw_accessory(cv: &mut Cv, acc: Accessory, t: Transform) {
             pb.quad_to(120.0, 84.0, 66.0, 90.0);
             pb.close();
             let cap = pb.finish();
-            cv.fill_t(&cap, body, t);
-            cv.stroke_t(&cap, OUTLINE, 3.0, t);
+            cv.filled(&cap, body, OUTLINE, 3.0, t);
             let brim = round_rect(60.0, 84.0, 120.0, 13.0, 6.0);
-            cv.fill_t(&brim, band, t);
-            cv.stroke_t(&brim, OUTLINE, 2.5, t);
+            cv.filled(&brim, band, OUTLINE, 2.5, t);
             let pom = oval(199.0, 71.0, 9.0, 9.0);
-            cv.fill_t(&pom, (245, 245, 250, 255), t);
-            cv.stroke_t(&pom, OUTLINE, 2.5, t);
+            cv.filled(&pom, (245, 245, 250, 255), OUTLINE, 2.5, t);
         }
         Accessory::FlowerCrown => {
             // a ring of little daisies arching across the crown
@@ -943,8 +917,7 @@ fn draw_accessory(cv: &mut Cv, acc: Accessory, t: Transform) {
                 for i in 0..5 {
                     let a = i as f32 * std::f32::consts::TAU / 5.0 - std::f32::consts::FRAC_PI_2;
                     let petal = oval(cx + a.cos() * 5.0, cy + a.sin() * 5.0, 3.6, 3.6);
-                    cv.fill_t(&petal, (252, 250, 245, 255), t);
-                    cv.stroke_t(&petal, fade(OUTLINE, 0.7), 1.4, t);
+                    cv.filled(&petal, (252, 250, 245, 255), fade(OUTLINE, 0.7), 1.4, t);
                 }
                 cv.fill_t(&oval(cx, cy, 2.7, 2.7), (250, 214, 96, 255), t);
             }
@@ -953,8 +926,7 @@ fn draw_accessory(cv: &mut Cv, acc: Accessory, t: Transform) {
             // a gold star hairpin by the right ear, with a tiny companion
             for (sx, sy, r) in [(150.0f32, 86.0f32, 11.0f32), (133.0, 97.0, 5.5)] {
                 let star = star_path(sx, sy, r, 0.0);
-                cv.fill_t(&star, (250, 210, 90, 255), t);
-                cv.stroke_t(&star, (210, 168, 56, 255), 2.0, t);
+                cv.filled(&star, (250, 210, 90, 255), (210, 168, 56, 255), 2.0, t);
             }
         }
         Accessory::Sprout => {
@@ -975,8 +947,7 @@ fn draw_accessory(cv: &mut Cv, acc: Accessory, t: Transform) {
                 pb.close();
                 pb.finish()
             };
-            cv.fill_t(&left, green, t);
-            cv.stroke_t(&left, (96, 168, 84, 255), 1.8, t);
+            cv.filled(&left, green, (96, 168, 84, 255), 1.8, t);
             let right = {
                 let mut pb = PathBuilder::new();
                 pb.move_to(120.0, 70.0);
@@ -985,8 +956,7 @@ fn draw_accessory(cv: &mut Cv, acc: Accessory, t: Transform) {
                 pb.close();
                 pb.finish()
             };
-            cv.fill_t(&right, green, t);
-            cv.stroke_t(&right, (96, 168, 84, 255), 1.8, t);
+            cv.filled(&right, green, (96, 168, 84, 255), 1.8, t);
         }
         Accessory::BearEars => {
             // round bear ears on a headband
@@ -1001,8 +971,7 @@ fn draw_accessory(cv: &mut Cv, acc: Accessory, t: Transform) {
             cv.stroke_t(&arc, band_c, 6.0, t);
             for cx in [96.0f32, 144.0] {
                 let ear = oval(cx, 82.0, 15.0, 15.0);
-                cv.fill_t(&ear, band_c, t);
-                cv.stroke_t(&ear, OUTLINE, 3.0, t);
+                cv.filled(&ear, band_c, OUTLINE, 3.0, t);
                 cv.fill_t(&oval(cx, 82.0, 8.0, 8.0), inner_c, t);
             }
         }
@@ -1025,19 +994,16 @@ fn draw_accessory(cv: &mut Cv, acc: Accessory, t: Transform) {
                 pb.close();
                 pb.finish()
             };
-            cv.fill_t(&tail, dough, t);
-            cv.stroke_t(&tail, crust, 2.4, t);
+            cv.filled(&tail, dough, crust, 2.4, t);
             let body = oval(x, y, 22.0, 12.5);
-            cv.fill_t(&body, dough, t);
-            cv.stroke_t(&body, crust, 2.6, t);
+            cv.filled(&body, dough, crust, 2.6, t);
             let fin = {
                 let mut pb = PathBuilder::new();
                 pb.move_to(x - 2.0, y - 11.0);
                 pb.quad_to(x + 4.0, y - 17.0, x + 10.0, y - 10.0);
                 pb.finish()
             };
-            cv.fill_t(&fin, dough, t);
-            cv.stroke_t(&fin, crust, 2.0, t);
+            cv.filled(&fin, dough, crust, 2.0, t);
             for dx in [-8.0f32, 0.0, 8.0] {
                 let mut pb = PathBuilder::new();
                 pb.move_to(x + dx + 2.0, y - 5.0);
@@ -1058,14 +1024,12 @@ fn draw_accessory(cv: &mut Cv, acc: Accessory, t: Transform) {
                 pb.close();
                 pb.finish()
             };
-            cv.fill_t(&dome, red, t);
-            cv.stroke_t(&dome, OUTLINE, 3.0, t);
+            cv.filled(&dome, red, OUTLINE, 3.0, t);
             for (sx, sy) in [(98.0f32, 74.0f32), (120.0, 66.0), (142.0, 74.0), (108.0, 86.0), (132.0, 86.0)] {
                 cv.fill_t(&oval(sx, sy, 2.2, 3.0), seed, t);
             }
             let leaf = star_path(120.0, 42.0, 9.0, 0.3);
-            cv.fill_t(&leaf, green, t);
-            cv.stroke_t(&leaf, (88, 148, 70, 255), 1.8, t);
+            cv.filled(&leaf, green, (88, 148, 70, 255), 1.8, t);
             let mut stem = PathBuilder::new();
             stem.move_to(120.0, 40.0);
             stem.line_to(120.0, 30.0);
@@ -1084,19 +1048,16 @@ fn draw_accessory(cv: &mut Cv, acc: Accessory, t: Transform) {
                 pb.close();
                 pb.finish()
             };
-            cv.fill_t(&body, custard, t);
-            cv.stroke_t(&body, OUTLINE, 2.6, t);
+            cv.filled(&body, custard, OUTLINE, 2.6, t);
             let glaze = oval(120.0, 58.0, 20.0, 6.5);
-            cv.fill_t(&glaze, caramel, t);
-            cv.stroke_t(&glaze, OUTLINE, 2.0, t);
+            cv.filled(&glaze, caramel, OUTLINE, 2.0, t);
             for (dx, dy) in [(-12.0f32, 64.0f32), (10.0, 65.0)] {
                 let mut pb = PathBuilder::new();
                 pb.move_to(120.0 + dx, 58.0);
                 pb.quad_to(120.0 + dx + 1.0, dy, 120.0 + dx - 1.0, dy + 3.0);
                 cv.stroke_t(&pb.finish(), caramel, 3.0, t);
             }
-            cv.fill_t(&oval(120.0, 49.0, 4.5, 4.5), (216, 72, 80, 255), t);
-            cv.stroke_t(&oval(120.0, 49.0, 4.5, 4.5), OUTLINE, 1.6, t);
+            cv.filled(&oval(120.0, 49.0, 4.5, 4.5), (216, 72, 80, 255), OUTLINE, 1.6, t);
             let mut stem = PathBuilder::new();
             stem.move_to(122.0, 46.0);
             stem.line_to(126.0, 40.0);
@@ -1107,8 +1068,7 @@ fn draw_accessory(cv: &mut Cv, acc: Accessory, t: Transform) {
             let frame = (206, 64, 96, 255);
             for ex in [92.0f32, 148.0] {
                 let lens = heart_path(ex, 120.0, 11.0);
-                cv.fill_t(&lens, (242, 132, 160, 110), t);
-                cv.stroke_t(&lens, frame, 3.0, t);
+                cv.filled(&lens, (242, 132, 160, 110), frame, 3.0, t);
             }
             let mut bridge = PathBuilder::new();
             bridge.move_to(106.0, 116.0);
@@ -1127,22 +1087,18 @@ fn draw_accessory(cv: &mut Cv, acc: Accessory, t: Transform) {
                 pb.close();
                 pb.finish()
             };
-            cv.fill_t(&moon, gold, t);
-            cv.stroke_t(&moon, edge, 2.0, t);
+            cv.filled(&moon, gold, edge, 2.0, t);
             let star = star_path(136.0, 46.0, 6.0, 0.2);
-            cv.fill_t(&star, gold, t);
-            cv.stroke_t(&star, edge, 1.8, t);
+            cv.filled(&star, gold, edge, 1.8, t);
         }
         Accessory::Chick => {
             // a tiny chick nestled on the head
             let body_c = (250, 224, 120, 255);
             let beak_c = (240, 160, 70, 255);
             let body = oval(124.0, 66.0, 14.0, 12.0);
-            cv.fill_t(&body, body_c, t);
-            cv.stroke_t(&body, OUTLINE, 2.6, t);
+            cv.filled(&body, body_c, OUTLINE, 2.6, t);
             let head = oval(108.0, 58.0, 9.0, 9.0);
-            cv.fill_t(&head, body_c, t);
-            cv.stroke_t(&head, OUTLINE, 2.6, t);
+            cv.filled(&head, body_c, OUTLINE, 2.6, t);
             let beak = {
                 let mut pb = PathBuilder::new();
                 pb.move_to(100.0, 57.0);
@@ -1151,8 +1107,7 @@ fn draw_accessory(cv: &mut Cv, acc: Accessory, t: Transform) {
                 pb.close();
                 pb.finish()
             };
-            cv.fill_t(&beak, beak_c, t);
-            cv.stroke_t(&beak, OUTLINE, 1.5, t);
+            cv.filled(&beak, beak_c, OUTLINE, 1.5, t);
             cv.fill_t(&oval(106.0, 56.0, 1.7, 1.7), OUTLINE, t);
             let mut wing = PathBuilder::new();
             wing.move_to(124.0, 62.0);
@@ -1176,15 +1131,13 @@ fn draw_accessory(cv: &mut Cv, acc: Accessory, t: Transform) {
             // upper wings
             for (wx, sx) in [(-12.0f32, -2.0f32), (12.0, 2.0)] {
                 let w = oval(120.0 + wx, 61.0, 11.0, 9.5);
-                cv.fill_t(&w, wing, t);
-                cv.stroke_t(&w, OUTLINE, 2.0, t);
+                cv.filled(&w, wing, OUTLINE, 2.0, t);
                 cv.fill_t(&oval(118.0 + wx + sx, 60.0, 3.0, 3.0), spot, t);
             }
             // lower wings
             for wx in [-9.0f32, 9.0] {
                 let w = oval(120.0 + wx, 74.0, 8.0, 7.0);
-                cv.fill_t(&w, wing2, t);
-                cv.stroke_t(&w, OUTLINE, 2.0, t);
+                cv.filled(&w, wing2, OUTLINE, 2.0, t);
             }
             // body
             cv.fill_t(&oval(120.0, 67.0, 2.8, 11.0), bodyc, t);
@@ -1201,8 +1154,7 @@ fn draw_accessory(cv: &mut Cv, acc: Accessory, t: Transform) {
             }
             for (cx, hx) in [(107.0f32, 104.0f32), (133.0, 130.0)] {
                 let ball = oval(cx, 79.0, 9.0, 9.0);
-                cv.fill_t(&ball, red, t);
-                cv.stroke_t(&ball, OUTLINE, 2.6, t);
+                cv.filled(&ball, red, OUTLINE, 2.6, t);
                 cv.fill_t(&oval(hx, 76.0, 2.4, 2.4), (252, 220, 222, 220), t);
             }
             let leaf = {
@@ -1213,8 +1165,7 @@ fn draw_accessory(cv: &mut Cv, acc: Accessory, t: Transform) {
                 pb.close();
                 pb.finish()
             };
-            cv.fill_t(&leaf, leafc, t);
-            cv.stroke_t(&leaf, (88, 148, 70, 255), 1.6, t);
+            cv.filled(&leaf, leafc, (88, 148, 70, 255), 1.6, t);
         }
         Accessory::Cloud => {
             // a fluffy cloud floating above the head, with a sparkle
@@ -1231,11 +1182,9 @@ fn draw_accessory(cv: &mut Cv, acc: Accessory, t: Transform) {
                 pb.close();
                 pb.finish()
             };
-            cv.fill_t(&cloud, cloudc, t);
-            cv.stroke_t(&cloud, edge, 2.4, t);
+            cv.filled(&cloud, cloudc, edge, 2.4, t);
             let sparkle = star_path(150.0, 44.0, 5.5, 0.0);
-            cv.fill_t(&sparkle, (255, 246, 200, 255), t);
-            cv.stroke_t(&sparkle, (228, 206, 120, 255), 1.4, t);
+            cv.filled(&sparkle, (255, 246, 200, 255), (228, 206, 120, 255), 1.4, t);
         }
         Accessory::Clover => {
             // a lucky four-leaf clover on the crown: one heart-leaf, tip at the
@@ -1256,8 +1205,7 @@ fn draw_accessory(cv: &mut Cv, acc: Accessory, t: Transform) {
             };
             for deg in [45.0f32, 135.0, 225.0, 315.0] {
                 let lt = t.pre_concat(Transform::from_rotate_at(deg, cx, cy));
-                cv.fill_t(&leaf, green, lt);
-                cv.stroke_t(&leaf, edge, 2.0, lt);
+                cv.filled(&leaf, green, edge, 2.0, lt);
                 cv.stroke_t(&vein, fade(edge, 0.5), 1.3, lt);
             }
             cv.fill_t(&oval(cx, cy, 2.2, 2.2), edge, t);
@@ -1370,7 +1318,7 @@ fn draw_bubble(cv: &mut Cv, b: &BubbleData, alpha: f32, lang: Lang) {
 
     let tc = fade(TEXT, a);
     // row 1: level + xp bar
-    cv.ui_text(&format!("LV {}", b.level), 24.0, 8.0, 2.0, tc);
+    cv.ui_text(&format!("{} {}", t(lang, Msg::BubbleLv), b.level), 24.0, 8.0, 2.0, tc);
     let bar_bg = round_rect(82.0, 8.5, 134.0, 12.0, 6.0);
     cv.fill(&bar_bg, fade((231, 224, 214, 255), a));
     let w = (134.0 * b.pct.clamp(0.0, 1.0)).max(10.0);
@@ -1386,7 +1334,7 @@ fn draw_bubble(cv: &mut Cv, b: &BubbleData, alpha: f32, lang: Lang) {
         (Msg::BubbleClips, fmt_thousands(b.copies)),
         (Msg::BubbleActive, {
             let (h, m) = (b.minutes / 60, b.minutes % 60);
-            format!("{}H {:02}M", h, m)
+            i18n::fmt_active(lang, h, m)
         }),
     ];
     for (i, (label, value)) in rows.iter().enumerate() {

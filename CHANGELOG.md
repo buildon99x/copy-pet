@@ -34,6 +34,12 @@ versions follow [SemVer](https://semver.org/). Maintenance rules:
 - **The blue beanie's pom-pom no longer floats above the hat** — it now rests on
   the crown so it reads as a bobble hat instead of a detached dot over the cat.
 
+### Changed
+- **Korean stats bubble reads natively**: the cat's "active time" now shows as
+  "1시간 35분" in Korean instead of the English "1H 35M".
+- **macOS/Linux: the clipboard panel toggles on middle-button release**, matching
+  the Windows behavior so the middle-click feels the same across platforms.
+
 ## [2.2.0] - 2026-06-17
 
 ### Added

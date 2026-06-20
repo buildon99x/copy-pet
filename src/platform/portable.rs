@@ -1032,7 +1032,9 @@ impl ApplicationHandler for PortableApp {
                     }
                 },
                 MouseButton::Middle => {
-                    if state == ElementState::Pressed {
+                    // toggle on release to match the Windows native backend
+                    // (WM_MBUTTONUP), keeping the panel-toggle timing in parity.
+                    if state == ElementState::Released {
                         self.pet.toggle_panel();
                     }
                 }
