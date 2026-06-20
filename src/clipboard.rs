@@ -5,6 +5,7 @@
 //! `state.json`. Everything stays local — there is no network code.
 
 use serde::{Deserialize, Serialize};
+use std::collections::VecDeque;
 use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -175,8 +176,10 @@ pub struct ClipStore {
     next_id: u64,
     pub dirty: bool,
     /// Recently deleted clips, one entry per delete/clear operation, newest
-    /// last. Session-only: lets the panel undo an accidental delete.
-    undo: Vec<Vec<Clip>>,
+    /// last. Session-only: lets the panel undo an accidental delete. A bounded
+    /// FIFO ring — oldest evicted from the front — so a `VecDeque` keeps both
+    /// ends O(1).
+    undo: VecDeque<Vec<Clip>>,
     /// Monotonic mutation counter; bumps whenever the list could look
     /// different, so the panel's cached filtered view knows to recompute.
     version: u64,
@@ -293,7 +296,7 @@ impl ClipStore {
             items,
             next_id,
             dirty: false,
-            undo: Vec::new(),
+            undo: VecDeque::new(),
             version: 0,
         }
     }
@@ -429,15 +432,15 @@ impl ClipStore {
 
     fn push_undo(&mut self, batch: Vec<Clip>) {
         if self.undo.len() >= MAX_UNDO {
-            self.undo.remove(0);
+            self.undo.pop_front();
         }
-        self.undo.push(batch);
+        self.undo.push_back(batch);
     }
 
     /// Restores the most recent delete/clear operation. Returns the id of one
     /// restored clip (for the panel to re-select), or None if nothing to undo.
     pub fn undo_delete(&mut self) -> Option<u64> {
-        let batch = self.undo.pop()?;
+        let batch = self.undo.pop_back()?;
         let first = batch.first().map(|c| c.id);
         for clip in batch {
             // re-insert at the ts-sorted spot (items are newest first)
