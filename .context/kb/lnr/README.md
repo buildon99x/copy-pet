@@ -13,3 +13,4 @@ before touching the related area.
 | [0005](0005-macos-tis-eventtap-crash.md) | macOS 15 SIGTRAP: rdev translates keys (TIS) off the main thread | portable input (macOS) |
 | [0006](0006-auto-paste-foreground-capture-order.md) | Auto-paste captured our own window as the target on the hotkey path | Windows backend (auto-paste) |
 | [0007](0007-flyout-paste-gated-on-unreachable-setting.md) | Win+V flyout never pasted: gated on a setting unreachable on the Windows tray menu | core pick contract + Windows backend |
+| [0008](0008-windows-ll-hooks-dedicated-thread.md) | WH_*_LL hooks on the UI thread lag system input; host them on their own thread | Windows backend (input) |

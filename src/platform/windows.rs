@@ -1,5 +1,6 @@
 //! Native Win32 backend: a per-pixel-alpha layered window (transparent pixels
-//! are click-through), low-level keyboard/mouse hooks feeding `crate::input`,
+//! are click-through), low-level keyboard/mouse hooks (on a dedicated thread so
+//! heavy UI-thread work can't lag input) feeding `crate::input`,
 //! a clipboard-format listener feeding `crate::clipboard`, a global panel
 //! hotkey (Win+Shift+V by default, configurable — see [`crate::hotkey`]),
 //! and a Shell notification-area (tray) icon with a localized context menu.
@@ -114,8 +115,10 @@ struct App {
     visible: bool,
     pending_surrogate: Option<u16>,
     // win handles
-    kbd_hook: HHOOK,
-    mouse_hook: HHOOK,
+    /// Dedicated thread hosting the low-level keyboard/mouse hooks, kept off
+    /// this UI thread so clipboard reads, icon extraction and the render tick
+    /// can never stall hook servicing and lag system-wide input (`InputHooks`).
+    input_hooks: InputHooks,
     icon: HICON,
     taskbar_created: u32,
     /// Display label of the actually registered panel hotkey (tray menu,
@@ -1173,6 +1176,72 @@ unsafe extern "system" fn mouse_hook(code: i32, wp: WPARAM, lp: LPARAM) -> LRESU
     CallNextHookEx(null_mut(), code, wp, lp)
 }
 
+/// Dedicated thread that hosts the global low-level keyboard/mouse hooks.
+///
+/// Windows calls a `WH_*_LL` hook procedure *on the thread that installed it*,
+/// and that thread must keep pumping messages — otherwise the system gives up
+/// on the hook after `LowLevelHooksTimeout` (~300 ms), skipping the event and,
+/// on older Windows, tearing the hook down. On the UI thread the hooks would
+/// share it with the clipboard reader, icon extraction and the ~33 ms render
+/// tick, so a slow copy or paint could stall hook servicing and lag
+/// system-wide input. Hosting them here keeps that thread doing nothing but
+/// pumping messages and bumping the lock-free counters in [`crate::input`]
+/// (golden rule 1) — the same isolation the portable backend gets from its
+/// dedicated `rdev::listen` thread.
+struct InputHooks {
+    thread: Option<std::thread::JoinHandle<()>>,
+    /// Hook-thread id, used to post `WM_QUIT` at teardown; 0 if the spawn failed.
+    tid: u32,
+}
+
+impl InputHooks {
+    /// Spawns the hook thread and blocks until the hooks are installed.
+    fn start() -> Self {
+        let (tx, rx) = std::sync::mpsc::channel::<u32>();
+        let thread = std::thread::spawn(move || unsafe {
+            // SAFETY: WH_*_LL hooks need no module handle (null) and thread id 0
+            // to be global; Windows invokes them on THIS thread, which pumps the
+            // loop below. The callbacks only touch atomics in `crate::input`.
+            let kbd = SetWindowsHookExW(WH_KEYBOARD_LL, Some(kbd_hook), null_mut(), 0);
+            let mouse = SetWindowsHookExW(WH_MOUSE_LL, Some(mouse_hook), null_mut(), 0);
+            let mut msg: MSG = std::mem::zeroed();
+            // Force the message queue to exist before handing out our id, so a
+            // WM_QUIT from `stop` can never be dropped (PostThreadMessage docs).
+            PeekMessageW(&mut msg, null_mut(), WM_USER, WM_USER, PM_NOREMOVE);
+            let _ = tx.send(GetCurrentThreadId());
+            while GetMessageW(&mut msg, null_mut(), 0, 0) > 0 {
+                TranslateMessage(&msg);
+                DispatchMessageW(&msg);
+            }
+            // Teardown on the same thread that installed them.
+            if !kbd.is_null() {
+                UnhookWindowsHookEx(kbd);
+            }
+            if !mouse.is_null() {
+                UnhookWindowsHookEx(mouse);
+            }
+        });
+        let tid = rx.recv().unwrap_or(0);
+        InputHooks {
+            thread: Some(thread),
+            tid,
+        }
+    }
+
+    /// Tells the hook thread to leave its message loop (it then unhooks on its
+    /// own thread) and joins it.
+    fn stop(&mut self) {
+        if self.tid != 0 {
+            // SAFETY: posting WM_QUIT to our hook thread's queue; `tid` was
+            // captured from that thread in `start`.
+            unsafe { PostThreadMessageW(self.tid, WM_QUIT, 0, 0) };
+        }
+        if let Some(t) = self.thread.take() {
+            let _ = t.join();
+        }
+    }
+}
+
 // ---- tray ----------------------------------------------------------------------
 
 unsafe fn tray_add(hwnd: HWND, icon: HICON) {
@@ -2092,12 +2161,7 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
                 KillTimer(hwnd, TIMER_ID);
                 UnregisterHotKey(hwnd, HOTKEY_ID);
                 RemoveClipboardFormatListener(hwnd);
-                if !a.kbd_hook.is_null() {
-                    UnhookWindowsHookEx(a.kbd_hook);
-                }
-                if !a.mouse_hook.is_null() {
-                    UnhookWindowsHookEx(a.mouse_hook);
-                }
+                a.input_hooks.stop();
                 tray_remove(hwnd);
             });
             PostQuitMessage(0);
@@ -2297,8 +2361,7 @@ pub fn run() {
             hover_tracking: false,
             visible: true,
             pending_surrogate: None,
-            kbd_hook: SetWindowsHookExW(WH_KEYBOARD_LL, Some(kbd_hook), null_mut(), 0),
-            mouse_hook: SetWindowsHookExW(WH_MOUSE_LL, Some(mouse_hook), null_mut(), 0),
+            input_hooks: InputHooks::start(),
             icon,
             taskbar_created: RegisterWindowMessageW(wz("TaskbarCreated").as_ptr()),
             hotkey_label,
