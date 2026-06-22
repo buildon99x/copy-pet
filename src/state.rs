@@ -314,25 +314,14 @@ impl AccessoryDef {
 
 /// Index in this array + 1 == Persist::accessory id (0 = none).
 /// Order must match `render::Accessory::from_id` for the same ids.
-pub const ACCESSORIES: [AccessoryDef; 20] = [
+pub const ACCESSORIES: [AccessoryDef; 9] = [
     AccessoryDef { level: 2,  msg: i18n::Msg::AccRedScarf },
     AccessoryDef { level: 3,  msg: i18n::Msg::AccGlasses },
     AccessoryDef { level: 5,  msg: i18n::Msg::AccBlueBeanie },
     AccessoryDef { level: 7,  msg: i18n::Msg::AccHeadphones },
     AccessoryDef { level: 10, msg: i18n::Msg::AccGoldCrown },
     AccessoryDef { level: 15, msg: i18n::Msg::AccWizardHat },
-    AccessoryDef { level: 18, msg: i18n::Msg::AccBunnyEars },
     AccessoryDef { level: 21, msg: i18n::Msg::AccSprout },
-    AccessoryDef { level: 24, msg: i18n::Msg::AccDaisyCrown },
-    AccessoryDef { level: 27, msg: i18n::Msg::AccBearEars },
-    AccessoryDef { level: 30, msg: i18n::Msg::AccCherry },
-    AccessoryDef { level: 33, msg: i18n::Msg::AccButterfly },
-    AccessoryDef { level: 36, msg: i18n::Msg::AccHeartShades },
-    AccessoryDef { level: 39, msg: i18n::Msg::AccChick },
-    AccessoryDef { level: 42, msg: i18n::Msg::AccSleepMask },
-    AccessoryDef { level: 45, msg: i18n::Msg::AccNightcap },
-    AccessoryDef { level: 48, msg: i18n::Msg::AccFishHat },
-    AccessoryDef { level: 50, msg: i18n::Msg::AccFishBread },
     AccessoryDef { level: 54, msg: i18n::Msg::AccLuckyClover },
     AccessoryDef { level: 57, msg: i18n::Msg::AccPudding },
 ];
@@ -346,7 +335,7 @@ mod tests {
         // each unlock threshold should produce exactly its level
         let mut xp = 0u64;
         let mut prev = 1;
-        for lv in 1..20u32 {
+        for lv in 1..60u32 {
             let (got, into, need) = level_progress(xp);
             assert!(got >= prev, "level must not decrease");
             assert!(into <= need);
