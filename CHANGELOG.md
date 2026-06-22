@@ -26,6 +26,12 @@ versions follow [SemVer](https://semver.org/). Maintenance rules:
   caramel glaze with a drip, and a cherry on top) unlocks at level 57.
 
 ### Fixed
+- **Copying a very large item no longer stalls the cat or spikes memory.** A
+  huge text, HTML or RTF copy used to be read into memory in full before being
+  discarded for exceeding the history's size limit; the clipboard read now
+  stops at that limit, so an oversized copy is skipped cleanly (on Windows this
+  also avoids a brief freeze while it was read). Images and files were already
+  ignored and still are.
 - **Picking a clip from the hotkey panel now pastes it** (Win+V parity, Windows):
   opening the clipboard with the panel hotkey while typing in a text field and
   then clicking a clip — or selecting it and pressing **Enter** — now pastes it

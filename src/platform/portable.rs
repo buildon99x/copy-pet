@@ -42,7 +42,7 @@
 
 use crate::hotkey::Hotkey;
 use crate::input;
-use crate::clipboard::RichFormats;
+use crate::clipboard::{RichFormats, MAX_TEXT};
 use crate::panel::{fit_delta, NavKey, Rect};
 use crate::pet::{ClipPick, Pet};
 
@@ -1422,6 +1422,15 @@ fn spawn_clipboard_watcher(tx: Sender<ClipCapture>, suppress: Suppress, capture:
                 continue;
             }
             if last.as_deref() == Some(text.as_str()) {
+                continue;
+            }
+            // arboard already holds the whole copy in memory; if it is past the
+            // store's cap it would only be rejected downstream, so record it as
+            // seen and drop it without cloning it across the channel. (Bounding
+            // arboard's own read isn't possible from here — see the Windows
+            // backend for the read-side gate.)
+            if text.len() > MAX_TEXT {
+                last = Some(text);
                 continue;
             }
             last = Some(text.clone());

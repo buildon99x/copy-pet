@@ -13,7 +13,7 @@ use objc::runtime::BOOL;
 use objc::{class, msg_send, sel, sel_impl};
 use std::os::raw::c_char;
 
-use crate::clipboard::{b64_decode, b64_encode, RichFormats};
+use crate::clipboard::{b64_decode, b64_encode, RichFormats, MAX_RICH};
 
 use super::mac_util::{nsstring, Id};
 
@@ -46,15 +46,35 @@ unsafe fn nsdata_to_vec(data: Id) -> Option<Vec<u8>> {
 }
 
 /// Reads the original rich formats (HTML/RTF) from the general pasteboard, or
-/// `None` when the current item carries neither.
+/// `None` when the current item carries neither. Oversized blobs are skipped
+/// *before* copying them into Rust: the store caps rich formats after the read
+/// (ADR-0014), so a blob past the cap can never be stored — gating on the OS
+/// length avoids the allocation spike a giant HTML/RTF copy would otherwise
+/// cause (cf. the Windows backend's read-side gate).
 pub fn read_formats() -> Option<RichFormats> {
     unsafe {
         let pool: Id = msg_send![class!(NSAutoreleasePool), new];
         let pb: Id = msg_send![class!(NSPasteboard), generalPasteboard];
+        // HTML is stored verbatim; UTF-8 length >= the NSString's UTF-16 unit
+        // count, so more than MAX_RICH units can never fit the cap.
         let html: Id = msg_send![pb, stringForType: nsstring(HTML)];
-        let html = nsstring_to_string(html);
+        let html = if html.is_null() {
+            None
+        } else {
+            let units: usize = msg_send![html, length];
+            (units <= MAX_RICH).then(|| nsstring_to_string(html)).flatten()
+        };
+        // RTF is stored base64 (~4/3 larger), so its raw cap is 3/4 of MAX_RICH.
         let rtf: Id = msg_send![pb, dataForType: nsstring(RTF)];
-        let rtf_b64 = nsdata_to_vec(rtf).map(|b| b64_encode(&b));
+        let rtf_b64 = if rtf.is_null() {
+            None
+        } else {
+            let len: usize = msg_send![rtf, length];
+            (len <= MAX_RICH * 3 / 4)
+                .then(|| nsdata_to_vec(rtf))
+                .flatten()
+                .map(|b| b64_encode(&b))
+        };
         let _: () = msg_send![pool, drain];
         let f = RichFormats { html, rtf_b64 };
         if f.is_empty() {

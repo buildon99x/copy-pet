@@ -10,7 +10,7 @@
 //! `WS_EX_NOACTIVATE` and takes focus so the search box can receive
 //! keyboard input (incl. IME-composed Hangul via WM_CHAR).
 
-use crate::clipboard::{b64_decode, b64_encode, RichFormats};
+use crate::clipboard::{b64_decode, b64_encode, RichFormats, MAX_RICH, MAX_TEXT};
 use crate::hotkey::{self, Hotkey};
 use crate::i18n::{self, t, Lang, Msg};
 use crate::input;
@@ -774,7 +774,12 @@ fn trim_nul(mut b: Vec<u8>) -> Vec<u8> {
     b
 }
 
-/// Reads CF_UNICODETEXT from an already-open clipboard.
+/// Reads CF_UNICODETEXT from an already-open clipboard. Scans at most
+/// `MAX_TEXT + 1` code units: the store rejects anything past [`MAX_TEXT`]
+/// *after* the read (UTF-8 length >= UTF-16 code units, so more units can only
+/// mean more bytes), and stopping at the cap recognizes a multi-GB copy as
+/// oversized without decoding it into memory — bounding the read, not the
+/// store, is what avoids the allocation spike.
 unsafe fn read_unicode_open() -> Option<String> {
     let h = GetClipboardData(CF_UNICODETEXT);
     if h.is_null() {
@@ -784,18 +789,25 @@ unsafe fn read_unicode_open() -> Option<String> {
     if p.is_null() {
         return None;
     }
-    let max = GlobalSize(h) / 2;
+    let scan = (GlobalSize(h) / 2).min(MAX_TEXT + 1);
     let mut len = 0usize;
-    while len < max && *p.add(len) != 0 {
+    while len < scan && *p.add(len) != 0 {
         len += 1;
     }
-    let s = String::from_utf16_lossy(std::slice::from_raw_parts(p, len));
+    // Over the cap (no NUL within the window): leave it for the store to reject
+    // without paying for the decode.
+    let text =
+        (len <= MAX_TEXT).then(|| String::from_utf16_lossy(std::slice::from_raw_parts(p, len)));
     GlobalUnlock(h);
-    Some(s)
+    text
 }
 
-/// Reads a raw clipboard-format blob from an already-open clipboard.
-unsafe fn read_format_bytes(fmt: u32) -> Option<Vec<u8>> {
+/// Reads a raw clipboard-format blob from an already-open clipboard, keeping at
+/// most `max_keep` bytes. The store caps rich formats *after* the read
+/// (ADR-0014), so copying only `max_keep + 1` bytes lets an oversized blob be
+/// recognized (and dropped, returning `None`) without slurping a multi-MB — or
+/// larger — payload that could never be stored anyway.
+unsafe fn read_format_bytes(fmt: u32, max_keep: usize) -> Option<Vec<u8>> {
     if fmt == 0 {
         return None;
     }
@@ -807,10 +819,10 @@ unsafe fn read_format_bytes(fmt: u32) -> Option<Vec<u8>> {
     if p.is_null() {
         return None;
     }
-    let n = GlobalSize(h);
-    let bytes = std::slice::from_raw_parts(p, n).to_vec();
+    let take = GlobalSize(h).min(max_keep + 1);
+    let bytes = trim_nul(std::slice::from_raw_parts(p, take).to_vec());
     GlobalUnlock(h);
-    Some(trim_nul(bytes))
+    (bytes.len() <= max_keep).then_some(bytes)
 }
 
 /// Reads CF_UNICODETEXT plus any CF_HTML / CF_RTF in one OpenClipboard, retrying
@@ -828,8 +840,10 @@ unsafe fn read_clipboard_rich(hwnd: HWND) -> Option<(String, Option<RichFormats>
         }
         let text = read_unicode_open();
         let formats = text.as_ref().and_then(|_| {
-            let html = read_format_bytes(cf_html).and_then(|b| String::from_utf8(b).ok());
-            let rtf_b64 = read_format_bytes(cf_rtf).map(|b| b64_encode(&b));
+            // HTML is stored verbatim (cap is on its byte length); RTF is stored
+            // base64 (~4/3 larger), so its raw cap is 3/4 of MAX_RICH.
+            let html = read_format_bytes(cf_html, MAX_RICH).and_then(|b| String::from_utf8(b).ok());
+            let rtf_b64 = read_format_bytes(cf_rtf, MAX_RICH * 3 / 4).map(|b| b64_encode(&b));
             let f = RichFormats { html, rtf_b64 };
             (!f.is_empty()).then_some(f)
         });
