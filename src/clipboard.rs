@@ -346,12 +346,8 @@ impl ClipStore {
             // same text copied again: bump to top, refresh meta
             let mut clip = self.items.remove(i);
             clip.ts = ts;
-            if source.is_some() {
-                clip.source = source;
-            }
-            if formats.is_some() {
-                clip.formats = formats;
-            }
+            clip.source = source.or(clip.source);
+            clip.formats = formats.or(clip.formats);
             self.items.insert(0, clip);
         } else {
             let clip = Clip {

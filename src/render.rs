@@ -501,8 +501,7 @@ fn draw_face(cv: &mut Cv, sc: &Scene, t: Transform) {
     let happy = sc.happy > 0.35 && sc.sleep < 0.5;
     let chase = sc.mouth_open > 0.05 && sc.sleep < 0.5; // eyeing the fish
 
-    for (ex, dir) in [(92.0f32, -1.0f32), (148.0, 1.0)] {
-        let _ = dir;
+    for ex in [92.0f32, 148.0] {
         if happy && !chase {
             // ∩ shaped happy eyes
             let mut pb = PathBuilder::new();
@@ -1471,14 +1470,12 @@ pub fn draw_icon_scaled(pm: &mut Pixmap, k: f32) {
     re.line_to(18.0, 8.0);
     re.close();
     let (le, re) = (le.finish(), re.finish());
-    cv.fill(&le, FUR);
-    cv.stroke(&le, OUTLINE, 2.0);
-    cv.fill(&re, FUR);
-    cv.stroke(&re, OUTLINE, 2.0);
+    let t = Transform::identity();
+    cv.filled(&le, FUR, OUTLINE, 2.0, t);
+    cv.filled(&re, FUR, OUTLINE, 2.0, t);
     // head
     let head = oval(16.0, 18.0, 13.5, 12.0);
-    cv.fill(&head, FUR);
-    cv.stroke(&head, OUTLINE, 2.0);
+    cv.filled(&head, FUR, OUTLINE, 2.0, t);
     // eyes
     cv.fill(&oval(10.5, 17.0, 1.9, 1.9), OUTLINE);
     cv.fill(&oval(21.5, 17.0, 1.9, 1.9), OUTLINE);
@@ -1492,16 +1489,14 @@ pub fn draw_icon_scaled(pm: &mut Pixmap, k: f32) {
     {
         let fc = (FISH_BLUE.0, FISH_BLUE.1, FISH_BLUE.2, 255);
         let body = oval(24.0, 27.5, 6.0, 3.6);
-        cv.fill(&body, fc);
-        cv.stroke(&body, OUTLINE, 1.6);
+        cv.filled(&body, fc, OUTLINE, 1.6, t);
         let mut tb = PathBuilder::new();
         tb.move_to(28.5, 27.5);
         tb.line_to(31.5, 24.8);
         tb.line_to(31.5, 30.2);
         tb.close();
         let tail = tb.finish();
-        cv.fill(&tail, fc);
-        cv.stroke(&tail, OUTLINE, 1.4);
+        cv.filled(&tail, fc, OUTLINE, 1.4, t);
         cv.fill(&oval(21.0, 26.8, 0.9, 0.9), OUTLINE);
     }
 }
