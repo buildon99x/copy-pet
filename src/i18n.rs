@@ -17,6 +17,15 @@ impl Lang {
         }
     }
 
+    /// The uppercase abbreviation shown on the panel's language-switch button
+    /// (distinct from [`Lang::code`], which is the lowercase persisted form).
+    pub fn short_label(self) -> &'static str {
+        match self {
+            Lang::En => "EN",
+            Lang::Ko => "KO",
+        }
+    }
+
     pub fn from_code(code: &str) -> Option<Lang> {
         match code {
             "en" => Some(Lang::En),

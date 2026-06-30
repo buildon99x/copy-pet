@@ -65,11 +65,16 @@ pub struct MenuItem {
 impl MenuItem {
     /// A leaf item: an action, a check state, always enabled, no submenu.
     pub fn leaf(label: impl Into<String>, action: MenuAction, checked: bool) -> MenuEntry {
+        Self::leaf_enabled(label, action, checked, true)
+    }
+
+    /// A leaf item that may be greyed out (e.g. a still-locked accessory).
+    pub fn leaf_enabled(label: impl Into<String>, action: MenuAction, checked: bool, enabled: bool) -> MenuEntry {
         MenuEntry::Item(MenuItem {
             label: label.into(),
             action: Some(action),
             checked,
-            enabled: true,
+            enabled,
             submenu: Vec::new(),
         })
     }

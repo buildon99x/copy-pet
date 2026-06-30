@@ -310,6 +310,11 @@ impl AccessoryDef {
     pub fn name(&self, lang: Lang) -> &'static str {
         i18n::t(lang, self.msg)
     }
+
+    /// Whether a pet at `level` has unlocked this accessory.
+    pub fn unlocked_at(&self, level: u32) -> bool {
+        level >= self.level
+    }
 }
 
 /// Index in this array + 1 == Persist::accessory id (0 = none).
