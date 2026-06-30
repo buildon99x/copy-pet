@@ -231,12 +231,12 @@ impl Pet {
     /// The update download/install started (long toast; replaced by the
     /// restart or by [`Pet::notify_update_failed`]).
     pub fn notify_update_downloading(&mut self) {
-        self.set_toast(t(self.lang(), Msg::ToastUpdateDownloading).to_string(), 120.0);
+        self.toast_msg(Msg::ToastUpdateDownloading, 120.0);
     }
 
     /// The update download/install failed; the menu entry stays for a retry.
     pub fn notify_update_failed(&mut self) {
-        self.set_toast(t(self.lang(), Msg::ToastUpdateFailed).to_string(), 3.0);
+        self.toast_msg(Msg::ToastUpdateFailed, 3.0);
     }
 
     /// The macOS global-input event tap could not be installed — Accessibility
@@ -248,7 +248,7 @@ impl Pet {
             return;
         }
         self.accessibility_hinted = true;
-        self.set_toast(t(self.lang(), Msg::ToastAccessibility).to_string(), 8.0);
+        self.toast_msg(Msg::ToastAccessibility, 8.0);
     }
 
     /// The OS rejected the configured panel hotkey (e.g. Windows reserves
@@ -292,7 +292,7 @@ impl Pet {
     /// A flyout-owned panel lives in its own window, so the cat window keeps
     /// its plain cat-only size (see [`Pet::flyout_size`]).
     pub fn canvas_size(&self) -> (i32, i32) {
-        if self.panel.open && !self.flyout {
+        if self.embedded_panel_open() {
             let l = self.panel.layout();
             (l.canvas_w.round() as i32, l.canvas_h.round() as i32)
         } else {
@@ -302,7 +302,7 @@ impl Pet {
 
     /// Top-left of the cat block inside the window canvas, in physical pixels.
     fn origin(&self) -> (f32, f32) {
-        if self.panel.open && !self.flyout {
+        if self.embedded_panel_open() {
             self.panel.layout().cat
         } else {
             (0.0, 0.0)
@@ -685,7 +685,7 @@ impl Pet {
     /// Shared reaction to picking a clip (copy / paste-as-text): toast, a happy
     /// bump, the pop sound, and closing the panel when auto-close is on.
     fn after_pick(&mut self, toast: Msg) {
-        self.set_toast(t(self.lang(), toast).to_string(), 1.6);
+        self.toast_msg(toast, 1.6);
         self.happy = (self.happy + 0.4).min(1.0);
         if self.st.sound_mode >= 1 {
             sound::play_pop();
@@ -743,11 +743,11 @@ impl Pet {
             PanelAction::Delete(id) => {
                 if self.clips.delete(id) {
                     self.panel.refresh(&self.clips);
-                    self.set_toast(t(self.lang(), Msg::ToastDeleted).to_string(), 2.2);
+                    self.toast_msg(Msg::ToastDeleted, 2.2);
                 }
             }
             PanelAction::ArmClear => {
-                self.set_toast(t(self.lang(), Msg::ToastClearConfirm).to_string(), 2.6);
+                self.toast_msg(Msg::ToastClearConfirm, 2.6);
             }
             PanelAction::Clear => {
                 let n = self.clips.clear_unpinned();
@@ -759,7 +759,7 @@ impl Pet {
             PanelAction::Undo => {
                 if let Some(id) = self.clips.undo_delete() {
                     self.panel.focus_id(&self.clips, id);
-                    self.set_toast(t(self.lang(), Msg::ToastRestored).to_string(), 1.8);
+                    self.toast_msg(Msg::ToastRestored, 1.8);
                 }
             }
             PanelAction::ToggleCapture => {
@@ -770,7 +770,7 @@ impl Pet {
                 } else {
                     Msg::ToastCapturePaused
                 };
-                self.set_toast(t(self.lang(), msg).to_string(), 2.2);
+                self.toast_msg(msg, 2.2);
             }
             PanelAction::ToggleLang => {
                 let lang = self.lang().toggled();
@@ -802,10 +802,13 @@ impl Pet {
         self.st.paste_on_select
     }
 
+    fn toast_msg(&mut self, msg: Msg, secs: f32) {
+        self.set_toast(t(self.lang(), msg).to_string(), secs);
+    }
+
     fn toggle_bool_toast(&mut self, on: bool, on_msg: Msg, off_msg: Msg) {
         self.dirty = true;
-        let msg = if on { on_msg } else { off_msg };
-        self.set_toast(t(self.lang(), msg).to_string(), 2.2);
+        self.toast_msg(if on { on_msg } else { off_msg }, 2.2);
     }
 
     /// Flips "paste the clip into the previous app after picking it" and

@@ -655,6 +655,10 @@ impl Panel {
         }
     }
 
+    fn selected_id(&self, store: &ClipStore) -> Option<u64> {
+        self.visible(store).get(self.sel).map(|c| c.id)
+    }
+
     /// Navigation key while the panel is open.
     pub fn nav(&mut self, key: NavKey, store: &ClipStore) -> Option<PanelAction> {
         let armed = std::mem::take(&mut self.clear_armed);
@@ -687,24 +691,15 @@ impl Panel {
                 self.sel = total.saturating_sub(1);
             }
             NavKey::Enter => {
-                let visible = self.visible(store);
-                if let Some(c) = visible.get(self.sel) {
-                    return Some(PanelAction::Copy(c.id));
-                }
+                return self.selected_id(store).map(PanelAction::Copy);
             }
             NavKey::PasteText => {
                 // mouse-free "paste as text": strip formatting on the selection
-                let visible = self.visible(store);
-                if let Some(c) = visible.get(self.sel) {
-                    return Some(PanelAction::PasteText(c.id));
-                }
+                return self.selected_id(store).map(PanelAction::PasteText);
             }
             NavKey::Right => {
                 // reveal the selected row's actions (pure state)
-                let visible = self.visible(store);
-                if let Some(c) = visible.get(self.sel) {
-                    self.expanded = Some(c.id);
-                }
+                self.expanded = self.selected_id(store);
                 return None;
             }
             NavKey::Left => return None, // actions already collapsed above
@@ -717,16 +712,10 @@ impl Panel {
                 }
             }
             NavKey::Delete => {
-                let visible = self.visible(store);
-                if let Some(c) = visible.get(self.sel) {
-                    return Some(PanelAction::Delete(c.id));
-                }
+                return self.selected_id(store).map(PanelAction::Delete);
             }
             NavKey::Pin => {
-                let visible = self.visible(store);
-                if let Some(c) = visible.get(self.sel) {
-                    return Some(PanelAction::TogglePin(c.id));
-                }
+                return self.selected_id(store).map(PanelAction::TogglePin);
             }
             NavKey::Undo => return Some(PanelAction::Undo),
             NavKey::Backspace => {
