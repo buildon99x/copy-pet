@@ -63,6 +63,16 @@ fn ease_press(p: f32) -> f32 {
     1.0 - (1.0 - p) * (1.0 - p)
 }
 
+/// Builds a submenu of mutually-exclusive `msgs[i]` radio items, checking the
+/// one at `current` and mapping each index through `mk_action` (e.g. to wrap
+/// it in a `u8`-valued `MenuAction` variant).
+fn radio_items(lang: Lang, msgs: &[Msg], current: usize, mk_action: impl Fn(usize) -> MenuAction) -> Vec<MenuEntry> {
+    msgs.iter()
+        .enumerate()
+        .map(|(i, msg)| MenuItem::leaf(t(lang, *msg), mk_action(i), current == i))
+        .collect()
+}
+
 /// A seed derived from the wall clock; avoids `rand` as a dependency.
 fn seed() -> u32 {
     0x1234_5678
@@ -764,13 +774,7 @@ impl Pet {
             }
             PanelAction::ToggleCapture => {
                 self.st.clip_capture = !self.st.clip_capture;
-                self.dirty = true;
-                let msg = if self.st.clip_capture {
-                    Msg::ToastCaptureOn
-                } else {
-                    Msg::ToastCapturePaused
-                };
-                self.toast_msg(msg, 2.2);
+                self.toggle_bool_toast(self.st.clip_capture, Msg::ToastCaptureOn, Msg::ToastCapturePaused);
             }
             PanelAction::ToggleLang => {
                 let lang = self.lang().toggled();
@@ -1261,11 +1265,7 @@ impl Pet {
 
         // Size submenu.
         let sizes = [Msg::SizeSmall, Msg::SizeNormal, Msg::SizeLarge];
-        let size_items = sizes
-            .iter()
-            .enumerate()
-            .map(|(i, msg)| MenuItem::leaf(t(lang, *msg), MenuAction::SetSize(i), self.st.scale_idx == i))
-            .collect();
+        let size_items = radio_items(lang, &sizes, self.st.scale_idx, MenuAction::SetSize);
         m.push(MenuItem::parent(t(lang, Msg::MenuSize), size_items));
 
         // Accessory submenu: None + each accessory, locked ones greyed.
@@ -1276,42 +1276,32 @@ impl Pet {
         )];
         for (i, acc) in ACCESSORIES.iter().enumerate() {
             let id = i + 1;
-            let unlocked = level >= acc.level;
+            let unlocked = acc.unlocked_at(level);
             let label = if unlocked {
                 acc.name(lang).to_string()
             } else {
                 i18n::accessory_locked(lang, acc.name(lang), acc.level)
             };
-            acc_items.push(MenuEntry::Item(MenuItem {
+            acc_items.push(MenuItem::leaf_enabled(
                 label,
-                action: Some(MenuAction::SetAccessory(id)),
-                checked: self.st.accessory == id,
-                enabled: unlocked,
-                submenu: Vec::new(),
-            }));
+                MenuAction::SetAccessory(id),
+                self.st.accessory == id,
+                unlocked,
+            ));
         }
         m.push(MenuItem::parent(t(lang, Msg::MenuAccessory), acc_items));
 
         // Sound submenu.
         let sounds = [Msg::SoundOff, Msg::SoundEvents, Msg::SoundAll];
-        let sound_items = sounds
-            .iter()
-            .enumerate()
-            .map(|(i, msg)| {
-                MenuItem::leaf(t(lang, *msg), MenuAction::SetSound(i as u8), self.st.sound_mode as usize == i)
-            })
-            .collect();
+        let sound_items =
+            radio_items(lang, &sounds, self.st.sound_mode as usize, |i| MenuAction::SetSound(i as u8));
         m.push(MenuItem::parent(t(lang, Msg::MenuSound), sound_items));
 
         // Window stacking submenu (always on top / normal / hide).
         let levels = [Msg::WinLevelTop, Msg::WinLevelNormal, Msg::WinLevelHide];
-        let level_items = levels
-            .iter()
-            .enumerate()
-            .map(|(i, msg)| {
-                MenuItem::leaf(t(lang, *msg), MenuAction::SetWindowLevel(i as u8), self.st.window_level as usize == i)
-            })
-            .collect();
+        let level_items = radio_items(lang, &levels, self.st.window_level as usize, |i| {
+            MenuAction::SetWindowLevel(i as u8)
+        });
         m.push(MenuItem::parent(t(lang, Msg::MenuWindowLevel), level_items));
 
         m.push(MenuItem::leaf(
@@ -1365,7 +1355,7 @@ impl Pet {
             MenuAction::SetAccessory(id) => {
                 // ignore a still-locked or unknown accessory (the menu greys it,
                 // but guard anyway — `id` is an untrusted index here)
-                if id == 0 || ACCESSORIES.get(id - 1).is_some_and(|a| self.level() >= a.level) {
+                if id == 0 || ACCESSORIES.get(id - 1).is_some_and(|a| a.unlocked_at(self.level())) {
                     self.st.accessory = id;
                     self.dirty = true;
                 }

@@ -1091,8 +1091,13 @@ pub fn draw_panel(pm: &mut Pixmap, v: &PanelView) {
         let ry = lt.rows_y + i as f32 * lt.row_h;
         let selected = idx == v.panel.sel;
         let hovered = hover_row == Some(idx);
-        // a vertical center for the row's left/right gadgets (pin, delete)
-        let mid = if thumb { ry + 13.0 } else { ry + lt.row_h / 2.0 };
+        // a vertical center for the row's left/right gadgets (pin, delete),
+        // and the meta line's baseline, pinned to the row bottom
+        let (mid, meta_y) = if thumb {
+            (ry + 13.0, ry + lt.row_h - 13.0)
+        } else {
+            (ry + lt.row_h / 2.0, ry + 20.5)
+        };
 
         if thumb {
             // every clip is its own rounded card; selection/hover tints it
@@ -1106,8 +1111,17 @@ pub fn draw_panel(pm: &mut Pixmap, v: &PanelView) {
             let card = round_rect(lt.row_x, ry + 1.0, lt.row_w, lt.row_h - 4.0, 8.0);
             cv.fill(&card, bg);
             cv.stroke(&card, fade(OUTLINE, 0.18), 1.0);
-        } else if let Some(bg) = selected.then_some(ROW_SEL).or(hovered.then_some(ROW_HOVER)) {
-            cv.fill(&round_rect(lt.row_x, ry + 1.0, lt.row_w, lt.row_h - 2.0, 7.0), bg);
+        } else {
+            let bg = if selected {
+                Some(ROW_SEL)
+            } else if hovered {
+                Some(ROW_HOVER)
+            } else {
+                None
+            };
+            if let Some(bg) = bg {
+                cv.fill(&round_rect(lt.row_x, ry + 1.0, lt.row_w, lt.row_h - 2.0, 7.0), bg);
+            }
         }
 
         let quick = idx < pl::QUICK_KEYS;
@@ -1143,8 +1157,7 @@ pub fn draw_panel(pm: &mut Pixmap, v: &PanelView) {
             cv.ui_text(&line2, tx, ry + 19.5, BODY_PX, TEXT);
         }
 
-        // meta line (source dot + app - age - size), pinned to the row bottom
-        let meta_y = if thumb { ry + lt.row_h - 13.0 } else { ry + 20.5 };
+        // meta line (source dot + app - age - size)
         let mut meta = i18n::time_ago(lang, now.saturating_sub(clip.ts));
         if clip.text.len() > 500 {
             meta = format!("{meta} - {:.1}K", clip.text.len() as f32 / 1024.0);
@@ -1314,6 +1327,24 @@ enum RowBtn {
     Delete,
 }
 
+/// The three background styles shared by header buttons ([`draw_btn`]) and
+/// revealed row-action buttons ([`draw_row_btn`]), so the panel's icon chips
+/// stay visually consistent.
+enum ChipState {
+    Neutral,
+    Warn,
+    Active,
+}
+
+fn fill_chip(cv: &mut Cv, bg: &Option<Path>, state: ChipState) {
+    let (fill, outline) = match state {
+        ChipState::Warn => ((250, 224, 224, 255), (217, 79, 79, 255)),
+        ChipState::Active => ((208, 228, 248, 255), (91, 141, 217, 255)),
+        ChipState::Neutral => ((243, 240, 235, 255), fade(OUTLINE, 0.45)),
+    };
+    cv.filled(bg, fill, outline, 1.6, Transform::identity());
+}
+
 /// Draws an 18px revealed row-action button (paste-as-text / delete), styled
 /// like the header [`draw_btn`] buttons so the panel stays visually consistent.
 fn draw_row_btn(cv: &mut Cv, cx: f32, cy: f32, kind: RowBtn, hot: bool) {
@@ -1321,25 +1352,13 @@ fn draw_row_btn(cv: &mut Cv, cx: f32, cy: f32, kind: RowBtn, hot: bool) {
     let bg = round_rect(cx - b / 2.0, cy - b / 2.0, b, b, 6.0);
     match kind {
         RowBtn::Delete => {
-            if hot {
-                cv.fill(&bg, (250, 224, 224, 255));
-                cv.stroke(&bg, (217, 79, 79, 255), 1.6);
-            } else {
-                cv.fill(&bg, (243, 240, 235, 255));
-                cv.stroke(&bg, fade(OUTLINE, 0.45), 1.6);
-            }
+            fill_chip(cv, &bg, if hot { ChipState::Warn } else { ChipState::Neutral });
             let c = if hot { (217, 79, 79, 255) } else { TEXT };
             cv.line(&[(cx - 3.4, cy - 3.4), (cx + 3.4, cy + 3.4)], c, 1.9);
             cv.line(&[(cx - 3.4, cy + 3.4), (cx + 3.4, cy - 3.4)], c, 1.9);
         }
         RowBtn::PasteText => {
-            if hot {
-                cv.fill(&bg, (208, 228, 248, 255));
-                cv.stroke(&bg, (91, 141, 217, 255), 1.6);
-            } else {
-                cv.fill(&bg, (243, 240, 235, 255));
-                cv.stroke(&bg, fade(OUTLINE, 0.45), 1.6);
-            }
+            fill_chip(cv, &bg, if hot { ChipState::Active } else { ChipState::Neutral });
             let c = if hot { (74, 118, 184, 255) } else { TEXT };
             // a clipboard with text lines = "paste as text"
             cv.stroke(&round_rect(cx - 3.6, cy - 4.4, 7.2, 9.4, 1.6), c, 1.4);
@@ -1362,16 +1381,14 @@ enum BtnIcon {
 fn draw_btn(cv: &mut Cv, bx: f32, by: f32, icon: BtnIcon) {
     let b = pl::BTN;
     let bg = round_rect(bx, by, b, b, 6.0);
-    if matches!(icon, BtnIcon::Pause(false) | BtnIcon::Trash(true)) {
-        cv.fill(&bg, (250, 224, 224, 255));
-        cv.stroke(&bg, (217, 79, 79, 255), 1.6);
+    let state = if matches!(icon, BtnIcon::Pause(false) | BtnIcon::Trash(true)) {
+        ChipState::Warn
     } else if matches!(icon, BtnIcon::Filter(true) | BtnIcon::View(true)) {
-        cv.fill(&bg, (208, 228, 248, 255));
-        cv.stroke(&bg, (91, 141, 217, 255), 1.6);
+        ChipState::Active
     } else {
-        cv.fill(&bg, (243, 240, 235, 255));
-        cv.stroke(&bg, fade(OUTLINE, 0.45), 1.6);
-    }
+        ChipState::Neutral
+    };
+    fill_chip(cv, &bg, state);
     let (cx, cy) = (bx + b / 2.0, by + b / 2.0);
     match icon {
         BtnIcon::Filter(active) => {
@@ -1417,10 +1434,7 @@ fn draw_btn(cv: &mut Cv, bx: f32, by: f32, icon: BtnIcon) {
             cv.stroke(&pb.finish(), c, 1.7);
         }
         BtnIcon::Lang(lang) => {
-            let s = match lang {
-                Lang::En => "EN",
-                Lang::Ko => "KO",
-            };
+            let s = lang.short_label();
             let w = sysfont::measure(s, 1.25);
             sysfont::draw(cv.pm, s, cx - w / 2.0, cy - 4.3, 1.25, TEXT, cv.ts);
         }

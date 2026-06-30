@@ -333,17 +333,16 @@ pub fn draw(pm: &mut Pixmap, text: &str, x: f32, y: f32, px: f32, rgba: (u8, u8,
     // on that cell so all call sites share one layout grid.
     let cell_pad = (em - 7.0 * px) / 2.0;
     let mut pen = x;
-    let cache = glyph_cache();
+    // Held for the whole string instead of re-locked per glyph: a panel frame
+    // draws dozens of strings, each several characters, all on the render
+    // thread, so one lock/unlock pair per `draw()` call is enough.
+    let mut cache = glyph_cache().lock().unwrap();
     for c in text.chars() {
         let glyph = glyph_for(c);
-        let adv = match glyph {
-            Some((fi, id)) => fonts()[fi].as_scaled(em).h_advance(id),
-            None => TOFU_ADV * px,
-        };
+        let adv = advance_of(c, px);
         match glyph {
             Some((fi, id)) if !rotated => {
                 let key: GlyphKey = (fi, id.0, (em_dev * 4.0).round() as u32);
-                let mut cache = cache.lock().unwrap();
                 let mask = cache
                     .entry(key)
                     .or_insert_with(|| rasterize(fi, id, em_dev));
