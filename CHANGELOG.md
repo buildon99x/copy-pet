@@ -33,6 +33,10 @@ versions follow [SemVer](https://semver.org/). Maintenance rules:
   "Paste on select" setting still controls the middle-click panel by the cat.)
 - **The blue beanie's pom-pom no longer floats above the hat** — it now rests on
   the crown so it reads as a bobble hat instead of a detached dot over the cat.
+- **Typing and mouse stay smooth during clipboard activity** (Windows): the cat's
+  keyboard/mouse activity tracking now runs on its own thread, so a busy moment —
+  reading a large copy, fetching a source app's icon, or a heavy redraw — can no
+  longer briefly stutter system-wide keyboard and mouse input.
 
 ### Changed
 - **Korean stats bubble reads natively**: the cat's "active time" now shows as
