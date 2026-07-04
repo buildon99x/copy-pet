@@ -295,10 +295,24 @@ impl ClipStore {
         ClipStore::from_items(items)
     }
 
-    fn from_items(items: Vec<Clip>) -> ClipStore {
-        // saturating: a hand-edited/corrupted clips.json with id == u64::MAX
-        // must not panic (debug) or wrap to 0 and mint colliding ids (release).
-        let next_id = items.iter().map(|c| c.id.saturating_add(1)).max().unwrap_or(1);
+    fn from_items(mut items: Vec<Clip>) -> ClipStore {
+        // A hand-edited/corrupt clips.json can carry duplicate ids or an id at
+        // the very top of the u64 range. Either breaks the invariant that
+        // get/delete/toggle_pin rely on — next_id is a fresh, unique id greater
+        // than every existing one — so renumber sequentially in those cases.
+        // (A plain saturating add would leave next_id == u64::MAX, which the
+        // next copy would reuse and then overflow incrementing.)
+        let max_id = items.iter().map(|c| c.id).max().unwrap_or(0);
+        let mut seen = std::collections::HashSet::with_capacity(items.len());
+        let unique = items.iter().all(|c| seen.insert(c.id));
+        let next_id = if unique && max_id < u64::MAX {
+            max_id + 1
+        } else {
+            for (i, c) in items.iter_mut().enumerate() {
+                c.id = i as u64 + 1;
+            }
+            items.len() as u64 + 1
+        };
         ClipStore {
             items,
             next_id,
@@ -896,14 +910,28 @@ mod tests {
     }
 
     #[test]
-    fn next_id_does_not_overflow_on_corrupt_max_id() {
-        // A hand-edited clips.json with id == u64::MAX must not panic/wrap.
+    fn corrupt_ids_are_renumbered_so_next_id_stays_free() {
+        // A hand-edited clips.json with id == u64::MAX (and a duplicate) must
+        // not panic/wrap or reuse an existing id: renumber and keep next_id
+        // strictly above every clip so add_copy always mints a unique id.
         let legacy = format!(
-            r#"{{"clips":[{{"id":{},"text":"x","source":null,"pinned":false,"ts":0}}]}}"#,
-            u64::MAX
+            r#"{{"clips":[
+                {{"id":{m},"text":"x","source":null,"pinned":false,"ts":0}},
+                {{"id":5,"text":"y","source":null,"pinned":false,"ts":0}},
+                {{"id":5,"text":"z","source":null,"pinned":false,"ts":0}}
+            ]}}"#,
+            m = u64::MAX
         );
         let back: ClipsFile = serde_json::from_str(&legacy).unwrap();
-        let s = ClipStore::from_items(back.clips);
-        assert_eq!(s.next_id, u64::MAX); // saturated, not wrapped to 0
+        let mut s = ClipStore::from_items(back.clips);
+        let max = s.items.iter().map(|c| c.id).max().unwrap();
+        assert!(s.next_id > max, "next_id must stay above every clip id");
+        // a fresh copy gets a unique id — no panic, no collision
+        assert!(s.add_copy("new".into(), None));
+        let mut ids: Vec<u64> = s.items.iter().map(|c| c.id).collect();
+        let n = ids.len();
+        ids.sort_unstable();
+        ids.dedup();
+        assert_eq!(ids.len(), n, "clip ids must be unique after a corrupt load");
     }
 }
