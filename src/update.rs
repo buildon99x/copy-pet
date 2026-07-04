@@ -30,6 +30,9 @@ pub const WINDOWS_ASSET: &str = "clipcat-windows-x86_64.exe";
 
 /// Daily cadence; the first check runs shortly after launch.
 const CHECK_PERIOD: Duration = Duration::from_secs(24 * 60 * 60);
+/// Shorter back-off after a *failed* check (e.g. offline at boot) so a
+/// transient failure isn't stuck waiting a full day to retry.
+const RETRY_PERIOD: Duration = Duration::from_secs(15 * 60);
 
 /// Mirrors `Persist::auto_update`; while false no network request is made.
 static ENABLED: AtomicBool = AtomicBool::new(true);
@@ -87,14 +90,18 @@ pub fn spawn_checker() {
         std::thread::sleep(Duration::from_secs(10));
         loop {
             if ENABLED.load(Ordering::Relaxed) {
-                if let Some(tag) = latest_tag() {
+                let ok = if let Some(tag) = latest_tag() {
                     if let Some(v) = newer_version(&tag, env!("CARGO_PKG_VERSION")) {
                         if let Ok(mut found) = FOUND.lock() {
                             *found = Some(v);
                         }
                     }
-                }
-                std::thread::sleep(CHECK_PERIOD);
+                    true
+                } else {
+                    false
+                };
+                // Full daily cadence on success; short back-off on failure.
+                std::thread::sleep(if ok { CHECK_PERIOD } else { RETRY_PERIOD });
             } else {
                 // re-read the toggle hourly so enabling it acts the same day
                 std::thread::sleep(Duration::from_secs(60 * 60));

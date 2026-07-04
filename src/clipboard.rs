@@ -123,18 +123,23 @@ pub fn b64_decode(s: &str) -> Option<Vec<u8>> {
 /// Collapses runs of whitespace to a single space, up to `cap` characters.
 fn collapse_whitespace(chars: impl Iterator<Item = char>, cap: usize) -> String {
     let mut out = String::new();
+    // Cap on characters, not bytes: a byte cap truncates multi-byte scripts
+    // (Hangul/CJK are 3 bytes/char) to roughly a third of the intended length.
+    let mut count = 0usize;
     let mut last_space = false;
     for c in chars {
-        if out.len() >= cap {
+        if count >= cap {
             break;
         }
         if c.is_whitespace() {
             if !last_space {
                 out.push(' ');
+                count += 1;
             }
             last_space = true;
         } else {
             out.push(c);
+            count += 1;
             last_space = false;
         }
     }
@@ -290,8 +295,24 @@ impl ClipStore {
         ClipStore::from_items(items)
     }
 
-    fn from_items(items: Vec<Clip>) -> ClipStore {
-        let next_id = items.iter().map(|c| c.id + 1).max().unwrap_or(1);
+    fn from_items(mut items: Vec<Clip>) -> ClipStore {
+        // A hand-edited/corrupt clips.json can carry duplicate ids or an id at
+        // the very top of the u64 range. Either breaks the invariant that
+        // get/delete/toggle_pin rely on — next_id is a fresh, unique id greater
+        // than every existing one — so renumber sequentially in those cases.
+        // (A plain saturating add would leave next_id == u64::MAX, which the
+        // next copy would reuse and then overflow incrementing.)
+        let max_id = items.iter().map(|c| c.id).max().unwrap_or(0);
+        let mut seen = std::collections::HashSet::with_capacity(items.len());
+        let unique = items.iter().all(|c| seen.insert(c.id));
+        let next_id = if unique && max_id < u64::MAX {
+            max_id + 1
+        } else {
+            for (i, c) in items.iter_mut().enumerate() {
+                c.id = i as u64 + 1;
+            }
+            items.len() as u64 + 1
+        };
         ClipStore {
             items,
             next_id,
@@ -388,12 +409,19 @@ impl ClipStore {
     /// Toggles a pin; refuses to pin beyond [`MAX_PINNED`].
     pub fn toggle_pin(&mut self, id: u64) {
         let pinned_count = self.pinned_count();
+        let mut unpinned = false;
         if let Some(c) = self.items.iter_mut().find(|c| c.id == id) {
             if !c.pinned && pinned_count >= MAX_PINNED {
                 return;
             }
             c.pinned = !c.pinned;
+            unpinned = !c.pinned;
             self.touch();
+        }
+        // Unpinning can push the unpinned history back over MAX_HISTORY; trim
+        // it now rather than waiting for the next copy to run evict().
+        if unpinned {
+            self.evict();
         }
     }
 
@@ -866,5 +894,44 @@ mod tests {
         assert_eq!(s2.len(), 2);
         assert_eq!(s2.pinned_count(), 1);
         assert!(s2.next_id > id);
+    }
+
+    #[test]
+    fn preview_and_flattened_cap_on_chars_not_bytes() {
+        // 60 Hangul chars = 180 UTF-8 bytes. A byte cap would truncate the
+        // preview to ~40 chars; the char cap must keep all 60.
+        let ko = "가".repeat(60);
+        let mut s = ClipStore::default();
+        s.next_id = 1;
+        s.add_copy(ko, None);
+        let c = &s.visible("")[0];
+        assert_eq!(c.preview().chars().count(), 60);
+        assert_eq!(c.flattened().chars().count(), 60);
+    }
+
+    #[test]
+    fn corrupt_ids_are_renumbered_so_next_id_stays_free() {
+        // A hand-edited clips.json with id == u64::MAX (and a duplicate) must
+        // not panic/wrap or reuse an existing id: renumber and keep next_id
+        // strictly above every clip so add_copy always mints a unique id.
+        let legacy = format!(
+            r#"{{"clips":[
+                {{"id":{m},"text":"x","source":null,"pinned":false,"ts":0}},
+                {{"id":5,"text":"y","source":null,"pinned":false,"ts":0}},
+                {{"id":5,"text":"z","source":null,"pinned":false,"ts":0}}
+            ]}}"#,
+            m = u64::MAX
+        );
+        let back: ClipsFile = serde_json::from_str(&legacy).unwrap();
+        let mut s = ClipStore::from_items(back.clips);
+        let max = s.items.iter().map(|c| c.id).max().unwrap();
+        assert!(s.next_id > max, "next_id must stay above every clip id");
+        // a fresh copy gets a unique id — no panic, no collision
+        assert!(s.add_copy("new".into(), None));
+        let mut ids: Vec<u64> = s.items.iter().map(|c| c.id).collect();
+        let n = ids.len();
+        ids.sort_unstable();
+        ids.dedup();
+        assert_eq!(ids.len(), n, "clip ids must be unique after a corrupt load");
     }
 }

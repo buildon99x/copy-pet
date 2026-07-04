@@ -116,6 +116,7 @@ pub struct Pet {
     panel_hint: String,
     update_available: Option<String>, // newer release found (crate::update)
     accessibility_hinted: bool,       // macOS Accessibility hint shown once
+    hotkey_fallback_hinted: bool,     // hotkey-fallback toast shown once
     // bookkeeping
     frame: u64,
     rng: u32,
@@ -181,6 +182,7 @@ impl Pet {
             panel_hint: String::new(),
             update_available: None,
             accessibility_hinted: false,
+            hotkey_fallback_hinted: false,
             frame: 0,
             rng: seed(),
             level,
@@ -268,6 +270,10 @@ impl Pet {
     /// configured chord is kept in `state.json`, so it registers normally once
     /// whatever was holding it is freed.
     pub fn notify_hotkey_fallback(&mut self, wanted: &str, used: &str) {
+        if self.hotkey_fallback_hinted {
+            return;
+        }
+        self.hotkey_fallback_hinted = true;
         self.set_toast(i18n::hotkey_fallback(self.lang(), wanted, used), 5.0);
     }
 
@@ -1206,6 +1212,10 @@ impl Pet {
             size: 5.0,
             spin: 0.0,
         });
+        // A body click grants XP like every other input path, so it must be
+        // able to trigger a level-up immediately rather than deferring it to
+        // the next advance() tick that happens to see input.
+        self.maybe_level_up();
     }
 
     /// Builds the right-click / tray context menu for the current state.
@@ -1417,17 +1427,24 @@ impl Pet {
     }
 
     fn level_up(&mut self, lv: u32, t: f32) {
+        let prev = self.level;
         self.level = lv;
         self.level_changed = true;
         self.happy = 1.0;
         self.spawn_stars(12);
         let mut text = i18n::level_up(self.lang(), lv);
-        for (i, acc) in ACCESSORIES.iter().enumerate() {
-            if acc.level == lv {
-                self.st.accessory = i + 1;
-                text = i18n::new_accessory(self.lang(), acc.name(self.lang()));
-                self.spawn_sparkles(8, 120.0, 80.0);
-            }
+        // Equip + announce the highest accessory newly unlocked in (prev, lv].
+        // A single XP grant can jump several levels, so keying on an exact
+        // `acc.level == lv` match would silently skip an intermediate unlock.
+        if let Some((i, acc)) = ACCESSORIES
+            .iter()
+            .enumerate()
+            .filter(|(_, a)| a.level > prev && a.level <= lv)
+            .max_by_key(|(_, a)| a.level)
+        {
+            self.st.accessory = i + 1;
+            text = i18n::new_accessory(self.lang(), acc.name(self.lang()));
+            self.spawn_sparkles(8, 120.0, 80.0);
         }
         self.toast = Some((text, t + 3.2));
         if self.st.sound_mode >= 1 {

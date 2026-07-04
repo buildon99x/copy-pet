@@ -1041,7 +1041,10 @@ pub fn draw_panel(pm: &mut Pixmap, v: &PanelView) {
     } else {
         // show the tail of long queries
         let mut q: &str = &v.panel.query;
-        while sysfont::measure(q, qpx) > qmax - 6.0 {
+        // `!q.is_empty()` guards the terminal case: once q is empty,
+        // measure("") == 0 would still exceed a negative `qmax - 6.0` (a very
+        // narrow search box), spinning the render thread forever.
+        while !q.is_empty() && sysfont::measure(q, qpx) > qmax - 6.0 {
             let mut it = q.chars();
             it.next();
             q = it.as_str();
@@ -1314,7 +1317,11 @@ fn draw_tooltip(cv: &mut Cv, lt: &pl::Layout, anchor_x: f32, top_y: f32, label: 
     let pad = 6.0;
     let w = sysfont::measure(label, px) + pad * 2.0;
     let h = 15.0;
-    let x = (anchor_x - w / 2.0).clamp(lt.card_x + 4.0, lt.card_x + lt.card_w - 4.0 - w);
+    // Guard `min <= max`: a tooltip wider than the card interior would make
+    // the upper bound fall below the lower one and panic inside `clamp`.
+    let lo = lt.card_x + 4.0;
+    let hi = (lt.card_x + lt.card_w - 4.0 - w).max(lo);
+    let x = (anchor_x - w / 2.0).clamp(lo, hi);
     let y = top_y.clamp(lt.card_y + 4.0, lt.card_y + lt.card_h - h - 4.0);
     let bg = round_rect(x, y, w, h, 5.0);
     cv.fill(&bg, (54, 47, 38, 240));

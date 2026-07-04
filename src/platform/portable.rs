@@ -1049,13 +1049,12 @@ impl ApplicationHandler for PortableApp {
             WindowEvent::MouseWheel { delta, .. } => {
                 let dy = scroll_rows(delta);
                 let (cx, cy) = self.client_xy();
-                if self.pet.panel_hit(cx, cy) {
-                    if dy != 0.0 {
-                        self.pet.panel_wheel(if dy < 0.0 { 1 } else { -1 });
-                    }
-                } else if dy != 0.0 {
-                    // a local scroll over the pet still counts as activity
-                    input::wheel();
+                // Only scroll the panel here. A wheel's "activity" is already
+                // counted once by the global input listener (rdev / the macOS
+                // event tap), so also counting it here double-counted scrolls
+                // over the pet relative to scrolls over other apps.
+                if self.pet.panel_hit(cx, cy) && dy != 0.0 {
+                    self.pet.panel_wheel(if dy < 0.0 { 1 } else { -1 });
                 }
             }
             WindowEvent::Ime(Ime::Commit(s)) => {
