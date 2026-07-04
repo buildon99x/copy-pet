@@ -123,18 +123,23 @@ pub fn b64_decode(s: &str) -> Option<Vec<u8>> {
 /// Collapses runs of whitespace to a single space, up to `cap` characters.
 fn collapse_whitespace(chars: impl Iterator<Item = char>, cap: usize) -> String {
     let mut out = String::new();
+    // Cap on characters, not bytes: a byte cap truncates multi-byte scripts
+    // (Hangul/CJK are 3 bytes/char) to roughly a third of the intended length.
+    let mut count = 0usize;
     let mut last_space = false;
     for c in chars {
-        if out.len() >= cap {
+        if count >= cap {
             break;
         }
         if c.is_whitespace() {
             if !last_space {
                 out.push(' ');
+                count += 1;
             }
             last_space = true;
         } else {
             out.push(c);
+            count += 1;
             last_space = false;
         }
     }
@@ -291,7 +296,9 @@ impl ClipStore {
     }
 
     fn from_items(items: Vec<Clip>) -> ClipStore {
-        let next_id = items.iter().map(|c| c.id + 1).max().unwrap_or(1);
+        // saturating: a hand-edited/corrupted clips.json with id == u64::MAX
+        // must not panic (debug) or wrap to 0 and mint colliding ids (release).
+        let next_id = items.iter().map(|c| c.id.saturating_add(1)).max().unwrap_or(1);
         ClipStore {
             items,
             next_id,
@@ -388,12 +395,19 @@ impl ClipStore {
     /// Toggles a pin; refuses to pin beyond [`MAX_PINNED`].
     pub fn toggle_pin(&mut self, id: u64) {
         let pinned_count = self.pinned_count();
+        let mut unpinned = false;
         if let Some(c) = self.items.iter_mut().find(|c| c.id == id) {
             if !c.pinned && pinned_count >= MAX_PINNED {
                 return;
             }
             c.pinned = !c.pinned;
+            unpinned = !c.pinned;
             self.touch();
+        }
+        // Unpinning can push the unpinned history back over MAX_HISTORY; trim
+        // it now rather than waiting for the next copy to run evict().
+        if unpinned {
+            self.evict();
         }
     }
 
@@ -866,5 +880,30 @@ mod tests {
         assert_eq!(s2.len(), 2);
         assert_eq!(s2.pinned_count(), 1);
         assert!(s2.next_id > id);
+    }
+
+    #[test]
+    fn preview_and_flattened_cap_on_chars_not_bytes() {
+        // 60 Hangul chars = 180 UTF-8 bytes. A byte cap would truncate the
+        // preview to ~40 chars; the char cap must keep all 60.
+        let ko = "가".repeat(60);
+        let mut s = ClipStore::default();
+        s.next_id = 1;
+        s.add_copy(ko, None);
+        let c = &s.visible("")[0];
+        assert_eq!(c.preview().chars().count(), 60);
+        assert_eq!(c.flattened().chars().count(), 60);
+    }
+
+    #[test]
+    fn next_id_does_not_overflow_on_corrupt_max_id() {
+        // A hand-edited clips.json with id == u64::MAX must not panic/wrap.
+        let legacy = format!(
+            r#"{{"clips":[{{"id":{},"text":"x","source":null,"pinned":false,"ts":0}}]}}"#,
+            u64::MAX
+        );
+        let back: ClipsFile = serde_json::from_str(&legacy).unwrap();
+        let s = ClipStore::from_items(back.clips);
+        assert_eq!(s.next_id, u64::MAX); // saturated, not wrapped to 0
     }
 }

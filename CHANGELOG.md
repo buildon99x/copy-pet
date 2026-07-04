@@ -26,6 +26,24 @@ versions follow [SemVer](https://semver.org/). Maintenance rules:
   caramel glaze with a drip, and a cherry on top) unlocks at level 57.
 
 ### Fixed
+- **Korean/CJK clip previews no longer cut off early** — long Korean (or other
+  multi-byte) clips now show their full-length preview in the panel rows instead
+  of being trimmed to roughly a third of the text.
+- **Mixed Korean + English text now lines up on one baseline** — Hangul no longer
+  floats slightly above or below the Latin letters next to it (panel rows, app
+  labels, stats bubble).
+- **Levelling up is more responsive and never skips an accessory** — a single
+  click on the cat can now trigger a level-up on the spot, and gaining several
+  levels at once unlocks and equips the newest accessory instead of silently
+  passing over it.
+- **XP is no longer over-counted** (Windows: auto-paste keystrokes; all
+  platforms: mouse-wheel over the cat) so your level reflects what you actually
+  did.
+- **A clipboard entry is no longer lost after a failed paste-back** (Windows):
+  if writing to the clipboard fails, a later identical copy from another app is
+  still recorded in history.
+- **The hotkey-fallback notice shows only once** instead of repeating when the
+  configured panel shortcut is unavailable.
 - **Picking a clip from the hotkey panel now pastes it** (Win+V parity, Windows):
   opening the clipboard with the panel hotkey while typing in a text field and
   then clicking a clip — or selecting it and pressing **Enter** — now pastes it

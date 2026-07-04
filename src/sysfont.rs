@@ -347,7 +347,11 @@ pub fn draw(pm: &mut Pixmap, text: &str, x: f32, y: f32, px: f32, rgba: (u8, u8,
                     .entry(key)
                     .or_insert_with(|| rasterize(fi, id, em_dev));
                 if let Some(mask) = mask {
-                    let ascent_dev = fonts()[fi].as_scaled(em_dev).ascent();
+                    // Shared baseline: derive it from the primary font's ascent
+                    // for every glyph, so fallback glyphs (e.g. Hangul from the
+                    // CJK font, whose ascent differs) sit on the same baseline
+                    // as adjacent Latin text instead of each font's own ascent.
+                    let ascent_dev = fonts()[0].as_scaled(em_dev).ascent();
                     let dev_x = ts.tx + pen * ts.sx + mask.left;
                     let dev_y = ts.ty + (y - cell_pad) * ts.sy + ascent_dev + mask.top;
                     blend_mask(pm, mask, dev_x, dev_y, rgba);

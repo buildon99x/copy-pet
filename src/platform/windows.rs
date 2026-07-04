@@ -185,8 +185,15 @@ impl App {
     /// setting for the embedded panel), it then restores focus to the app that
     /// was active when the panel opened and synthesizes Ctrl+V there.
     fn copy_back(&mut self, pick: ClipPick) {
-        self.suppress_clip = Some(pick.text.clone());
-        unsafe { set_clipboard_rich(self.hwnd, &pick.text, pick.formats.as_ref(), pick.plain_only) };
+        // Arm the self-suppression marker only on a successful write: on failure
+        // no WM_CLIPBOARDUPDATE fires to consume it, so a stale marker would
+        // silently drop the next identical *external* copy from history.
+        let ok = unsafe {
+            set_clipboard_rich(self.hwnd, &pick.text, pick.formats.as_ref(), pick.plain_only)
+        };
+        if ok {
+            self.suppress_clip = Some(pick.text.clone());
+        }
         if pick.paste && !self.paste_target.is_null() && self.paste_target != self.hwnd {
             unsafe {
                 // Win+V parity: hand the foreground back to the app that was
@@ -1148,14 +1155,21 @@ unsafe fn send_ctrl_v() {
 
 unsafe extern "system" fn kbd_hook(code: i32, wp: WPARAM, lp: LPARAM) -> LRESULT {
     if code >= 0 {
-        // The vkCode is reduced to a held/released bit so holding a key (OS
-        // auto-repeat) counts once; it is never stored or inspected further
-        // (see crate::input and golden rule 1).
-        let vk = (*(lp as *const KBDLLHOOKSTRUCT)).vkCode as u16;
-        match wp as u32 {
-            WM_KEYDOWN | WM_SYSKEYDOWN => input::key_down(vk),
-            WM_KEYUP | WM_SYSKEYUP => input::key_up(vk),
-            _ => {}
+        let ks = &*(lp as *const KBDLLHOOKSTRUCT);
+        // Skip synthetic events: our own auto-paste Ctrl+V (send_ctrl_v via
+        // SendInput) sets LLKHF_INJECTED, and counting it would inflate the
+        // keystroke/XP totals with keys the user never pressed. Only the flags
+        // bit is inspected, never key contents (golden rule 1).
+        if ks.flags & LLKHF_INJECTED == 0 {
+            // The vkCode is reduced to a held/released bit so holding a key (OS
+            // auto-repeat) counts once; it is never stored or inspected further
+            // (see crate::input and golden rule 1).
+            let vk = ks.vkCode as u16;
+            match wp as u32 {
+                WM_KEYDOWN | WM_SYSKEYDOWN => input::key_down(vk),
+                WM_KEYUP | WM_SYSKEYUP => input::key_up(vk),
+                _ => {}
+            }
         }
     }
     CallNextHookEx(null_mut(), code, wp, lp)

@@ -476,3 +476,36 @@ fn render_panel_open_smoke() {
     let drawn = pm.data().chunks_exact(4).any(|px| px[3] > 0);
     assert!(drawn);
 }
+
+#[test]
+fn body_click_levels_up_immediately() {
+    let mut p = pet();
+    // one XP below the level-2 threshold; a body click grants +1 XP, which
+    // must trigger the level-up in-call rather than deferring to a later tick.
+    p.st.total_xp = crate::state::xp_to_next(1) - 1;
+    assert_eq!(p.level(), 1);
+    p.click_bounce(0.0, 0.0);
+    assert_eq!(p.level(), 2, "body click XP must level up within click_bounce");
+}
+
+#[test]
+fn multi_level_jump_equips_highest_unlocked_accessory() {
+    let mut p = pet();
+    // A single large XP grant jumps many levels at once. The auto-equip must
+    // land on the highest newly-unlocked accessory, not silently skip it when
+    // the destination level does not exactly equal an accessory unlock level.
+    p.st.total_xp = 10_000_000;
+    p.maybe_level_up();
+    let cur = p.level();
+    let expected = crate::state::ACCESSORIES
+        .iter()
+        .enumerate()
+        .filter(|(_, a)| a.level <= cur)
+        .max_by_key(|(_, a)| a.level)
+        .map(|(i, _)| i + 1)
+        .expect("some accessory is unlocked at a high level");
+    assert_eq!(
+        p.st.accessory, expected,
+        "a multi-level jump must equip the highest newly-unlocked accessory"
+    );
+}
