@@ -20,6 +20,11 @@ mod portable;
 #[cfg(any(not(windows), feature = "portable"))]
 pub use portable::run;
 
+// Windows sound playback (winmm `PlaySound`): shared by both Windows
+// backends, since `windows` and `portable` are never compiled together.
+#[cfg(windows)]
+mod windows_sound;
+
 // macOS-only helpers for the portable backend: a bespoke CoreGraphics event
 // tap (replaces rdev's crashing keyboard listener, LNR-0005), a transparent
 // CALayer presenter (replaces softbuffer's opaque card, ADR-0003), the native

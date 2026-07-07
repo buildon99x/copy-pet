@@ -1439,6 +1439,8 @@ fn spawn_clipboard_watcher(tx: Sender<ClipCapture>, suppress: Suppress, capture:
 }
 
 pub fn run() {
+    #[cfg(windows)]
+    crate::sound::set_player(super::windows_sound::play);
     crate::sound::init();
 
     let (tx, rx) = std::sync::mpsc::channel();

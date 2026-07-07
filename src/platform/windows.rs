@@ -2175,20 +2175,6 @@ fn monitor_work_rect(hwnd: HWND) -> Option<Rect> {
     }
 }
 
-/// `crate::sound`'s playback hook: plays a synthesized WAV buffer through
-/// winmm `PlaySound` (SND_MEMORY | SND_ASYNC, no audio assets, no extra
-/// dependencies). Registered once at startup.
-fn play_sound(data: &'static [u8]) {
-    use windows_sys::Win32::Media::Audio::{PlaySoundW, SND_ASYNC, SND_MEMORY, SND_NODEFAULT};
-    unsafe {
-        PlaySoundW(
-            data.as_ptr() as *const u16,
-            std::ptr::null_mut(),
-            SND_MEMORY | SND_ASYNC | SND_NODEFAULT,
-        );
-    }
-}
-
 // ---- entry ------------------------------------------------------------------------------
 
 pub fn run() {
@@ -2200,7 +2186,7 @@ pub fn run() {
         }
 
         SetProcessDpiAwarenessContext(-4 as _); // PER_MONITOR_AWARE_V2
-        crate::sound::set_player(play_sound);
+        crate::sound::set_player(super::windows_sound::play);
         crate::sound::init();
         migrate_autostart();
 
