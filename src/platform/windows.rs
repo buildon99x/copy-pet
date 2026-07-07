@@ -111,7 +111,6 @@ struct App {
     drag_cursor: POINT,
     drag_win: (i32, i32),
     hover_tracking: bool,
-    visible: bool,
     pending_surrogate: Option<u16>,
     // win handles
     kbd_hook: HHOOK,
@@ -140,6 +139,10 @@ struct App {
     /// A flyout header-move drag is in progress (moves the flyout window
     /// itself, not the card offset — the flyout position is ephemeral).
     fly_move: bool,
+    /// Source-app icon cache keyed by exe path, so repeated copies from the
+    /// same app (the common case) don't re-extract the icon from disk every
+    /// `WM_CLIPBOARDUPDATE`. `None` caches a prior extraction failure too.
+    icon_cache: std::collections::HashMap<String, Option<(u32, Vec<u8>)>>,
 }
 
 thread_local! {
@@ -177,6 +180,12 @@ impl App {
         let cx = (lp & 0xFFFF) as i16 as f32;
         let cy = ((lp >> 16) & 0xFFFF) as i16 as f32;
         (cx, cy)
+    }
+
+    /// Signed rotation amount from a `WM_MOUSEWHEEL`/`WM_MOUSEHWHEEL` wParam
+    /// (high word, `WHEEL_DELTA` units — positive is away from the user).
+    fn wheel_delta(wp: WPARAM) -> i32 {
+        ((wp >> 16) & 0xFFFF) as i16 as i32
     }
 
     /// Puts panel-picked text on the OS clipboard; our own change is
@@ -268,7 +277,7 @@ impl App {
             let (x, y) = self.window_pos();
             self.pet.save_pos(x, y);
         }
-        if self.visible && redraw {
+        if self.pet.window_level() != 2 && redraw {
             self.pet.render(&mut self.pm);
             self.blit();
         }
@@ -404,14 +413,11 @@ impl App {
 
     /// Applies the persisted window level: 0 = always on top, 1 = normal (can
     /// go behind other windows), 2 = hidden (restored from the tray icon or
-    /// the global panel hotkey). Keeps `self.visible` — which gates the
-    /// per-tick blit — in sync.
+    /// the global panel hotkey).
     unsafe fn apply_window_level(&mut self) {
         if self.pet.window_level() == 2 {
-            self.visible = false;
             ShowWindow(self.hwnd, SW_HIDE);
         } else {
-            self.visible = true;
             let after = if self.pet.window_level() == 0 {
                 HWND_TOPMOST
             } else {
@@ -624,13 +630,20 @@ impl App {
         } else if self.panel_drag {
             // grip resize: feed screen-pixel deltas as panel units; the tick
             // rebuilds the surface (flyout_resized) and re-blits at the new size
-            let mut pt = POINT { x: 0, y: 0 };
-            GetCursorPos(&mut pt);
-            let (dx, dy) = (pt.x - self.drag_cursor.x, pt.y - self.drag_cursor.y);
-            if dx != 0 || dy != 0 {
-                self.pet.panel_drag_update(dx as f32, dy as f32);
-                self.drag_cursor = pt;
-            }
+            self.panel_drag_step();
+        }
+    }
+
+    /// Card drag (header move / grip resize): feeds the screen-pixel cursor
+    /// delta to `Pet::panel_drag_update` and re-bases `drag_cursor`. Shared by
+    /// the cat window's `WM_MOUSEMOVE` and the flyout's grip-resize branch.
+    unsafe fn panel_drag_step(&mut self) {
+        let mut pt = POINT { x: 0, y: 0 };
+        GetCursorPos(&mut pt);
+        let (dx, dy) = (pt.x - self.drag_cursor.x, pt.y - self.drag_cursor.y);
+        if dx != 0 || dy != 0 {
+            self.pet.panel_drag_update(dx as f32, dy as f32);
+            self.drag_cursor = pt;
         }
     }
 
@@ -912,9 +925,18 @@ unsafe fn set_clipboard_rich(
     false
 }
 
-/// Identifies the app that owns the clipboard (falling back to the
-/// foreground window): short name + a fish badge with its real icon.
-unsafe fn clipboard_source() -> (Option<String>, Option<Badge>) {
+impl App {
+    /// Identifies the app that owns the clipboard (falling back to the
+    /// foreground window): short name + a fish badge with its real icon
+    /// (cached by exe path — see `icon_cache`).
+    unsafe fn clipboard_source(&mut self) -> (Option<String>, Option<Badge>) {
+        clipboard_source_at(&mut self.icon_cache)
+    }
+}
+
+unsafe fn clipboard_source_at(
+    icon_cache: &mut std::collections::HashMap<String, Option<(u32, Vec<u8>)>>,
+) -> (Option<String>, Option<Badge>) {
     let mut src = GetClipboardOwner();
     if src.is_null() {
         src = GetForegroundWindow();
@@ -946,8 +968,11 @@ unsafe fn clipboard_source() -> (Option<String>, Option<Badge>) {
         .filter(|n| !n.is_empty());
 
     let mut badge = Badge::from_source(name.as_deref());
-    if let Some((size, rgba)) = extract_icon_rgba(&path) {
-        badge.set_icon_rgba(size, &rgba);
+    let icon = icon_cache
+        .entry(path.clone())
+        .or_insert_with(|| extract_icon_rgba(&path));
+    if let Some((size, rgba)) = icon {
+        badge.set_icon_rgba(*size, rgba);
     }
     (name, Some(badge))
 }
@@ -1302,6 +1327,19 @@ struct MenuSnapshot {
     update: Option<String>,
 }
 
+/// Builds a popup submenu of mutually-exclusive `items`, each checked iff its
+/// index equals `selected` and firing `cmd0 + index`, and appends it to
+/// `menu` under `label`. Shared by the size/sound/window-level submenus,
+/// which differ only in their item list, selection and command base.
+unsafe fn radio_submenu(menu: HMENU, lang: Lang, items: &[Msg], selected: usize, cmd0: usize, label: Msg) {
+    let chk = |on: bool| if on { MF_CHECKED } else { MF_UNCHECKED };
+    let sub = CreatePopupMenu();
+    for (i, name) in items.iter().enumerate() {
+        AppendMenuW(sub, MF_STRING | chk(selected == i), cmd0 + i, wz(t(lang, *name)).as_ptr());
+    }
+    AppendMenuW(menu, MF_POPUP, sub as usize, wz(t(lang, label)).as_ptr());
+}
+
 unsafe fn show_menu(hwnd: HWND, ms: &MenuSnapshot) -> usize {
     let menu = CreatePopupMenu();
     let lang = ms.lang;
@@ -1354,23 +1392,13 @@ unsafe fn show_menu(hwnd: HWND, ms: &MenuSnapshot) -> usize {
     );
 
     // size submenu
-    let size_menu = CreatePopupMenu();
-    for (i, name) in [Msg::SizeSmall, Msg::SizeNormal, Msg::SizeLarge]
-        .iter()
-        .enumerate()
-    {
-        AppendMenuW(
-            size_menu,
-            MF_STRING | chk(ms.scale_idx == i),
-            CMD_SIZE0 + i,
-            wz(t(lang, *name)).as_ptr(),
-        );
-    }
-    AppendMenuW(
+    radio_submenu(
         menu,
-        MF_POPUP,
-        size_menu as usize,
-        wz(t(lang, Msg::MenuSize)).as_ptr(),
+        lang,
+        &[Msg::SizeSmall, Msg::SizeNormal, Msg::SizeLarge],
+        ms.scale_idx,
+        CMD_SIZE0,
+        Msg::MenuSize,
     );
 
     // accessory submenu
@@ -1382,7 +1410,7 @@ unsafe fn show_menu(hwnd: HWND, ms: &MenuSnapshot) -> usize {
         wz(t(lang, Msg::AccNone)).as_ptr(),
     );
     for (i, acc) in ACCESSORIES.iter().enumerate() {
-        let unlocked = ms.level >= acc.level;
+        let unlocked = acc.unlocked_at(ms.level);
         let label = if unlocked {
             acc.name(lang).to_string()
         } else {
@@ -1402,43 +1430,23 @@ unsafe fn show_menu(hwnd: HWND, ms: &MenuSnapshot) -> usize {
     );
 
     // sound submenu
-    let snd_menu = CreatePopupMenu();
-    for (i, name) in [Msg::SoundOff, Msg::SoundEvents, Msg::SoundAll]
-        .iter()
-        .enumerate()
-    {
-        AppendMenuW(
-            snd_menu,
-            MF_STRING | chk(ms.sound as usize == i),
-            CMD_SOUND0 + i,
-            wz(t(lang, *name)).as_ptr(),
-        );
-    }
-    AppendMenuW(
+    radio_submenu(
         menu,
-        MF_POPUP,
-        snd_menu as usize,
-        wz(t(lang, Msg::MenuSound)).as_ptr(),
+        lang,
+        &[Msg::SoundOff, Msg::SoundEvents, Msg::SoundAll],
+        ms.sound as usize,
+        CMD_SOUND0,
+        Msg::MenuSound,
     );
 
     // window stacking submenu (always on top / normal / hide)
-    let win_menu = CreatePopupMenu();
-    for (i, name) in [Msg::WinLevelTop, Msg::WinLevelNormal, Msg::WinLevelHide]
-        .iter()
-        .enumerate()
-    {
-        AppendMenuW(
-            win_menu,
-            MF_STRING | chk(ms.window_level as usize == i),
-            CMD_WINLEVEL0 + i,
-            wz(t(lang, *name)).as_ptr(),
-        );
-    }
-    AppendMenuW(
+    radio_submenu(
         menu,
-        MF_POPUP,
-        win_menu as usize,
-        wz(t(lang, Msg::MenuWindowLevel)).as_ptr(),
+        lang,
+        &[Msg::WinLevelTop, Msg::WinLevelNormal, Msg::WinLevelHide],
+        ms.window_level as usize,
+        CMD_WINLEVEL0,
+        Msg::MenuWindowLevel,
     );
 
     AppendMenuW(
@@ -1768,7 +1776,7 @@ unsafe fn flyout_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRESULT {
         }
         WM_MOUSEWHEEL => {
             with_app(|a| {
-                let delta = ((wp >> 16) & 0xFFFF) as i16 as i32;
+                let delta = App::wheel_delta(wp);
                 if delta != 0 {
                     a.pet.panel_wheel(if delta > 0 { -1 } else { 1 });
                 }
@@ -1833,7 +1841,7 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
                             a.suppress_clip = None;
                             return;
                         }
-                        let (source, badge) = clipboard_source();
+                        let (source, badge) = a.clipboard_source();
                         a.pet.on_copy_rich(text, source, badge, formats);
                     });
                 }
@@ -1907,13 +1915,7 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
                 if a.panel_drag {
                     // card drag: feed screen-pixel deltas as panel units (1.0);
                     // the tick applies the new layout (resize + shift)
-                    let mut pt = POINT { x: 0, y: 0 };
-                    GetCursorPos(&mut pt);
-                    let (dx, dy) = (pt.x - a.drag_cursor.x, pt.y - a.drag_cursor.y);
-                    if dx != 0 || dy != 0 {
-                        a.pet.panel_drag_update(dx as f32, dy as f32);
-                        a.drag_cursor = pt;
-                    }
+                    a.panel_drag_step();
                 } else if a.mouse_down && !a.pet.st.locked {
                     let mut pt = POINT { x: 0, y: 0 };
                     GetCursorPos(&mut pt);
@@ -2011,7 +2013,7 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
         WM_MOUSEWHEEL => {
             with_app(|a| {
                 if a.pet.panel_open() {
-                    let delta = ((wp >> 16) & 0xFFFF) as i16 as i32;
+                    let delta = App::wheel_delta(wp);
                     if delta != 0 {
                         a.pet.panel_wheel(if delta > 0 { -1 } else { 1 });
                     }
@@ -2173,6 +2175,20 @@ fn monitor_work_rect(hwnd: HWND) -> Option<Rect> {
     }
 }
 
+/// `crate::sound`'s playback hook: plays a synthesized WAV buffer through
+/// winmm `PlaySound` (SND_MEMORY | SND_ASYNC, no audio assets, no extra
+/// dependencies). Registered once at startup.
+fn play_sound(data: &'static [u8]) {
+    use windows_sys::Win32::Media::Audio::{PlaySoundW, SND_ASYNC, SND_MEMORY, SND_NODEFAULT};
+    unsafe {
+        PlaySoundW(
+            data.as_ptr() as *const u16,
+            std::ptr::null_mut(),
+            SND_MEMORY | SND_ASYNC | SND_NODEFAULT,
+        );
+    }
+}
+
 // ---- entry ------------------------------------------------------------------------------
 
 pub fn run() {
@@ -2184,6 +2200,7 @@ pub fn run() {
         }
 
         SetProcessDpiAwarenessContext(-4 as _); // PER_MONITOR_AWARE_V2
+        crate::sound::set_player(play_sound);
         crate::sound::init();
         migrate_autostart();
 
@@ -2309,7 +2326,6 @@ pub fn run() {
             drag_cursor: POINT { x: 0, y: 0 },
             drag_win: (0, 0),
             hover_tracking: false,
-            visible: true,
             pending_surrogate: None,
             kbd_hook: SetWindowsHookExW(WH_KEYBOARD_LL, Some(kbd_hook), null_mut(), 0),
             mouse_hook: SetWindowsHookExW(WH_MOUSE_LL, Some(mouse_hook), null_mut(), 0),
@@ -2326,6 +2342,7 @@ pub fn run() {
             fly_pm: tiny_skia::Pixmap::new(fw as u32, fh as u32).unwrap(),
             flyout_anchor: None,
             fly_move: false,
+            icon_cache: std::collections::HashMap::new(),
         };
 
         APP.with(|cell| *cell.borrow_mut() = Some(app));

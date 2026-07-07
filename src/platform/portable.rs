@@ -43,7 +43,7 @@
 use crate::hotkey::Hotkey;
 use crate::input;
 use crate::clipboard::RichFormats;
-use crate::panel::{fit_delta, NavKey, Rect};
+use crate::panel::{self, fit_delta, NavKey, Rect};
 use crate::pet::{ClipPick, Pet};
 
 /// A clipboard observation handed from the watcher thread to the main loop:
@@ -178,6 +178,30 @@ fn window_screen_cursor(window: &Window, local: PhysicalPosition<f64>) -> (f64, 
     (base.0 + local.x, base.1 + local.y)
 }
 
+/// The full rect (not the taskbar-excluded work area) of the monitor `window`
+/// currently sits on, in screen pixels.
+fn monitor_rect(window: &Window) -> Option<Rect> {
+    let mon = window.current_monitor()?;
+    let mp = mon.position();
+    let ms = mon.size();
+    Some(Rect {
+        x: mp.x as f32,
+        y: mp.y as f32,
+        w: ms.width as f32,
+        h: ms.height as f32,
+    })
+}
+
+/// Screen rect of a panel card whose window sits at `(origin_x, origin_y)`.
+fn card_rect(origin_x: f32, origin_y: f32, l: &panel::Layout) -> Rect {
+    Rect {
+        x: origin_x + l.card_x,
+        y: origin_y + l.card_y,
+        w: l.card_w,
+        h: l.card_h,
+    }
+}
+
 impl PortableApp {
     fn new(
         pet: Pet,
@@ -280,21 +304,8 @@ impl PortableApp {
         // layout() is already in physical pixels (card at scale 1.0), so the
         // card's screen rect is just the window origin plus the card offset.
         let l = self.pet.panel.layout();
-        let card = Rect {
-            x: win.x as f32 + l.card_x,
-            y: win.y as f32 + l.card_y,
-            w: l.card_w,
-            h: l.card_h,
-        };
-        let mon = window.current_monitor()?;
-        let mp = mon.position();
-        let ms = mon.size();
-        let vis = Rect {
-            x: mp.x as f32,
-            y: mp.y as f32,
-            w: ms.width as f32,
-            h: ms.height as f32,
-        };
+        let card = card_rect(win.x as f32, win.y as f32, &l);
+        let vis = monitor_rect(window)?;
         let (dx, dy) = fit_delta(card, vis);
         (dx.abs() >= 0.5 || dy.abs() >= 0.5).then_some((dx, dy))
     }
@@ -676,21 +687,8 @@ impl PortableApp {
         // park there first so current_monitor resolves the anchor's monitor
         f.window
             .set_outer_position(PhysicalPosition::new(wx as i32, wy as i32));
-        if let Some(mon) = f.window.current_monitor() {
-            let mp = mon.position();
-            let ms = mon.size();
-            let card = Rect {
-                x: wx as f32 + l.card_x,
-                y: wy as f32 + l.card_y,
-                w: l.card_w,
-                h: l.card_h,
-            };
-            let vis = Rect {
-                x: mp.x as f32,
-                y: mp.y as f32,
-                w: ms.width as f32,
-                h: ms.height as f32,
-            };
+        if let Some(vis) = monitor_rect(&f.window) {
+            let card = card_rect(wx as f32, wy as f32, &l);
             let (dx, dy) = fit_delta(card, vis);
             wx += dx as f64;
             wy += dy as f64;
@@ -942,22 +940,18 @@ impl ApplicationHandler for PortableApp {
                 self.cursor = position;
                 let (cx, cy) = self.client_xy();
                 self.pet.set_cursor(cx, cy);
-                if self.panel_dragging {
-                    // card drag: screen-pixel deltas are panel units (1.0); the
-                    // tick applies the new layout (resize + window shift)
+                if self.panel_dragging || self.cat_drag {
+                    // card drag / cat-body drag (mirror images of each other):
+                    // screen-pixel deltas are panel units (1.0); the tick
+                    // applies the new layout (resize + window shift)
                     let sc = self.screen_cursor();
                     let (dx, dy) = (sc.0 - self.drag_screen.0, sc.1 - self.drag_screen.1);
                     if dx != 0.0 || dy != 0.0 {
-                        self.pet.panel_drag_update(dx as f32, dy as f32);
-                        self.drag_screen = sc;
-                    }
-                } else if self.cat_drag {
-                    // cat-body drag with the panel open: slide the cat, keep
-                    // the card pixel-fixed (the mirror of a card drag)
-                    let sc = self.screen_cursor();
-                    let (dx, dy) = (sc.0 - self.drag_screen.0, sc.1 - self.drag_screen.1);
-                    if dx != 0.0 || dy != 0.0 {
-                        self.pet.drag_pet(dx as f32, dy as f32);
+                        if self.panel_dragging {
+                            self.pet.panel_drag_update(dx as f32, dy as f32);
+                        } else {
+                            self.pet.drag_pet(dx as f32, dy as f32);
+                        }
                         self.drag_screen = sc;
                     }
                 } else if self.mouse_down && !self.dragging && !self.pet.st.locked {

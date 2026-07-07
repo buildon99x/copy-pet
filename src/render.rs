@@ -1146,9 +1146,9 @@ pub fn draw_panel(pm: &mut Pixmap, v: &PanelView) {
         let tmax = right - cluster - tx - 6.0;
         let flat = clip.flattened();
         let (line1, line2) = if thumb {
-            sysfont::wrap_two(&flat, BODY_PX, tmax)
+            sysfont::wrap_two(flat, BODY_PX, tmax)
         } else {
-            (sysfont::truncate_to_width(&flat, BODY_PX, tmax), String::new())
+            (sysfont::truncate_to_width(flat, BODY_PX, tmax), String::new())
         };
         let lead: String = line1.chars().take(BODY_BOLD).collect();
         let rest: String = line1.chars().skip(BODY_BOLD).collect();
