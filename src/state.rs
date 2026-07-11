@@ -202,10 +202,17 @@ impl Persist {
     fn clamp_settings(&mut self) {
         self.scale_idx = self.scale_idx.min(crate::pet::SCALES.len() - 1);
         self.sound_mode = self.sound_mode.min(2);
-        self.window_level = self.window_level.min(2);
         self.panel_view = self.panel_view.min(1);
         if self.accessory > ACCESSORIES.len() {
             self.accessory = 0;
+        }
+        // window_level 2 is "Hide": saturating a corrupt value to 2 would
+        // enforce Hide on startup (both backends call apply_window_level) and
+        // launch the app invisible — the opposite of self-healing. Reset an
+        // out-of-range level to the default visible mode (0 = always-on-top,
+        // the factory default) instead of clamping to Hide.
+        if self.window_level > 2 {
+            self.window_level = 0;
         }
     }
 
@@ -434,7 +441,10 @@ mod tests {
         st.clamp_settings();
         assert_eq!(st.scale_idx, crate::pet::SCALES.len() - 1);
         assert_eq!(st.sound_mode, 2);
-        assert_eq!(st.window_level, 2);
+        assert_eq!(
+            st.window_level, 0,
+            "out-of-range window_level resets to a visible mode, not Hide (2)"
+        );
         assert_eq!(st.panel_view, 1);
         assert_eq!(st.accessory, 0, "unknown accessory id resets to none");
 
