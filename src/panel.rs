@@ -506,7 +506,7 @@ impl Panel {
             None => sources.first().map(|s| s.to_string()),
             Some(cur) => sources
                 .iter()
-                .position(|s| s.eq_ignore_ascii_case(cur))
+                .position(|s| crate::clipboard::eq_ci(s, cur))
                 .and_then(|i| sources.get(i + 1))
                 .map(|s| s.to_string()),
         };

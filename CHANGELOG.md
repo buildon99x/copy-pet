@@ -51,6 +51,16 @@ versions follow [SemVer](https://semver.org/). Maintenance rules:
   "Paste on select" setting still controls the middle-click panel by the cat.)
 - **The blue beanie's pom-pom no longer floats above the hat** — it now rests on
   the crown so it reads as a bobble hat instead of a detached dot over the cat.
+- **Long pop-up notices stay on-screen and readable** — messages such as the
+  macOS "enable Accessibility for the hotkey" prompt no longer render off the
+  left edge; they now fit inside their pill like the first-run hotkey hint.
+- **Memory no longer creeps up while resizing the clipboard panel** (Windows):
+  dragging the panel's resize grip previously leaked a bitmap on every step.
+- **A hand-edited or corrupt settings file self-heals** — an out-of-range size,
+  sound or window-layer value no longer leaves its menu with nothing selected.
+- **A failed clipboard write no longer pastes the wrong thing** (Windows): if
+  writing the picked clip fails, ClipCat now skips the auto-paste instead of
+  pasting whatever text was previously on the clipboard.
 
 ### Changed
 - **Korean stats bubble reads natively**: the cat's "active time" now shows as
