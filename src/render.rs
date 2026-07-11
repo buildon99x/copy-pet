@@ -464,15 +464,19 @@ fn draw_scene(pm: &mut Pixmap, sc: &Scene, scale: f32) {
         draw_particle(&mut cv, p);
     }
 
-    // toast pill
+    // toast pill. Clamp the pill to the canvas and truncate the text to fit,
+    // mirroring the hotkey-hint block below — a long toast (e.g. the macOS
+    // "enable Accessibility" instruction or a hotkey fallback notice) would
+    // otherwise compute a negative x and render off-screen / unreadable.
     if let Some((text, a)) = sc.toast {
         if a > 0.01 {
-            let w = sysfont::measure(text, 2.0) + 20.0;
-            let x = 120.0 - w / 2.0;
+            let w = (sysfont::measure(text, 2.0) + 20.0).min(CANVAS_W - 8.0);
+            let x = (CANVAS_W - w) / 2.0;
+            let label = sysfont::truncate_to_width(text, 2.0, w - 20.0);
             let pill = round_rect(x, 80.0, w, 20.0, 9.0);
             cv.fill(&pill, fade((255, 233, 168, 255), a));
             cv.stroke(&pill, fade(OUTLINE, a), 2.0);
-            cv.ui_text(text, x + 10.0, 83.0, 2.0, fade(TEXT, a));
+            cv.ui_text(&label, x + 10.0, 83.0, 2.0, fade(TEXT, a));
         }
     }
 
@@ -489,10 +493,11 @@ fn draw_scene(pm: &mut Pixmap, sc: &Scene, scale: f32) {
     if let Some(hint) = sc.hotkey_hint {
         let w = (sysfont::measure(hint, 1.7) + 22.0).min(CANVAS_W - 8.0);
         let x = (CANVAS_W - w) / 2.0;
+        let label = sysfont::truncate_to_width(hint, 1.7, w - 22.0);
         let pill = round_rect(x, 6.0, w, 20.0, 9.0);
         cv.fill(&pill, (255, 233, 168, 255));
         cv.stroke(&pill, OUTLINE, 2.0);
-        cv.ui_text(hint, x + 11.0, 9.0, 1.7, TEXT);
+        cv.ui_text(&label, x + 11.0, 9.0, 1.7, TEXT);
     }
 }
 

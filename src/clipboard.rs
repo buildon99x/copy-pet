@@ -207,7 +207,7 @@ fn fold(s: &str) -> impl Iterator<Item = char> + '_ {
 }
 
 /// Allocation-free case-insensitive string equality.
-fn eq_ci(a: &str, b: &str) -> bool {
+pub(crate) fn eq_ci(a: &str, b: &str) -> bool {
     fold(a).eq(fold(b))
 }
 

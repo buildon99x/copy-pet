@@ -194,7 +194,10 @@ impl App {
         if ok {
             self.suppress_clip = Some(pick.text.clone());
         }
-        if pick.paste && !self.paste_target.is_null() && self.paste_target != self.hwnd {
+        // Only paste when the write actually landed: on failure the clipboard
+        // still holds the previous content, so synthesizing Ctrl+V would paste
+        // stale text into the target field instead of the picked clip.
+        if ok && pick.paste && !self.paste_target.is_null() && self.paste_target != self.hwnd {
             unsafe {
                 // Win+V parity: hand the foreground back to the app that was
                 // active when the panel opened, then synthesize Ctrl+V there.
@@ -332,8 +335,14 @@ impl App {
             (nx, ny) = clamp_to_screen(nx, ny, w, h);
         }
         if (w, h) != (self.w, self.h) {
-            DeleteObject(self.dib as _);
+            // Delete the DC *before* the DIB: the DIB is still selected into
+            // mem_dc (create_surface SelectObject'd it and left it selected for
+            // UpdateLayeredWindow). DeleteObject on a selected bitmap fails and
+            // leaks the DIBSection + its pixel buffer; DeleteDC deselects it
+            // first. Matters most under a grip-resize drag, which recreates the
+            // surface many times per second.
             DeleteDC(self.mem_dc);
+            DeleteObject(self.dib as _);
             let (dc, dib, bits) = create_surface(w, h);
             self.mem_dc = dc;
             self.dib = dib;
@@ -474,8 +483,10 @@ impl App {
         if (w, h) == (self.fly_w, self.fly_h) {
             return;
         }
-        DeleteObject(self.fly_dib as _);
+        // Delete the DC before the DIB — the DIB is still selected into
+        // fly_mem_dc, so DeleteObject would fail and leak it (see apply_size).
         DeleteDC(self.fly_mem_dc);
+        DeleteObject(self.fly_dib as _);
         let (dc, dib, bits) = create_surface(w, h);
         self.fly_mem_dc = dc;
         self.fly_dib = dib;

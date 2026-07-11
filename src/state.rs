@@ -189,7 +189,31 @@ impl Persist {
             st.panel_off_x,
             st.panel_off_y,
         );
+        st.clamp_settings();
         st
+    }
+
+    /// Hardens the scalar settings against a hand-edited/corrupt state.json.
+    /// An out-of-range value would leave its radio submenu with no checked
+    /// item (the `current == i` scan never matches) and hand the backend an
+    /// unclamped `window_level` at startup. Every read site is already
+    /// defensive, so this only self-heals what the menus display — valid data
+    /// is untouched. Mirrors the geometry/hotkey hardening in `load`.
+    fn clamp_settings(&mut self) {
+        self.scale_idx = self.scale_idx.min(crate::pet::SCALES.len() - 1);
+        self.sound_mode = self.sound_mode.min(2);
+        self.panel_view = self.panel_view.min(1);
+        if self.accessory > ACCESSORIES.len() {
+            self.accessory = 0;
+        }
+        // window_level 2 is "Hide": saturating a corrupt value to 2 would
+        // enforce Hide on startup (both backends call apply_window_level) and
+        // launch the app invisible — the opposite of self-healing. Reset an
+        // out-of-range level to the default visible mode (0 = always-on-top,
+        // the factory default) instead of clamping to Hide.
+        if self.window_level > 2 {
+            self.window_level = 0;
+        }
     }
 
     pub fn save(&self) {
@@ -397,6 +421,46 @@ mod tests {
             (st.panel_off_x, st.panel_off_y),
             crate::panel::DEFAULT_OFF,
             "panel offset defaults in"
+        );
+    }
+
+    #[test]
+    fn out_of_range_settings_are_clamped_on_load() {
+        // A hand-edited/corrupt state.json with out-of-range scalars must not
+        // leave a radio submenu with no checked item or feed the backend an
+        // unclamped window_level. clamp_settings self-heals them to valid
+        // indices (mirrors the geometry/hotkey hardening in load).
+        let mut st = Persist {
+            scale_idx: 7,
+            sound_mode: 9,
+            window_level: 200,
+            panel_view: 5,
+            accessory: 99,
+            ..Persist::default()
+        };
+        st.clamp_settings();
+        assert_eq!(st.scale_idx, crate::pet::SCALES.len() - 1);
+        assert_eq!(st.sound_mode, 2);
+        assert_eq!(
+            st.window_level, 0,
+            "out-of-range window_level resets to a visible mode, not Hide (2)"
+        );
+        assert_eq!(st.panel_view, 1);
+        assert_eq!(st.accessory, 0, "unknown accessory id resets to none");
+
+        // valid data is left untouched
+        let mut ok = Persist {
+            scale_idx: 0,
+            sound_mode: 1,
+            window_level: 2,
+            panel_view: 0,
+            accessory: ACCESSORIES.len(),
+            ..Persist::default()
+        };
+        ok.clamp_settings();
+        assert_eq!(
+            (ok.scale_idx, ok.sound_mode, ok.window_level, ok.panel_view, ok.accessory),
+            (0, 1, 2, 0, ACCESSORIES.len())
         );
     }
 }
