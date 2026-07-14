@@ -5,6 +5,7 @@
 //! `state.json`. Everything stays local — there is no network code.
 
 use serde::{Deserialize, Serialize};
+use std::cell::OnceCell;
 use std::collections::VecDeque;
 use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -63,6 +64,12 @@ pub struct Clip {
     /// platform supports them. `None` for old clips, plain copies and Linux.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub formats: Option<RichFormats>,
+    /// Memoized [`Clip::flattened`] result. `text` never changes after
+    /// construction, but `flattened()` is called once per visible panel row
+    /// on every ~33ms render tick while the panel is open — caching avoids
+    /// redoing the whitespace-collapse work for unchanged text every frame.
+    #[serde(skip, default)]
+    flat: OnceCell<String>,
 }
 
 // ---- base64 (inline; no crate, per the "no heavy deps" golden rule) ---------
@@ -162,8 +169,9 @@ impl Clip {
     /// spaces, so a multi-line clip shows content past its first line — you
     /// see more of what a clip actually holds. Capped generously; the row
     /// truncates it to the available width.
-    pub fn flattened(&self) -> String {
-        collapse_whitespace(self.text.trim().chars(), 200)
+    pub fn flattened(&self) -> &str {
+        self.flat
+            .get_or_init(|| collapse_whitespace(self.text.trim().chars(), 200))
     }
 }
 
@@ -378,6 +386,7 @@ impl ClipStore {
                 pinned: false,
                 ts,
                 formats,
+                flat: OnceCell::new(),
             };
             self.next_id += 1;
             self.items.insert(0, clip);
@@ -824,6 +833,7 @@ mod tests {
             pinned: false,
             ts: 0,
             formats: None,
+            flat: OnceCell::new(),
         };
         assert_eq!(c.preview(), "fn main() {");
         // flattened folds *every* line in (newlines -> single spaces), so the

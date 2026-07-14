@@ -36,6 +36,11 @@ type Id = *mut Object;
 pub struct Presenter {
     layer: Id,
     color_space: CGColorSpace,
+    /// Backing bitmap context, reused across frames and only recreated when
+    /// the pixmap size changes — allocating one fresh per frame would be
+    /// wasted work on the ~33ms render tick.
+    ctx: Option<CGContext>,
+    ctx_size: (usize, usize),
 }
 
 // The pointers are only ever touched on the main (UI) thread, like the rest of
@@ -67,6 +72,8 @@ impl Presenter {
             Some(Presenter {
                 layer,
                 color_space: CGColorSpace::create_device_rgb(),
+                ctx: None,
+                ctx_size: (0, 0),
             })
         }
     }
@@ -80,16 +87,22 @@ impl Presenter {
         if w == 0 || h == 0 {
             return;
         }
+        // Reuse the backing bitmap context across frames; only recreate it
+        // when the pixmap size changes (e.g. a panel resize).
+        if self.ctx.is_none() || self.ctx_size != (w, h) {
+            self.ctx = Some(CGContext::create_bitmap_context(
+                None,
+                w,
+                h,
+                8,
+                w * 4,
+                &self.color_space,
+                K_CG_IMAGE_ALPHA_PREMULTIPLIED_LAST,
+            ));
+            self.ctx_size = (w, h);
+        }
         // Snapshot the premultiplied RGBA pixmap into an immutable CGImage.
-        let mut ctx = CGContext::create_bitmap_context(
-            None,
-            w,
-            h,
-            8,
-            w * 4,
-            &self.color_space,
-            K_CG_IMAGE_ALPHA_PREMULTIPLIED_LAST,
-        );
+        let ctx = self.ctx.as_mut().unwrap();
         ctx.data().copy_from_slice(pm.data());
         let Some(image) = ctx.create_image() else {
             return;
