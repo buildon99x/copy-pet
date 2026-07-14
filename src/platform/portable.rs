@@ -135,7 +135,6 @@ struct PortableApp {
     drag_screen: (f64, f64),
     press_pos: PhysicalPosition<f64>,
     last_click: Option<Instant>,
-    focused: bool,
     /// Live keyboard modifiers (for Ctrl+P / Ctrl+Z / Ctrl+digits in the panel).
     mods: ModifiersState,
     /// The caret-anchored clipboard flyout's own window (macOS only — Win+V
@@ -247,7 +246,6 @@ impl PortableApp {
             drag_screen: (0.0, 0.0),
             press_pos: PhysicalPosition::new(0.0, 0.0),
             last_click: None,
-            focused: false,
             mods: ModifiersState::default(),
             #[cfg(target_os = "macos")]
             flyout: None,
@@ -371,6 +369,13 @@ impl PortableApp {
     /// cat scale itself, so neither needs pre-division here.
     fn client_xy(&self) -> (f32, f32) {
         (self.cursor.x as f32, self.cursor.y as f32)
+    }
+
+    /// Clears the pending single/double-click state — used whenever a press
+    /// is consumed by something other than the click/petting gesture.
+    fn reset_click_state(&mut self) {
+        self.mouse_down = false;
+        self.last_click = None;
     }
 
     fn save_position(&mut self) {
@@ -537,7 +542,7 @@ impl PortableApp {
                 let mut next = self.pet.st.accessory;
                 for _ in 0..=ACCESSORIES.len() {
                     next = (next + 1) % (ACCESSORIES.len() + 1);
-                    if next == 0 || level >= ACCESSORIES[next - 1].level {
+                    if next == 0 || ACCESSORIES[next - 1].unlocked_at(level) {
                         break;
                     }
                 }
@@ -929,7 +934,6 @@ impl ApplicationHandler for PortableApp {
                 self.save_position();
                 event_loop.exit();
             }
-            WindowEvent::Focused(f) => self.focused = f,
             WindowEvent::RedrawRequested => self.paint(),
             WindowEvent::CursorEntered { .. } => self.pet.set_hover(true),
             WindowEvent::CursorLeft { .. } => {
@@ -981,8 +985,7 @@ impl ApplicationHandler for PortableApp {
                         if self.pet.panel_drag_start(cx, cy) {
                             self.panel_dragging = true;
                             self.drag_screen = self.screen_cursor();
-                            self.mouse_down = false;
-                            self.last_click = None;
+                            self.reset_click_state();
                             return;
                         }
                         if self.pet.panel_hit(cx, cy) {
@@ -990,8 +993,7 @@ impl ApplicationHandler for PortableApp {
                             if let Some(pick) = self.pet.panel_click(cx, cy) {
                                 self.set_clipboard(pick);
                             }
-                            self.mouse_down = false;
-                            self.last_click = None;
+                            self.reset_click_state();
                             return;
                         }
                         let now = Instant::now();
@@ -1001,8 +1003,7 @@ impl ApplicationHandler for PortableApp {
                             .unwrap_or(false);
                         if is_double {
                             self.pet.pet();
-                            self.last_click = None;
-                            self.mouse_down = false;
+                            self.reset_click_state();
                         } else {
                             self.last_click = Some(now);
                             self.mouse_down = true;

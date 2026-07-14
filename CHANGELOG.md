@@ -61,6 +61,8 @@ versions follow [SemVer](https://semver.org/). Maintenance rules:
 - **A failed clipboard write no longer pastes the wrong thing** (Windows): if
   writing the picked clip fails, ClipCat now skips the auto-paste instead of
   pasting whatever text was previously on the clipboard.
+- **Pausing/resuming clip capture from the Windows tray menu now shows a
+  confirmation toast**, matching the panel's pause icon and the macOS menu.
 
 ### Changed
 - **Korean stats bubble reads natively**: the cat's "active time" now shows as

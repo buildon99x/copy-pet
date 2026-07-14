@@ -210,6 +210,12 @@ impl Pet {
         self.level
     }
 
+    /// Excitement level derived from the recent input rate, used by both the
+    /// tail-wag animation (`advance`) and the rendered scene (`draw`).
+    fn excite(&self) -> f32 {
+        (self.rate / 7.0).clamp(0.0, 1.0)
+    }
+
     pub fn tooltip(&self) -> String {
         format!("ClipCat — {} {}", t(self.lang(), Msg::BubbleLv), self.level)
     }
@@ -935,7 +941,7 @@ impl Pet {
             self.blink_next = t + 2.2 + rand_f(&mut self.rng) * 3.5;
         }
 
-        let excite = (self.rate / 7.0).clamp(0.0, 1.0);
+        let excite = self.excite();
         self.tail_phase += dt * (1.3 + excite * 5.0 + self.happy * 2.0 - self.sleep * 0.9);
 
         // fish flight
@@ -1087,7 +1093,7 @@ impl Pet {
         } else {
             0.0
         };
-        let excite = (self.rate / 7.0).clamp(0.0, 1.0);
+        let excite = self.excite();
         let breath = (t * (2.2 - self.sleep * 1.2)).sin();
 
         let toast_view = self
@@ -1095,8 +1101,8 @@ impl Pet {
             .as_ref()
             .map(|(s, until)| (s.as_str(), ((*until - t) / 0.4).min(1.0)));
 
-        let (lv, into, need) = level_progress(self.st.total_xp);
         let bubble = if self.bubble_alpha > 0.01 {
+            let (lv, into, need) = level_progress(self.st.total_xp);
             Some(BubbleData {
                 level: lv,
                 pct: into as f32 / need as f32,
