@@ -14,7 +14,8 @@ use crate::clipboard::{b64_decode, b64_encode, RichFormats};
 use crate::hotkey::{self, Hotkey};
 use crate::i18n::{self, t, Lang, Msg};
 use crate::input;
-use crate::panel::{fit_delta, NavKey, PanelDrag, Rect};
+use crate::menu::MenuAction;
+use crate::panel::{fit_delta, Layout, NavKey, PanelDrag, Rect};
 use crate::pet::{window_size, ClipPick, Pet, SCALES};
 use crate::render::{self, Badge};
 use crate::state::{Persist, ACCESSORIES};
@@ -161,16 +162,38 @@ fn with_app<R>(f: impl FnOnce(&mut App) -> R) -> Option<R> {
     })
 }
 
+/// Current screen-pixel cursor position.
+fn cursor_pos() -> POINT {
+    let mut pt = POINT { x: 0, y: 0 };
+    unsafe { GetCursorPos(&mut pt) };
+    pt
+}
+
+/// The panel card's screen-pixel rect given the window's top-left origin.
+fn card_rect(origin_x: f32, origin_y: f32, l: &Layout) -> Rect {
+    Rect {
+        x: origin_x + l.card_x,
+        y: origin_y + l.card_y,
+        w: l.card_w,
+        h: l.card_h,
+    }
+}
+
+/// Top-left of `hwnd` in screen pixels.
+fn hwnd_top_left(hwnd: HWND) -> (i32, i32) {
+    let mut rc = RECT {
+        left: 0,
+        top: 0,
+        right: 0,
+        bottom: 0,
+    };
+    unsafe { GetWindowRect(hwnd, &mut rc) };
+    (rc.left, rc.top)
+}
+
 impl App {
     fn window_pos(&self) -> (i32, i32) {
-        let mut rc = RECT {
-            left: 0,
-            top: 0,
-            right: 0,
-            bottom: 0,
-        };
-        unsafe { GetWindowRect(self.hwnd, &mut rc) };
-        (rc.left, rc.top)
+        hwnd_top_left(self.hwnd)
     }
 
     /// Client coords (from an lParam) in physical pixels. The panel is
@@ -322,14 +345,8 @@ impl App {
         let fit = self.pet.take_fit_panel();
         let (w, h) = self.pet.canvas_size();
         let (dx, dy) = self.pet.take_window_shift();
-        let mut rc = RECT {
-            left: 0,
-            top: 0,
-            right: 0,
-            bottom: 0,
-        };
-        GetWindowRect(self.hwnd, &mut rc);
-        let (mut nx, mut ny) = (rc.left + dx, rc.top + dy);
+        let (px, py) = self.window_pos();
+        let (mut nx, mut ny) = (px + dx, py + dy);
         // `apply_size` only ever sizes the *cat* window. The flyout lives in
         // its own window, so the cat window is cat-only whenever the panel is a
         // flyout — treat that exactly like "panel closed" here (clamp on
@@ -410,12 +427,7 @@ impl App {
     /// is already physical (it renders at scale 1.0), so no scale conversion.
     unsafe fn panel_fit_shift(&self, nx: i32, ny: i32) -> Option<(f32, f32)> {
         let l = self.pet.panel.layout();
-        let card = Rect {
-            x: nx as f32 + l.card_x,
-            y: ny as f32 + l.card_y,
-            w: l.card_w,
-            h: l.card_h,
-        };
+        let card = card_rect(nx as f32, ny as f32, &l);
         let (dx, dy) = fit_delta(card, monitor_work_rect(self.hwnd)?);
         (dx.abs() >= 0.5 || dy.abs() >= 0.5).then_some((dx, dy))
     }
@@ -477,9 +489,7 @@ impl App {
 
     /// Top-left of the flyout window in screen pixels.
     fn flyout_pos(&self) -> (i32, i32) {
-        let mut rc = RECT { left: 0, top: 0, right: 0, bottom: 0 };
-        unsafe { GetWindowRect(self.flyout_hwnd, &mut rc) };
-        (rc.left, rc.top)
+        hwnd_top_left(self.flyout_hwnd)
     }
 
     /// Rebuilds the flyout surface to the current [`Pet::flyout_size`] (after a
@@ -524,12 +534,7 @@ impl App {
         let l = self.pet.panel.layout_standalone();
         let mut wx = ax - l.card_x.round() as i32;
         let mut wy = ay - l.card_y.round() as i32;
-        let card = Rect {
-            x: wx as f32 + l.card_x,
-            y: wy as f32 + l.card_y,
-            w: l.card_w,
-            h: l.card_h,
-        };
+        let card = card_rect(wx as f32, wy as f32, &l);
         if let Some(work) = monitor_work_rect(self.flyout_hwnd) {
             let (dx, dy) = fit_delta(card, work);
             wx += dx.round() as i32;
@@ -543,8 +548,7 @@ impl App {
     unsafe fn show_flyout(&mut self) {
         self.resize_flyout_surface();
         let (ax, ay) = self.flyout_anchor.unwrap_or_else(|| {
-            let mut p = POINT { x: 0, y: 0 };
-            GetCursorPos(&mut p);
+            let p = cursor_pos();
             (p.x, p.y)
         });
         // Park the (still-hidden) window at the rough anchor first so the
@@ -596,16 +600,12 @@ impl App {
             match self.pet.panel_drag_kind() {
                 Some(PanelDrag::Move) => {
                     self.fly_move = true;
-                    let mut pt = POINT { x: 0, y: 0 };
-                    GetCursorPos(&mut pt);
-                    self.drag_cursor = pt;
+                    self.drag_cursor = cursor_pos();
                     self.drag_win = self.flyout_pos();
                 }
                 Some(PanelDrag::Resize) => {
                     self.panel_drag = true;
-                    let mut pt = POINT { x: 0, y: 0 };
-                    GetCursorPos(&mut pt);
-                    self.drag_cursor = pt;
+                    self.drag_cursor = cursor_pos();
                 }
                 None => {}
             }
@@ -624,8 +624,7 @@ impl App {
         let (cx, cy) = self.client_xy(lp);
         self.pet.set_cursor(cx, cy);
         if self.fly_move {
-            let mut pt = POINT { x: 0, y: 0 };
-            GetCursorPos(&mut pt);
+            let pt = cursor_pos();
             let (dx, dy) = (pt.x - self.drag_cursor.x, pt.y - self.drag_cursor.y);
             if dx != 0 || dy != 0 {
                 SetWindowPos(
@@ -649,13 +648,22 @@ impl App {
     /// delta to `Pet::panel_drag_update` and re-bases `drag_cursor`. Shared by
     /// the cat window's `WM_MOUSEMOVE` and the flyout's grip-resize branch.
     unsafe fn panel_drag_step(&mut self) {
-        let mut pt = POINT { x: 0, y: 0 };
-        GetCursorPos(&mut pt);
+        let pt = cursor_pos();
         let (dx, dy) = (pt.x - self.drag_cursor.x, pt.y - self.drag_cursor.y);
         if dx != 0 || dy != 0 {
             self.pet.panel_drag_update(dx as f32, dy as f32);
             self.drag_cursor = pt;
         }
+    }
+
+    /// Starts a card drag (header move / grip resize) on the cat window:
+    /// arms the drag flag, re-bases the cursor and captures the mouse.
+    /// Shared by `WM_LBUTTONDOWN` and `WM_LBUTTONDBLCLK` (a fast second
+    /// header/grip drag can arrive as a double-click).
+    unsafe fn begin_panel_drag(&mut self, hwnd: HWND) {
+        self.panel_drag = true;
+        self.drag_cursor = cursor_pos();
+        SetCapture(hwnd);
     }
 
     fn flyout_lbutton_up(&mut self) {
@@ -1527,8 +1535,7 @@ unsafe fn show_menu(hwnd: HWND, ms: &MenuSnapshot) -> usize {
         wz(t(lang, Msg::MenuExit)).as_ptr(),
     );
 
-    let mut pt = POINT { x: 0, y: 0 };
-    GetCursorPos(&mut pt);
+    let pt = cursor_pos();
     SetForegroundWindow(hwnd);
     let cmd = TrackPopupMenu(
         menu,
@@ -1629,8 +1636,7 @@ unsafe fn open_menu(hwnd: HWND) {
             }
             CMD_CAPTURE => {
                 with_app(|a| {
-                    a.pet.st.clip_capture = !a.pet.st.clip_capture;
-                    a.pet.dirty = true;
+                    a.pet.apply_menu_action(MenuAction::ToggleCapture);
                 });
             }
             CMD_AUTOCLOSE => {
@@ -1699,8 +1705,7 @@ unsafe fn open_menu(hwnd: HWND) {
             }
             c if (CMD_ACC0..=CMD_ACC0 + ACCESSORIES.len()).contains(&c) => {
                 with_app(|a| {
-                    a.pet.st.accessory = c - CMD_ACC0;
-                    a.pet.dirty = true;
+                    a.pet.apply_menu_action(MenuAction::SetAccessory(c - CMD_ACC0));
                 });
             }
             _ => {}
@@ -1884,11 +1889,7 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
                 // header strip / resize grip start a card drag (the grip
                 // pokes slightly past the card edge, hence the extra check)
                 if a.pet.panel_drag_start(cx, cy) {
-                    a.panel_drag = true;
-                    let mut pt = POINT { x: 0, y: 0 };
-                    GetCursorPos(&mut pt);
-                    a.drag_cursor = pt;
-                    SetCapture(hwnd);
+                    a.begin_panel_drag(hwnd);
                     return;
                 }
                 if a.pet.panel_hit(cx, cy) {
@@ -1900,9 +1901,7 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
                 }
                 a.mouse_down = true;
                 a.drag_moved = false;
-                let mut pt = POINT { x: 0, y: 0 };
-                GetCursorPos(&mut pt);
-                a.drag_cursor = pt;
+                a.drag_cursor = cursor_pos();
                 a.drag_win = a.window_pos();
                 SetCapture(hwnd);
             });
@@ -1928,8 +1927,7 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
                     // the tick applies the new layout (resize + shift)
                     a.panel_drag_step();
                 } else if a.mouse_down && !a.pet.st.locked {
-                    let mut pt = POINT { x: 0, y: 0 };
-                    GetCursorPos(&mut pt);
+                    let pt = cursor_pos();
                     let dx = pt.x - a.drag_cursor.x;
                     let dy = pt.y - a.drag_cursor.y;
                     if a.drag_moved || dx.abs() > 3 || dy.abs() > 3 {
@@ -1999,11 +1997,7 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
                 let (cx, cy) = a.client_xy(lp);
                 // a fast second header/grip drag arrives as a double-click
                 if a.pet.panel_drag_start(cx, cy) {
-                    a.panel_drag = true;
-                    let mut pt = POINT { x: 0, y: 0 };
-                    GetCursorPos(&mut pt);
-                    a.drag_cursor = pt;
-                    SetCapture(hwnd);
+                    a.begin_panel_drag(hwnd);
                     return;
                 }
                 if a.pet.panel_hit(cx, cy) {

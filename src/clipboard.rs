@@ -196,6 +196,10 @@ pub struct ClipStore {
     /// Monotonic mutation counter; bumps whenever the list could look
     /// different, so the panel's cached filtered view knows to recompute.
     version: u64,
+    /// Count of pinned items, kept in sync at every site that can change a
+    /// clip's pinned flag or remove a clip — avoids an O(n) rescan on the
+    /// panel's every-frame footer render (`pinned_count`).
+    pinned: usize,
 }
 
 #[derive(Deserialize, Default)]
@@ -321,12 +325,14 @@ impl ClipStore {
             }
             items.len() as u64 + 1
         };
+        let pinned = items.iter().filter(|c| c.pinned).count();
         ClipStore {
             items,
             next_id,
             dirty: false,
             undo: VecDeque::new(),
             version: 0,
+            pinned,
         }
     }
 
@@ -417,14 +423,18 @@ impl ClipStore {
 
     /// Toggles a pin; refuses to pin beyond [`MAX_PINNED`].
     pub fn toggle_pin(&mut self, id: u64) {
-        let pinned_count = self.pinned_count();
         let mut unpinned = false;
         if let Some(c) = self.items.iter_mut().find(|c| c.id == id) {
-            if !c.pinned && pinned_count >= MAX_PINNED {
+            if !c.pinned && self.pinned >= MAX_PINNED {
                 return;
             }
             c.pinned = !c.pinned;
             unpinned = !c.pinned;
+            if unpinned {
+                self.pinned -= 1;
+            } else {
+                self.pinned += 1;
+            }
             self.touch();
         }
         // Unpinning can push the unpinned history back over MAX_HISTORY; trim
@@ -439,6 +449,9 @@ impl ClipStore {
             return false;
         };
         let clip = self.items.remove(i);
+        if clip.pinned {
+            self.pinned -= 1;
+        }
         self.push_undo(vec![clip]);
         self.touch();
         true
@@ -482,6 +495,9 @@ impl ClipStore {
                 .iter()
                 .position(|c| c.ts <= clip.ts)
                 .unwrap_or(self.items.len());
+            if clip.pinned {
+                self.pinned += 1;
+            }
             self.items.insert(i, clip);
         }
         self.evict();
@@ -498,7 +514,7 @@ impl ClipStore {
     }
 
     pub fn pinned_count(&self) -> usize {
-        self.items.iter().filter(|c| c.pinned).count()
+        self.pinned
     }
 
     /// Clips for the panel: pinned first (newest first), then history
