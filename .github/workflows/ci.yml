@@ -73,6 +73,27 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # A tagged release must ship a binary whose embedded version matches the
+      # tag. The in-app updater (src/update.rs) reads the newest tag from the
+      # /releases/latest redirect and compares it to CARGO_PKG_VERSION; a tag
+      # pushed against a Cargo.toml that was never bumped (e.g. v2.3.0 built from
+      # a 2.2.0 tree) makes the swapped-in binary keep identifying as the old
+      # version, so the daily check re-prompts forever and the update never
+      # "takes". Fail the release build here, before any asset is published.
+      # Cut releases with scripts/release.sh, which bumps the version in the same
+      # commit it tags. See LNR-0009.
+      - name: Verify tag matches Cargo.toml version
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: bash
+        run: |
+          tag_ver="${GITHUB_REF_NAME#v}"
+          crate_ver=$(sed -n 's/^version = "\([0-9][^"]*\)".*/\1/p' Cargo.toml | head -n1)
+          echo "tag=$tag_ver cargo=$crate_ver"
+          if [ "$tag_ver" != "$crate_ver" ]; then
+            echo "::error::Tag $GITHUB_REF_NAME does not match Cargo.toml version $crate_ver — cut releases with scripts/release.sh so the version is bumped in the tagged commit."
+            exit 1
+          fi
+
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy

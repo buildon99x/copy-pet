@@ -60,3 +60,10 @@ claiming "no network, ever".
   tray entry).
 - An aborted swap rolls back (`.old` renamed back); a failed download
   leaves the running install untouched and toasts "UPDATE FAILED".
+- A release's git tag and the binary's `CARGO_PKG_VERSION` **must** match, or
+  the updater re-prompts forever: the swapped-in binary keeps identifying as the
+  old version, so the check finds the same "newer" tag on every run and the
+  update never visibly takes. Cut releases only via `scripts/release.sh` (it
+  bumps the version in the commit it tags); CI enforces `tag == Cargo.toml
+  version` on every `v*` build as the backstop. See
+  [LNR-0009](../lnr/0009-release-tag-version-mismatch.md).
