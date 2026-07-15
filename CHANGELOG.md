@@ -16,6 +16,8 @@ versions follow [SemVer](https://semver.org/). Maintenance rules:
 
 ## [Unreleased]
 
+## [2.3.0] - 2026-07-15
+
 ### Added
 - **13 new accessories to unlock** as your cat levels up: bunny ears, a sprout,
   a daisy crown, bear ears, cherries, a butterfly, heart sunglasses, a chick, a
