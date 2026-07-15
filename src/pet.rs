@@ -103,6 +103,7 @@ pub struct Pet {
     squash: f32,
     rate: f32,
     tail_phase: f32,
+    breath_phase: f32,
     last_event: Instant,
     particles: Vec<Particle>,
     zzz_next: f32,
@@ -171,6 +172,7 @@ impl Pet {
             squash: 0.0,
             rate: 0.0,
             tail_phase: 0.0,
+            breath_phase: 0.0,
             last_event: now,
             particles: Vec::new(),
             zzz_next: 0.0,
@@ -943,6 +945,13 @@ impl Pet {
 
         let excite = self.excite();
         self.tail_phase += dt * (1.3 + excite * 5.0 + self.happy * 2.0 - self.sleep * 0.9);
+        // Breathing is a phase accumulator (like tail_phase), not sin(t·ω): the
+        // frequency drops as `sleep` ramps, and multiplying absolute elapsed
+        // time by a changing ω rewrites the whole phase each frame — a violent
+        // per-frame jump (∝ elapsed time) that made the cat shudder at the exact
+        // moment it dozed off. Integrating ω·dt instead keeps the motion smooth
+        // across the transition while still slowing the breath while asleep.
+        self.breath_phase += dt * (2.2 - self.sleep * 1.2);
 
         // fish flight
         if self.fish.is_none() {
@@ -1094,7 +1103,7 @@ impl Pet {
             0.0
         };
         let excite = self.excite();
-        let breath = (t * (2.2 - self.sleep * 1.2)).sin();
+        let breath = self.breath_phase.sin();
 
         let toast_view = self
             .toast

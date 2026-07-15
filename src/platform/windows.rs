@@ -228,8 +228,17 @@ impl App {
         }
         // Only paste when the write actually landed: on failure the clipboard
         // still holds the previous content, so synthesizing Ctrl+V would paste
-        // stale text into the target field instead of the picked clip.
-        if ok && pick.paste && !self.paste_target.is_null() && self.paste_target != self.hwnd {
+        // stale text into the target field instead of the picked clip. The
+        // `IsWindow` check skips a target that was closed between capture and
+        // paste (defense-in-depth: with the flyout still foreground, a no-op
+        // Ctrl+V into ourselves is harmless — V isn't a panel key — and the
+        // clip is still on the clipboard).
+        if ok
+            && pick.paste
+            && !self.paste_target.is_null()
+            && self.paste_target != self.hwnd
+            && unsafe { IsWindow(self.paste_target) } != 0
+        {
             unsafe {
                 // Win+V parity: hand the foreground back to the app that was
                 // active when the panel opened, then synthesize Ctrl+V there.
@@ -261,12 +270,14 @@ impl App {
 
     /// Records the window to auto-paste into: the foreground window captured at
     /// the moment the panel is *about* to open, before we steal focus. Ignores
-    /// null and our own window, so a hotkey re-press while the panel is already
-    /// up — or the tray menu, which foregrounds us before it runs — can never
-    /// overwrite a good target with ourselves.
+    /// null and either of our own windows — the cat window *and* the flyout —
+    /// so a hotkey re-press while the flyout is dismissing (core state already
+    /// says closed but the window is still shown/foreground), or the tray menu
+    /// which foregrounds us before it runs, can never overwrite a good target
+    /// with ourselves.
     unsafe fn capture_paste_target(&mut self) {
         let fg = GetForegroundWindow();
-        if !fg.is_null() && fg != self.hwnd {
+        if !fg.is_null() && fg != self.hwnd && fg != self.flyout_hwnd {
             self.paste_target = fg;
         }
     }
@@ -582,15 +593,26 @@ impl App {
         }
     }
 
-    /// Runs after a flyout click/key: if the panel closed (a pick with
-    /// auto-close, or Esc), hide the window first so focus returns to the
-    /// source app, then hand any picked clip to `copy_back` for the paste.
+    /// Runs after a flyout click/key. Paste **first**, then hide: `copy_back`
+    /// must hand the foreground back to the source app while this flyout still
+    /// owns it. A process that owns the foreground may pass it to another
+    /// window, but `ShowWindow(SW_HIDE)` on the *foreground* window
+    /// asynchronously reassigns the foreground to an arbitrary Z-order
+    /// neighbour first — after which `SetForegroundWindow(target)` is refused by
+    /// the foreground lock and the Ctrl+V lands nowhere (the intermittent
+    /// "copied but didn't paste"; see LNR-0008). Hiding the now-*background*
+    /// flyout afterwards can't steal the foreground back, and the re-entrant
+    /// `WM_KILLFOCUS` is already a no-op (`flyout_open()` is false by now, and
+    /// the `with_app` borrow guard holds). The `!flyout_open()` guard stays so
+    /// an auto-close-off flyout keeps its window up for the next pick — there
+    /// `copy_back` legitimately moves the foreground to the target off the
+    /// still-visible flyout (pre-existing, not a regression of the reorder).
     unsafe fn after_flyout_action(&mut self, pick: Option<ClipPick>) {
-        if !self.pet.flyout_open() {
-            ShowWindow(self.flyout_hwnd, SW_HIDE);
-        }
         if let Some(pick) = pick {
             self.copy_back(pick);
+        }
+        if !self.pet.flyout_open() {
+            ShowWindow(self.flyout_hwnd, SW_HIDE);
         }
     }
 
@@ -1174,20 +1196,44 @@ unsafe fn register_panel_hotkey(hwnd: HWND, spec: &str) -> HotkeyReg {
 }
 
 /// Synthesizes a Ctrl+V keystroke into the foreground window (auto-paste).
-/// Output-only: we never read keystrokes, so this does not touch the input
-/// privacy guarantee (golden rule 1). The modifiers are released in reverse.
+///
+/// The panel hotkey (default Win+Shift+V, and the clash fallback Ctrl+Shift+V)
+/// holds **Shift** when it fires, so a fast pick can leave Shift physically down
+/// and turn the injected Ctrl+V into Ctrl+Shift+V — paste-special or an unbound
+/// no-op in many apps, i.e. "copied but didn't paste." So we release both sides
+/// of Shift and Alt first, letting the app evaluate a clean Ctrl+V. We release
+/// the *explicit* L/R virtual keys because `MOD_SHIFT`/`MOD_ALT` accept either
+/// side and a generic `VK_SHIFT`/`VK_MENU` up maps to the left scancode, missing
+/// a held right key; a key-up for a key that isn't down is a harmless no-op. Win
+/// is deliberately left alone — a lone synthetic Win up can pop the Start menu.
+///
+/// Output-only: we synthesize keystrokes and never read key state, so this does
+/// not touch the input-privacy guarantee (golden rule 1). Modifiers are released
+/// up-front and Ctrl in reverse at the end.
 unsafe fn send_ctrl_v() {
-    let mut inputs: [INPUT; 4] = std::mem::zeroed();
+    let mut inputs: [INPUT; 8] = std::mem::zeroed();
     for inp in &mut inputs {
         inp.r#type = INPUT_KEYBOARD;
     }
+    const VK_LSHIFT: u16 = 0xA0;
+    const VK_RSHIFT: u16 = 0xA1;
+    const VK_LMENU: u16 = 0xA4;
+    const VK_RMENU: u16 = 0xA5;
     const VK_V: u16 = 0x56;
-    inputs[0].Anonymous.ki.wVk = VK_CONTROL; // Ctrl down
-    inputs[1].Anonymous.ki.wVk = VK_V; // V down
-    inputs[2].Anonymous.ki.wVk = VK_V; // V up
-    inputs[2].Anonymous.ki.dwFlags = KEYEVENTF_KEYUP;
-    inputs[3].Anonymous.ki.wVk = VK_CONTROL; // Ctrl up
-    inputs[3].Anonymous.ki.dwFlags = KEYEVENTF_KEYUP;
+    // Neutralize any modifier still held from the hotkey chord.
+    inputs[0].Anonymous.ki.wVk = VK_LSHIFT;
+    inputs[1].Anonymous.ki.wVk = VK_RSHIFT;
+    inputs[2].Anonymous.ki.wVk = VK_LMENU;
+    inputs[3].Anonymous.ki.wVk = VK_RMENU;
+    for inp in &mut inputs[0..4] {
+        inp.Anonymous.ki.dwFlags = KEYEVENTF_KEYUP;
+    }
+    inputs[4].Anonymous.ki.wVk = VK_CONTROL; // Ctrl down
+    inputs[5].Anonymous.ki.wVk = VK_V; // V down
+    inputs[6].Anonymous.ki.wVk = VK_V; // V up
+    inputs[6].Anonymous.ki.dwFlags = KEYEVENTF_KEYUP;
+    inputs[7].Anonymous.ki.wVk = VK_CONTROL; // Ctrl up
+    inputs[7].Anonymous.ki.dwFlags = KEYEVENTF_KEYUP;
     SendInput(
         inputs.len() as u32,
         inputs.as_ptr(),

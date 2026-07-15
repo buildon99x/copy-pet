@@ -26,6 +26,13 @@ versions follow [SemVer](https://semver.org/). Maintenance rules:
   caramel glaze with a drip, and a cherry on top) unlocks at level 57.
 
 ### Fixed
+- **Picking a clip from the hotkey popup now always pastes it** (Windows) — with
+  the clipboard opened by the panel hotkey (Win+V-style), choosing an entry with
+  Enter or a click reliably pastes it into the field you were typing in, instead
+  of occasionally only copying it.
+- **The cat no longer shudders as it dozes off** — when it falls asleep after a
+  while idle, its breathing now eases smoothly into the sleeping pose instead of
+  jittering for a moment at the transition.
 - **Korean/CJK clip previews no longer cut off early** — long Korean (or other
   multi-byte) clips now show their full-length preview in the panel rows instead
   of being trimmed to roughly a third of the text.
