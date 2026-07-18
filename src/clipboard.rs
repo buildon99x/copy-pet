@@ -317,7 +317,9 @@ impl ClipStore {
         let max_id = items.iter().map(|c| c.id).max().unwrap_or(0);
         let mut seen = std::collections::HashSet::with_capacity(items.len());
         let unique = items.iter().all(|c| seen.insert(c.id));
-        let next_id = if unique && max_id < u64::MAX {
+        // Guard `max_id + 1 == u64::MAX` too: a next_id of u64::MAX would be
+        // assigned by the next copy and then overflow on the following `+= 1`.
+        let next_id = if unique && max_id < u64::MAX - 1 {
             max_id + 1
         } else {
             for (i, c) in items.iter_mut().enumerate() {
@@ -959,5 +961,27 @@ mod tests {
         ids.sort_unstable();
         ids.dedup();
         assert_eq!(ids.len(), n, "clip ids must be unique after a corrupt load");
+    }
+
+    #[test]
+    fn unique_max_minus_one_id_does_not_overflow_next_id() {
+        // A *unique* clip at u64::MAX - 1 doesn't hit the duplicate-renumber
+        // path, so the max_id guard must still renumber it: otherwise next_id
+        // becomes u64::MAX and the following add's `next_id += 1` overflows.
+        let legacy = format!(
+            r#"{{"clips":[{{"id":{m},"text":"x","source":null,"pinned":false,"ts":0}}]}}"#,
+            m = u64::MAX - 1
+        );
+        let back: ClipsFile = serde_json::from_str(&legacy).unwrap();
+        let mut s = ClipStore::from_items(back.clips);
+        assert!(s.next_id < u64::MAX, "next_id must leave room to increment");
+        // two copies in a row must not panic (debug) or wrap to a colliding id
+        assert!(s.add_copy("a".into(), None));
+        assert!(s.add_copy("b".into(), None));
+        let mut ids: Vec<u64> = s.items.iter().map(|c| c.id).collect();
+        let n = ids.len();
+        ids.sort_unstable();
+        ids.dedup();
+        assert_eq!(ids.len(), n, "ids stay unique across the u64 boundary");
     }
 }

@@ -1168,7 +1168,8 @@ pub fn draw_panel(pm: &mut Pixmap, v: &PanelView) {
         // meta line (source dot + app - age - size)
         let mut meta = i18n::time_ago(lang, now.saturating_sub(clip.ts));
         if clip.text.len() > 500 {
-            meta = format!("{meta} - {:.1}K", clip.text.len() as f32 / 1024.0);
+            let size = i18n::fmt_clip_size(lang, clip.text.len() as f32 / 1024.0);
+            meta = format!("{meta} - {size}");
         }
         let mut mx = tx;
         if let Some(src) = &clip.source {

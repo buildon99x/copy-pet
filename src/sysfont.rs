@@ -35,7 +35,9 @@ const TOFU_ADV: f32 = 6.0;
 
 /// Candidate font files, tried in order. First existing+parsable file wins
 /// per slot: slot 0 is the primary UI font, slot 1 the Hangul fallback.
-/// (`@idx` selects a face inside a .ttc collection.)
+/// Each candidate is a plain filesystem path loaded via `FontArc::try_from_vec`,
+/// which always uses face 0 — for a .ttc collection only the first face is read
+/// (no per-face selector is parsed), so prefer single-face .ttf candidates.
 #[cfg(windows)]
 fn candidates() -> [Vec<String>; 2] {
     let dir = std::env::var("WINDIR").unwrap_or_else(|_| "C:\\Windows".into());
@@ -337,9 +339,20 @@ pub fn draw(pm: &mut Pixmap, text: &str, x: f32, y: f32, px: f32, rgba: (u8, u8,
     // draws dozens of strings, each several characters, all on the render
     // thread, so one lock/unlock pair per `draw()` call is enough.
     let mut cache = glyph_cache().lock().unwrap();
+    // Shared baseline: derived once from the primary font's ascent and reused
+    // for every glyph, so fallback glyphs (e.g. Hangul from the CJK font, whose
+    // ascent differs) sit on the same baseline as adjacent Latin text instead
+    // of each font's own ascent. Loop-invariant (depends only on `em_dev`), so
+    // hoisted out of the per-glyph hot path.
+    let ascent_dev = fonts()[0].as_scaled(em_dev).ascent();
     for c in text.chars() {
+        // Resolve the glyph once and derive its advance from the same lookup,
+        // rather than calling `advance_of` (which re-runs `glyph_for`).
         let glyph = glyph_for(c);
-        let adv = advance_of(c, px);
+        let adv = match glyph {
+            Some((i, id)) => fonts()[i].as_scaled(px * EM_PER_PX).h_advance(id),
+            None => TOFU_ADV * px,
+        };
         match glyph {
             Some((fi, id)) if !rotated => {
                 let key: GlyphKey = (fi, id.0, (em_dev * 4.0).round() as u32);
@@ -347,11 +360,6 @@ pub fn draw(pm: &mut Pixmap, text: &str, x: f32, y: f32, px: f32, rgba: (u8, u8,
                     .entry(key)
                     .or_insert_with(|| rasterize(fi, id, em_dev));
                 if let Some(mask) = mask {
-                    // Shared baseline: derive it from the primary font's ascent
-                    // for every glyph, so fallback glyphs (e.g. Hangul from the
-                    // CJK font, whose ascent differs) sit on the same baseline
-                    // as adjacent Latin text instead of each font's own ascent.
-                    let ascent_dev = fonts()[0].as_scaled(em_dev).ascent();
                     let dev_x = ts.tx + pen * ts.sx + mask.left;
                     let dev_y = ts.ty + (y - cell_pad) * ts.sy + ascent_dev + mask.top;
                     blend_mask(pm, mask, dev_x, dev_y, rgba);

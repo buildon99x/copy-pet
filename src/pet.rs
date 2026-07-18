@@ -381,10 +381,15 @@ impl Pet {
     /// moves but the card stays pixel-fixed. We shift the card's offset by
     /// `-delta` (the cat slides toward/away from the card) under a
     /// panel-anchored relayout, so the window re-origins to hold the card
-    /// still. Persists the new offset. Returns false (a no-op) when the panel
-    /// is closed — the backend then moves the whole window as usual.
+    /// still. Persists the new offset. Returns false (a no-op) when the
+    /// embedded panel isn't open — the backend then moves the whole window as
+    /// usual. This is deliberately gated on `embedded_panel_open()`, not on the
+    /// raw `panel.open`: in flyout mode the panel lives in its own
+    /// caret-anchored window and the cat window is cat-only, so the anchored
+    /// relayout / persisted card offset here don't apply (it would jump the cat
+    /// window by a bogus shift and rewrite the saved card offset).
     pub fn drag_pet(&mut self, dx: f32, dy: f32) -> bool {
-        if !self.panel.open {
+        if !self.embedded_panel_open() {
             return false;
         }
         self.drag = None;

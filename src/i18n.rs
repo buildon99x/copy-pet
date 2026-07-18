@@ -324,6 +324,15 @@ pub fn fmt_active(lang: Lang, h: u32, m: u32) -> String {
     }
 }
 
+/// The panel meta-line size badge for a large clip, localized so the unit
+/// reads natively instead of a hardcoded Latin "K".
+pub fn fmt_clip_size(lang: Lang, kib: f32) -> String {
+    match lang {
+        Lang::En => format!("{kib:.1}K"),
+        Lang::Ko => format!("{kib:.1}KB"),
+    }
+}
+
 pub fn new_accessory(lang: Lang, name: &str) -> String {
     match lang {
         Lang::En => format!("* NEW: {name} *"),
@@ -492,5 +501,11 @@ mod tests {
         assert_eq!(time_ago(Lang::En, 90), "1M");
         assert_eq!(time_ago(Lang::Ko, 7200), "2시간");
         assert_eq!(time_ago(Lang::En, 200_000), "2D");
+    }
+
+    #[test]
+    fn clip_size_unit_is_localized() {
+        assert_eq!(fmt_clip_size(Lang::En, 2.0), "2.0K");
+        assert_eq!(fmt_clip_size(Lang::Ko, 2.0), "2.0KB");
     }
 }
