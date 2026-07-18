@@ -416,6 +416,28 @@ fn drag_pet_moves_the_cat_keeping_the_panel_fixed() {
 }
 
 #[test]
+fn drag_pet_is_a_noop_in_flyout_mode() {
+    // In flyout mode `panel.open` is true but the panel lives in its own
+    // caret-anchored window and the cat window is cat-only, so dragging the cat
+    // must fall through to the backend's whole-window move (return false) —
+    // never run the anchored relayout or rewrite the persisted card offset.
+    let mut p = pet();
+    p.st.panel_autoclose = false;
+    p.on_copy("hello".into(), None, None);
+    p.open_flyout();
+    let off0 = p.panel.off;
+    let saved0 = (p.st.panel_off_x, p.st.panel_off_y);
+    let _ = p.take_size_changed();
+    let _ = p.take_window_shift();
+
+    assert!(!p.drag_pet(-100.0, -320.0), "flyout: drag_pet is a no-op");
+    assert_eq!(p.panel.off, off0, "flyout drag must not move the card offset");
+    assert_eq!((p.st.panel_off_x, p.st.panel_off_y), saved0, "offset not rewritten");
+    assert!(!p.take_size_changed(), "flyout drag must not resize the cat window");
+    assert_eq!(p.take_window_shift(), (0, 0), "flyout drag must not shift the window");
+}
+
+#[test]
 fn lang_toggle_persists_in_state() {
     let mut p = pet();
     let before = p.lang();

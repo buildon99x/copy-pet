@@ -16,6 +16,17 @@ versions follow [SemVer](https://semver.org/). Maintenance rules:
 
 ## [Unreleased]
 
+### Fixed
+- Dragging the cat while the clipboard panel was open via the hotkey flyout no
+  longer jumps the cat window or corrupts the saved position of the middle-click
+  panel — the cat now moves normally in that case.
+- The clip-size badge on large clips now reads **KB** in Korean instead of a
+  stray Latin **K**.
+- Cycling the panel hotkey from a corrupt/hand-edited setting now lands on the
+  default shortcut instead of skipping past it.
+- Loading a hand-edited clip history with an id at the very top of the numeric
+  range no longer risks a crash or duplicate ids on the next copy.
+
 ## [2.3.1] - 2026-07-16
 
 ### Added

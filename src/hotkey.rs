@@ -20,10 +20,15 @@ pub const PRESETS: &[&str] = &["win+shift+v", "ctrl+shift+v", "alt+shift+v", "ct
 
 /// The preset after `current` (wrapping). Comparison is on the parsed chord, so
 /// case/spacing don't matter; a spec that isn't a preset (e.g. a hand-edited
-/// custom chord) cycles to the first preset.
+/// custom chord) cycles to the first preset. An *unparseable* `current` also
+/// lands on the first preset — we compare with `parse` (not `from_spec`, which
+/// coerces garbage to DEFAULT == PRESETS[0] and would then advance to PRESETS[1],
+/// skipping the default).
 pub fn next_preset(current: &str) -> &'static str {
-    let cur = Hotkey::from_spec(current);
-    match PRESETS.iter().position(|p| Hotkey::from_spec(p) == cur) {
+    let Some(cur) = Hotkey::parse(current) else {
+        return PRESETS[0];
+    };
+    match PRESETS.iter().position(|p| Hotkey::parse(p) == Some(cur)) {
         Some(i) => PRESETS[(i + 1) % PRESETS.len()],
         None => PRESETS[0],
     }
@@ -163,6 +168,11 @@ mod tests {
         assert_eq!(next_preset("Win+Shift+V"), PRESETS[1]);
         // an unknown/custom chord jumps to the first preset
         assert_eq!(next_preset("ctrl+alt+k"), PRESETS[0]);
+        // an *unparseable* spec also lands on the first preset (the default),
+        // not PRESETS[1] — regression for the from_spec-coerces-to-DEFAULT bug.
+        for bad in ["garbage", "", "ctrl+", "ctrl+ä"] {
+            assert_eq!(next_preset(bad), PRESETS[0], "garbage {bad:?} -> default");
+        }
     }
 
     #[test]
