@@ -343,8 +343,13 @@ pub fn draw(pm: &mut Pixmap, text: &str, x: f32, y: f32, px: f32, rgba: (u8, u8,
     // for every glyph, so fallback glyphs (e.g. Hangul from the CJK font, whose
     // ascent differs) sit on the same baseline as adjacent Latin text instead
     // of each font's own ascent. Loop-invariant (depends only on `em_dev`), so
-    // hoisted out of the per-glyph hot path.
-    let ascent_dev = fonts()[0].as_scaled(em_dev).ascent();
+    // hoisted out of the per-glyph hot path. `first()` (not `[0]`) because
+    // `fonts()` is empty on systems with no usable font — every glyph then takes
+    // the `None => draw_tofu` arm and this value is never read, so 0.0 is fine.
+    let ascent_dev = fonts()
+        .first()
+        .map(|f| f.as_scaled(em_dev).ascent())
+        .unwrap_or(0.0);
     for c in text.chars() {
         // Resolve the glyph once and derive its advance from the same lookup,
         // rather than calling `advance_of` (which re-runs `glyph_for`).
