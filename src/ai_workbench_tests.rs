@@ -270,7 +270,7 @@ fn measured_review_wrapping_preserves_all_characters_at_minimum_panel_width() {
     assert_eq!(parts.concat(), text.replace('\n', ""));
     assert!(parts
         .iter()
-        .all(|s| crate::sysfont::measure(s, 1.5) <= w.text_width));
+        .all(|s| crate::sysfont::measure(s, BODY_FONT) <= w.text_width));
     let view = w.view(Lang::Ko);
     assert_eq!(view.rows[first..].concat(), parts.concat());
 }
@@ -303,4 +303,46 @@ fn saved_file_reopens_projects_and_unfinished_multiline_draft() {
     assert!(recovered.valid());
     assert_eq!(std::fs::read_to_string(&path).unwrap(), broken);
     std::fs::remove_file(path).unwrap();
+}
+
+#[test]
+fn long_editor_scrolls_without_changing_draft_and_new_input_follows_the_end() {
+    let mut w = Workbench::default();
+    action(&mut w, |a| matches!(a, Action::Request));
+    let text = (1..=60)
+        .map(|i| format!("line {i:02}"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    w.paste(&text);
+    let visible = |w: &Workbench| {
+        let view = w.view(Lang::En);
+        let start = view.visible_start(8);
+        view.rows[start..]
+            .iter()
+            .take(8)
+            .cloned()
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(visible(&w).last().unwrap(), "line 60");
+    w.wheel(-8, 8, Lang::En);
+    assert_eq!(visible(&w).last().unwrap(), "line 52");
+    w.nav(NavKey::Home, Lang::En, 8);
+    assert_eq!(visible(&w)[0], "line 01");
+    w.nav(NavKey::PageDown, Lang::En, 8);
+    assert_eq!(visible(&w)[0], "line 09");
+    w.nav(NavKey::PageUp, Lang::En, 8);
+    assert_eq!(visible(&w)[0], "line 01");
+    w.nav(NavKey::End, Lang::En, 8);
+    assert_eq!(visible(&w).last().unwrap(), "line 60");
+    w.nav(NavKey::Home, Lang::En, 8);
+    w.input('!');
+    assert_eq!(visible(&w).last().unwrap(), "line 60!");
+    w.nav(NavKey::Home, Lang::En, 8);
+    w.paste("\nlast");
+    assert_eq!(visible(&w).last().unwrap(), "last");
+    w.nav(NavKey::Home, Lang::En, 8);
+    w.nav(NavKey::Backspace, Lang::En, 8);
+    assert_eq!(visible(&w).last().unwrap(), "las");
+    w.nav(NavKey::Enter, Lang::En, 8);
+    assert_eq!(w.project().request, text + "!\nlas");
 }

@@ -9,8 +9,11 @@ clipboard panel and click **AI workbench** in its footer, press **Ctrl+B**
 
 1. Choose **Request**, type or paste text, and press Enter to save. Ctrl/Cmd+A
    selects the entire draft; Ctrl/Cmd+V pastes; Ctrl/Cmd+Enter inserts a newline;
-   Backspace edits at the end. Esc cancels that edit. The body shows the end of
-   a long draft. This is a small append/backspace editor, not a full text editor.
+   Backspace edits at the end. Esc cancels that edit. Read the entire draft with
+   the wheel, Up/Down, PageUp/PageDown, Home or End (Ctrl+Home/End also works).
+   These keys move the preview, not the insertion point. New typing, pasting or
+   deletion follows the draft end again. A scrollbar and visible-row range show
+   your position. This is a small append/backspace editor, not a full text editor.
 2. Choose **Select clips from history**. Click clips or use arrows and Enter to
    add snapshots, without copying or pasting. Keep selecting; Ctrl/Cmd+B or the
    footer returns to the tray. Search and app/tag filters remain available.
@@ -35,6 +38,10 @@ clipboard panel and click **AI workbench** in its footer, press **Ctrl+B**
    **Confirm: copy reviewed text** writes to the clipboard. It always copies
    plain text and never automatically pastes into another application, including
    from the Windows hotkey flyout. Esc/Back cancels review. Originals remain.
+
+The workbench uses compact rows independently of the history card/list setting.
+Its seven main actions fit the default panel, and closing it restores the history
+layout without changing your saved view preference.
 
 ## Projects and saved drafts
 
@@ -82,6 +89,10 @@ The app does not inspect global keystroke text or window titles.
 클립보드 패널 아래 **AI 작업대** 또는 Ctrl+B로 열고, Windows 트레이에서도
 진입할 수 있습니다. **요청**을 선택해 작성하거나 Ctrl+V로 붙여넣으세요.
 Enter 저장, Ctrl+Enter 줄바꿈, Ctrl+A 전체 선택, Esc 편집 취소입니다.
+긴 초안은 휠·위/아래·PageUp/PageDown·Home/End로 전체를 읽을 수 있습니다.
+입력 위치는 끝에 유지되며 새 입력·붙여넣기·삭제 후에는 끝부분으로 돌아옵니다.
+스크롤바와 현재 표시 범위로 위치를 확인하세요. 작업대는 히스토리 보기 설정과
+별개로 작은 행을 사용하므로 기본 크기에서도 주요 작업이 모두 표시됩니다.
 
 **히스토리에서 클립 선택**을 누르고 필요한 항목을 여러 번 선택한 뒤 Ctrl+B로
 돌아오세요. 트레이 항목을 선택해 ←/→로 요청·관련 코드·오류·제약 섹션을

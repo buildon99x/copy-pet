@@ -316,13 +316,42 @@ impl Panel {
 
     /// Per-clip row height for the active view (compact list vs. roomy cards).
     pub fn row_h(&self) -> f32 {
-        if self.view == 1 {
+        if self.ai_view.is_some() {
+            crate::ai_workbench::ROW_HEIGHT
+        } else if self.view == 1 {
             ROW_H_THUMB
         } else {
             ROW_H
         }
     }
 
+    pub fn workbench_footer_text(&self, lang: crate::i18n::Lang) -> String {
+        use crate::i18n::{ai, AiText};
+        let msg = if self.ai_view.is_some() {
+            AiText::Back
+        } else if self.ai_adding {
+            AiText::Adding
+        } else {
+            AiText::Entry
+        };
+        let font = if self.ai_view.is_some() { 1.35 } else { 1.4 };
+        crate::sysfont::truncate_to_width(ai(lang, msg), font, self.active_layout().row_w)
+    }
+
+    pub fn workbench_footer_hit(&self, x: f32, y: f32, lang: crate::i18n::Lang) -> bool {
+        if !self.hit(x, y) {
+            return false;
+        }
+        let l = self.active_layout();
+        let font = if self.ai_view.is_some() { 1.35 } else { 1.4 };
+        let width = crate::sysfont::measure(&self.workbench_footer_text(lang), font);
+        let left = if self.ai_view.is_some() {
+            l.row_x
+        } else {
+            l.card_x + l.card_w - 10.0 - width
+        };
+        x >= left && x <= left + width && y >= l.footer_y && y <= l.footer_y + 16.0
+    }
     /// The full geometry for the current card size/offset, in **physical
     /// pixels**. The card always renders at scale 1.0 (panel units == physical
     /// pixels), while the cat block is sized by `cat_scale`; the canvas is the

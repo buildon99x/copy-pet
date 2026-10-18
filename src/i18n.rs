@@ -618,8 +618,8 @@ pub fn ai(lang: Lang, msg: AiText) -> &'static str {
             "Enter 실행 · ←→ 섹션 · Ctrl+P/Z 순서 · Del 제거",
         ),
         AiText::EditKeys => (
-            "Enter save · Ctrl+Enter newline · Ctrl+A/V · Esc cancel",
-            "Enter 저장 · Ctrl+Enter 줄바꿈 · Ctrl+A/V · Esc 취소",
+            "PgUp/PgDn/Home/End · Enter save · Esc cancel",
+            "PgUp/PgDn/Home/End · Enter 저장 · Esc 취소",
         ),
         AiText::Limit => (
             "Tray limit reached: 40 clips / 256 KiB per project.",

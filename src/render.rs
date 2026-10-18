@@ -1001,11 +1001,7 @@ pub fn draw_panel(pm: &mut Pixmap, v: &PanelView) {
         let input =
             sysfont::truncate_to_width(&view.input.replace('\n', " | "), 1.4, lt.search_w - 14.0);
         cv.ui_text(&input, lt.search_x + 7.0, lt.search_y + 6.0, 1.4, TEXT_DIM);
-        let scroll = if view.editing {
-            view.rows.len().saturating_sub(lt.rows)
-        } else {
-            view.scroll
-        };
+        let scroll = view.visible_start(lt.rows);
         for (visible, (i, row)) in view
             .rows
             .iter()
@@ -1021,27 +1017,54 @@ pub fn draw_panel(pm: &mut Pixmap, v: &PanelView) {
                     (226, 238, 253, 255),
                 );
             }
-            let label = sysfont::truncate_to_width(row, 1.5, lt.row_w - 14.0);
+            let label =
+                sysfont::truncate_to_width(row, crate::ai_workbench::BODY_FONT, lt.row_w - 14.0);
             cv.ui_text(
                 &label,
                 lt.row_x + 7.0,
-                y + (lt.row_h - 14.0) / 2.0,
-                1.5,
+                y + (lt.row_h - 16.0) / 2.0,
+                crate::ai_workbench::BODY_FONT,
                 TEXT,
             );
         }
-        let progress = format!("{} / {}", view.selected + 1, view.rows.len());
-        if !view.editing {
-            cv.ui_text(
-                &progress,
-                lt.row_x + lt.row_w - 55.0,
-                lt.footer_y - 10.0,
-                1.1,
-                TEXT_DIM,
+        if view.rows.len() > lt.rows {
+            let track_h = lt.row_h * lt.rows as f32 - 4.0;
+            let thumb_h = (track_h * lt.rows as f32 / view.rows.len() as f32).max(12.0);
+            let thumb_y = lt.rows_y
+                + 2.0
+                + (track_h - thumb_h)
+                    * (scroll as f32 / (view.rows.len() - lt.rows) as f32).min(1.0);
+            cv.fill(
+                &round_rect(
+                    lt.row_x + lt.row_w - 4.0,
+                    lt.rows_y + 2.0,
+                    3.0,
+                    track_h,
+                    1.5,
+                ),
+                fade(OUTLINE, 0.12),
+            );
+            cv.fill(
+                &round_rect(lt.row_x + lt.row_w - 4.0, thumb_y, 3.0, thumb_h, 1.5),
+                fade(OUTLINE, 0.5),
             );
         }
-        let back = crate::i18n::ai(lang, crate::i18n::AiText::Back);
-        cv.ui_text(back, lt.row_x, lt.footer_y + 2.0, 1.35, TEXT_DIM);
+        let progress = format!(
+            "{}–{} / {}",
+            scroll + 1,
+            (scroll + lt.rows).min(view.rows.len()),
+            view.rows.len()
+        );
+        let progress_width = sysfont::measure(&progress, 1.1);
+        cv.ui_text(
+            &progress,
+            lt.row_x + lt.row_w - progress_width,
+            lt.footer_y + 3.0,
+            1.1,
+            TEXT_DIM,
+        );
+        let back = v.panel.workbench_footer_text(lang);
+        cv.ui_text(&back, lt.row_x, lt.footer_y + 2.0, 1.35, TEXT_DIM);
         let hint = sysfont::truncate_to_width(&view.hint, 1.15, lt.row_w);
         cv.ui_text(&hint, lt.row_x, lt.footer_y + 17.0, 1.15, TEXT_DIM);
         for i in 0..3 {
@@ -1362,10 +1385,10 @@ pub fn draw_panel(pm: &mut Pixmap, v: &PanelView) {
     );
     let count = i18n::clip_count(lang, v.store.len(), v.store.pinned_count());
     if !v.panel.ai_adding {cv.ui_text(&count, lt.card_x + 10.0, lt.footer_y + 3.0, 1.4, TEXT_DIM);}
-    let workbench_hint = crate::i18n::ai(lang, if v.panel.ai_adding {crate::i18n::AiText::Adding}else{crate::i18n::AiText::Entry});
-    let hw = sysfont::measure(workbench_hint, 1.4);
+    let workbench_hint = v.panel.workbench_footer_text(lang);
+    let hw = sysfont::measure(&workbench_hint, 1.4);
     cv.ui_text(
-        workbench_hint,
+        &workbench_hint,
         lt.card_x + lt.card_w - 10.0 - hw,
         lt.footer_y + 3.0,
         1.4,

@@ -944,8 +944,150 @@ fn resizing_embedded_workbench_rewraps_the_complete_review() {
     let first = view.rows.iter().position(|s| s == "← Back").unwrap() + 1;
     assert!(view.rows[first..]
         .iter()
-        .all(|s| clipcat::sysfont::measure(s, 1.5) <= max));
+        .all(|s| clipcat::sysfont::measure(s, clipcat::ai_workbench::BODY_FONT) <= max));
     assert!(view.rows[first..]
         .concat()
         .contains(&"한글 검토 문구입니다. ".repeat(29)));
+}
+
+#[test]
+fn workbench_uses_compact_rows_without_changing_history_card_preferences() {
+    for standalone in [false, true] {
+        for history_view in [0, 1] {
+            let mut p = pet();
+            p.st.lang = "en".into();
+            p.workbench = clipcat::ai_workbench::Workbench::default();
+            p.panel.view = history_view;
+            p.st.panel_view = history_view;
+            if standalone {
+                p.open_flyout();
+            }
+            p.open_workbench();
+            let lt = p.panel.active_layout();
+            assert!(lt.rows >= 7);
+            assert_eq!(lt.row_h, clipcat::ai_workbench::ROW_HEIGHT);
+            assert!(p.panel.ai_view.as_ref().unwrap().rows[..lt.rows]
+                .iter()
+                .any(|s| s.starts_with("Review &")));
+            p.panel_nav(NavKey::Workbench);
+            assert_eq!(p.panel.view, history_view);
+            assert_eq!(p.st.panel_view, history_view);
+            assert_eq!(
+                p.panel.active_layout().row_h,
+                if history_view == 1 {
+                    clipcat::panel::ROW_H_THUMB
+                } else {
+                    clipcat::panel::ROW_H
+                }
+            );
+        }
+    }
+}
+
+#[test]
+fn long_workbench_draft_is_readable_through_public_wheel_and_navigation() {
+    let mut p = pet();
+    p.st.lang = "en".into();
+    p.workbench = clipcat::ai_workbench::Workbench::default();
+    p.open_workbench();
+    ai_action(&mut p, "Request:");
+    p.workbench_paste(
+        &(1..=60)
+            .map(|i| format!("draft {i:02}"))
+            .collect::<Vec<_>>()
+            .join("\n"),
+    );
+    let visible = |p: &Pet| {
+        let view = p.panel.ai_view.as_ref().unwrap();
+        let start = view.visible_start(p.panel.active_layout().rows);
+        view.rows[start].clone()
+    };
+    let end_start = visible(&p);
+    p.panel_wheel(-8);
+    assert_ne!(visible(&p), end_start);
+    p.panel_nav(NavKey::Home);
+    assert_eq!(visible(&p), "draft 01");
+    p.panel_nav(NavKey::PageDown);
+    assert_ne!(visible(&p), "draft 01");
+    p.panel_nav(NavKey::End);
+    assert_eq!(visible(&p), end_start);
+    p.panel_nav(NavKey::Home);
+    p.workbench_paste("\nnew end");
+    let view = p.panel.ai_view.as_ref().unwrap();
+    assert!(view.follow_tail);
+    assert_eq!(view.rows.last().unwrap(), "new end");
+    p.panel_nav(NavKey::Workbench);
+    p.panel_nav(NavKey::Workbench);
+    assert_eq!(
+        p.workbench
+            .project()
+            .editor
+            .as_ref()
+            .unwrap()
+            .text
+            .lines()
+            .count(),
+        61
+    );
+}
+
+#[test]
+fn workbench_header_only_responds_inside_each_visible_button() {
+    let mut p = pet();
+    p.st.lang = "en".into();
+    p.workbench = clipcat::ai_workbench::Workbench::default();
+    p.open_workbench();
+    let lt = p.panel.active_layout();
+    let home = p.panel.ai_view.as_ref().unwrap().rows.clone();
+    for x in [
+        lt.card_x - 10.0,
+        lt.btn_view_x + 5.0,
+        lt.btn_pause_x + 5.0,
+        lt.btn_close_x + clipcat::panel::BTN + 3.0,
+        lt.card_x + lt.card_w + 10.0,
+    ] {
+        p.panel_click(x, lt.btn_y + 8.0);
+        assert!(p.panel_open());
+        assert_eq!(p.lang(), Lang::En);
+        assert_eq!(p.panel.ai_view.as_ref().unwrap().rows, home);
+    }
+    p.panel_click(lt.btn_filter_x + 8.0, lt.btn_y + 8.0);
+    assert!(p
+        .panel
+        .ai_view
+        .as_ref()
+        .unwrap()
+        .rows
+        .iter()
+        .any(|s| s == "Create project"));
+    p.panel_click(lt.btn_lang_x + 8.0, lt.btn_y + 8.0);
+    assert_eq!(p.lang(), Lang::Ko);
+    p.panel_click(lt.btn_close_x + 8.0, lt.btn_y + 8.0);
+    assert!(!p.panel_open());
+}
+
+#[test]
+fn workbench_footer_hit_targets_match_the_visible_text_and_card_bounds() {
+    let mut p = pet();
+    p.st.lang = "en".into();
+    p.workbench = clipcat::ai_workbench::Workbench::default();
+    p.toggle_panel();
+    let lt = p.panel.active_layout();
+    p.panel_click(lt.card_x + lt.card_w + 10.0, lt.footer_y + 5.0);
+    assert!(!p.workbench.open);
+    p.panel_click(lt.row_x, lt.footer_y + 5.0);
+    assert!(!p.workbench.open);
+    let entry = p.panel.workbench_footer_text(Lang::En);
+    let width = clipcat::sysfont::measure(&entry, 1.4);
+    p.panel_click(
+        lt.card_x + lt.card_w - 10.0 - width / 2.0,
+        lt.footer_y + 5.0,
+    );
+    assert!(p.workbench.open);
+    p.panel_click(lt.row_x + lt.row_w - 50.0, lt.footer_y + 5.0);
+    assert!(p.workbench.open);
+    p.panel_click(lt.row_x + 5.0, lt.card_y + lt.card_h + 5.0);
+    assert!(p.workbench.open);
+    p.panel_click(lt.row_x + 5.0, lt.footer_y + 5.0);
+    assert!(!p.workbench.open);
 }

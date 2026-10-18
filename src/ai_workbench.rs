@@ -6,6 +6,9 @@ use crate::panel::NavKey;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
+/// Shared body typography for measured wrapping and panel rendering.
+pub const BODY_FONT: f32 = 1.7;
+pub const ROW_HEIGHT: f32 = 34.0;
 const MAX_ITEMS: usize = 40;
 const MAX_PROJECTS: usize = 24;
 const MAX_FAVORITES: usize = 24;
@@ -67,6 +70,8 @@ pub struct Workbench {
     #[serde(skip)]
     pub text_width: f32,
     #[serde(skip)]
+    editor_scroll: Option<usize>,
+    #[serde(skip)]
     select_all: bool,
     #[serde(skip)]
     choosing_project: bool,
@@ -89,6 +94,7 @@ impl Default for Workbench {
             sel: 0,
             scroll: 0,
             text_width: 232.0,
+            editor_scroll: None,
             select_all: false,
             choosing_project: false,
             review: None,
@@ -104,12 +110,26 @@ pub struct Review {
 #[derive(Clone)]
 pub struct View {
     pub editing: bool,
+    pub follow_tail: bool,
     pub title: String,
     pub input: String,
     pub hint: String,
     pub rows: Vec<String>,
     pub selected: usize,
     pub scroll: usize,
+}
+impl View {
+    pub fn visible_start(&self, rows: usize) -> usize {
+        if !self.editing {
+            return self.scroll;
+        }
+        let maximum = self.rows.len().saturating_sub(rows);
+        if self.follow_tail {
+            maximum
+        } else {
+            self.scroll.min(maximum)
+        }
+    }
 }
 #[derive(Clone, Copy)]
 enum Action {
@@ -249,6 +269,7 @@ impl Workbench {
                 e.text.clear();
             }
             e.text.push_str(&clean);
+            self.editor_scroll = None;
             self.dirty = true;
         }
     }
@@ -325,6 +346,7 @@ impl Workbench {
         }
         self.project_mut().editor = Some(Editor { kind, text });
         self.select_all = true;
+        self.editor_scroll = None;
         self.dirty = true;
         self.review = None;
     }
@@ -347,6 +369,7 @@ impl Workbench {
             }
             if e.text.len() + c.len_utf8() <= MAX_DRAFT {
                 e.text.push(c);
+                self.editor_scroll = None;
                 self.dirty = true;
             }
         }
@@ -557,23 +580,12 @@ impl Workbench {
         );
         View {
             editing: editor.is_some(),
+            follow_tail: editor.is_some() && self.editor_scroll.is_none(),
             title: format!("{} · {}", ai(lang, T::Title), self.project().name),
             input,
             hint,
-            rows: if let Some(e) = editor {
-                let lines: Vec<String> = e
-                    .text
-                    .lines()
-                    .flat_map(|l| wrap(l, self.text_width))
-                    .collect();
-                lines
-                    .into_iter()
-                    .rev()
-                    .take(12)
-                    .collect::<Vec<_>>()
-                    .into_iter()
-                    .rev()
-                    .collect()
+            rows: if editor.is_some() {
+                self.editor_lines()
             } else {
                 self.actions(lang)
                     .into_iter()
@@ -581,10 +593,33 @@ impl Workbench {
                     .collect()
             },
             selected: self.sel,
-            scroll: if editor.is_some() { 0 } else { self.scroll },
+            scroll: if editor.is_some() {
+                self.editor_scroll.unwrap_or(0)
+            } else {
+                self.scroll
+            },
         }
     }
+    fn editor_lines(&self) -> Vec<String> {
+        self.project().editor.as_ref().map_or_else(Vec::new, |e| {
+            e.text
+                .split('\n')
+                .flat_map(|l| wrap(l, self.text_width))
+                .collect()
+        })
+    }
+    fn scroll_editor(&mut self, delta: i32, rows: usize) {
+        let maximum = self.editor_lines().len().saturating_sub(rows);
+        let current = self.editor_scroll.unwrap_or(maximum).min(maximum);
+        self.editor_scroll =
+            Some((current as i64 + i64::from(delta)).clamp(0, maximum as i64) as usize);
+    }
     pub fn wheel(&mut self, delta: i32, rows: usize, lang: Lang) {
+        if self.editing() {
+            self.scroll_editor(delta, rows);
+            return;
+        }
+
         let total = self.actions(lang).len();
         self.sel = (self.sel as i32 + delta).clamp(0, total.saturating_sub(1) as i32) as usize;
         self.clamp(rows, lang);
@@ -620,6 +655,12 @@ impl Workbench {
                     self.dirty = true;
                 }
                 NavKey::SelectAll => self.select_all = true,
+                NavKey::Home => self.editor_scroll = Some(0),
+                NavKey::End => self.editor_scroll = None,
+                NavKey::Up => self.scroll_editor(-1, rows),
+                NavKey::Down => self.scroll_editor(1, rows),
+                NavKey::PageUp => self.scroll_editor(-(rows as i32), rows),
+                NavKey::PageDown => self.scroll_editor(rows as i32, rows),
                 NavKey::Backspace | NavKey::Delete => {
                     let all = std::mem::take(&mut self.select_all);
                     if let Some(e) = &mut self.project_mut().editor {
@@ -629,6 +670,7 @@ impl Workbench {
                             e.text.pop();
                         }
                         self.dirty = true;
+                        self.editor_scroll = None;
                     }
                 }
                 _ => {}
@@ -689,6 +731,7 @@ impl Workbench {
                 }
                 Action::Project(i) => {
                     self.active = i;
+                    self.editor_scroll = None;
                     self.choosing_project = false;
                     self.sel = 0;
                     self.scroll = 0;
@@ -801,7 +844,7 @@ fn wrap(s: &str, width: f32) -> Vec<String> {
     let mut line = String::new();
     for c in s.chars() {
         line.push(c);
-        if crate::sysfont::measure(&line, 1.5) > width && line.chars().count() > 1 {
+        if crate::sysfont::measure(&line, BODY_FONT) > width && line.chars().count() > 1 {
             line.pop();
             rows.push(std::mem::take(&mut line));
             line.push(c);

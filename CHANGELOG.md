@@ -32,6 +32,13 @@ versions follow [SemVer](https://semver.org/). Maintenance rules:
   Images support pins, tags, deletion and undo alongside text clips.
 
 ### Fixed
+- AI workbench drafts can now be read from start to finish with the wheel,
+  PageUp/PageDown and Home/End; new edits return to the end. A scrollbar and
+  visible-row range show your position.
+- The AI workbench uses clearer text and compact rows independently of the
+  clipboard history style, keeping its main actions visible at the default size.
+- Empty AI header/footer space no longer triggers project switching, closes the
+  panel, or opens the workbench; only the visible controls respond.
 - Dragging the cat while the clipboard panel was open via the hotkey flyout no
   longer jumps the cat window or corrupts the saved position of the middle-click
   panel — the cat now moves normally in that case.

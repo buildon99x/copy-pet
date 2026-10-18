@@ -904,11 +904,18 @@ impl Pet {
 
     /// A click at window-canvas coords while the panel is open.
     pub fn panel_click(&mut self, cx: f32, cy: f32) -> Option<ClipPick> {
+        if !self.panel.hit(cx, cy) {
+            return None;
+        }
         let lt = self.panel.active_layout();
         if self.workbench.open {
-            if cy >= lt.footer_y && cx < lt.row_x + lt.row_w - 30.0 {
+            if self.panel.workbench_footer_hit(cx, cy, self.lang()) {
                 self.workbench.nav(NavKey::Esc, self.lang(), lt.rows);
-            } else if cy >= lt.rows_y && cy < lt.rows_y + lt.row_h * lt.rows as f32 {
+            } else if cx >= lt.row_x
+                && cx <= lt.row_x + lt.row_w
+                && cy >= lt.rows_y
+                && cy < lt.rows_y + lt.row_h * lt.rows as f32
+            {
                 let row = self.workbench.scroll + ((cy - lt.rows_y) / lt.row_h) as usize;
                 let text = self.workbench.click_row(row, self.lang(), lt.rows);
                 self.sync_workbench();
@@ -919,27 +926,27 @@ impl Pet {
                     plain_only: true,
                     image: None,
                 });
-            } else if cy >= lt.btn_y && cy < lt.btn_y + crate::panel::BTN {
-                if cx >= lt.btn_close_x - 2.0 {
+            } else if cy >= lt.btn_y && cy <= lt.btn_y + crate::panel::BTN {
+                let on_button = |left: f32| cx >= left && cx <= left + crate::panel::BTN;
+                if on_button(lt.btn_close_x) {
                     self.dismiss_panel();
-                } else if cx >= lt.btn_lang_x - 2.0 {
+                } else if on_button(lt.btn_lang_x) {
                     self.st.lang = self.lang().toggled().code().into();
                     self.dirty = true;
-                } else {
+                } else if on_button(lt.btn_filter_x) {
                     self.workbench.choose_projects();
                 }
             }
             self.sync_workbench();
             return None;
         }
-        if cy >= lt.footer_y && cx >= lt.row_x + lt.row_w / 2.0 {
+        if self.panel.workbench_footer_hit(cx, cy, self.lang()) {
             self.open_workbench();
             return None;
         }
         let action = self.panel.click(cx, cy, &self.clips)?;
         self.run_action(action)
     }
-
     /// Mouse wheel over the panel (positive rows = scroll down).
     pub fn panel_wheel(&mut self, rows: i32) {
         if self.workbench.open {

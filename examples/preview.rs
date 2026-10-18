@@ -446,6 +446,52 @@ fn main() {
             save(&pm, &dir, &format!("8-ai-{mode}-{}", lang.code()));
         }
     }
+    // Default history-card settings must not make AI actions or long drafts inaccessible.
+    for lang in [Lang::En, Lang::Ko] {
+        for mode in ["compact-home", "draft-top", "draft-end"] {
+            use clipcat::ai_workbench::{EditKind, Editor, Workbench};
+            let mut panel = Panel::default();
+            panel.toggle();
+            panel.standalone = true;
+            panel.view = 1;
+            let mut workbench = Workbench::default();
+            workbench.projects[0].name = "ClipCat".into();
+            workbench.text_width = panel.active_layout().row_w - 14.0;
+            if mode.starts_with("draft") {
+                workbench.projects[0].editor = Some(Editor {
+                    kind: EditKind::Request,
+                    text: (1..=60)
+                        .map(|i| {
+                            if lang == Lang::Ko {
+                                format!("{i:02}번째 요청 초안 줄")
+                            } else {
+                                format!("Draft line {i:02}")
+                            }
+                        })
+                        .collect::<Vec<_>>()
+                        .join("\n"),
+                });
+                if mode == "draft-top" {
+                    workbench.nav(clipcat::panel::NavKey::Home, lang, 8);
+                }
+            }
+            panel.ai_view = Some(workbench.view(lang));
+            let lt = panel.active_layout();
+            let mut pm = Pixmap::new(lt.canvas_w as u32, lt.canvas_h as u32).unwrap();
+            render::draw_panel(
+                &mut pm,
+                &PanelView {
+                    panel: &panel,
+                    store: &demo_store(),
+                    lang,
+                    capture: true,
+                    hint: "Ctrl+B",
+                    caret: true,
+                },
+            );
+            save(&pm, &dir, &format!("9-ai-{mode}-{}", lang.code()));
+        }
+    }
     // 7. shipped collection: every unlockable accessory, rendered via from_id
     // (canonical check that the ids line up with state::ACCESSORIES)
     {
