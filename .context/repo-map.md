@@ -11,6 +11,7 @@ src/
   lib.rs               module wiring
   pet.rs               Pet: platform-agnostic simulation, fish animation,
                        clip/panel orchestration + scene building
+  ai_workbench.rs      local request/project snapshots, templates, variables and redaction review
   clipboard.rs         ClipStore: text/image history, tags + clips.json persistence
   clip_image.rs        bounded PNG storage, Windows DIB conversion and thumbnails
   panel.rs             clipboard panel UI state, dynamic Layout geometry

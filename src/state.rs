@@ -132,15 +132,21 @@ pub fn config_dir() -> Option<PathBuf> {
 /// Writes a config file atomically (temp file in the same dir + rename) so a
 /// crash or power loss mid-write never corrupts the previous contents.
 /// Shared by `state.json` and `clips.json` (see [`crate::clipboard`]).
-pub(crate) fn write_atomic(path: &std::path::Path, contents: &str) {
+pub(crate) fn write_atomic(path: &std::path::Path, contents: &str) -> bool {
     if let Some(dir) = path.parent() {
-        let _ = std::fs::create_dir_all(dir);
+        if std::fs::create_dir_all(dir).is_err() {
+            return false;
+        }
     }
     let tmp = path.with_extension("json.tmp");
-    if std::fs::write(&tmp, contents).is_ok() && std::fs::rename(&tmp, path).is_err() {
-        // rename failed: don't leave the temp file orphaned in the config dir
-        let _ = std::fs::remove_file(&tmp);
+    if std::fs::write(&tmp, contents).is_err() {
+        return false;
     }
+    if std::fs::rename(&tmp, path).is_err() {
+        let _ = std::fs::remove_file(&tmp);
+        return false;
+    }
+    true
 }
 
 fn state_file() -> Option<PathBuf> {

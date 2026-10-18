@@ -528,3 +528,144 @@ mod tests {
         assert_eq!(fmt_clip_size(Lang::Ko, 2.0), "2.0KB");
     }
 }
+
+/// AI workbench strings are kept here with the rest of the application UI.
+#[derive(Clone, Copy)]
+pub enum AiText {
+    Title,
+    Entry,
+    Project,
+    NewProject,
+    Rename,
+    ProjectName,
+    ProjectsIcon,
+    Tags,
+    Request,
+    Code,
+    Errors,
+    Constraints,
+    Add,
+    SaveFavorite,
+    FavoriteName,
+    Variable,
+    Review,
+    Confirm,
+    Back,
+    Clear,
+    History,
+    Findings,
+    Sensitive,
+    Image,
+    Help,
+    Keys,
+    EditKeys,
+    Limit,
+    Added,
+    Invalid,
+    Unfilled,
+    Empty,
+    Copied,
+    Adding,
+    Warning,
+    Cancel,
+    SaveFailed,
+    Token,
+    Bearer,
+    Assignment,
+    PrivateKey,
+}
+pub fn ai(lang: Lang, msg: AiText) -> &'static str {
+    let (en, ko) = match msg {
+        AiText::Title => ("AI workbench", "AI 요청 작업대"),
+        AiText::Entry => ("AI workbench · Ctrl+B", "AI 작업대 · Ctrl+B"),
+        AiText::Project => ("Switch project", "프로젝트 전환"),
+        AiText::NewProject => ("Create project", "프로젝트 만들기"),
+        AiText::Rename => ("Rename project", "프로젝트 이름 바꾸기"),
+        AiText::ProjectsIcon => ("P", "P"),
+        AiText::ProjectName => ("Project", "프로젝트"),
+        AiText::Tags => ("Tray default tags", "트레이 기본 태그"),
+        AiText::Request => ("Request", "요청"),
+        AiText::Code => ("Related code", "관련 코드"),
+        AiText::Errors => ("Errors", "오류"),
+        AiText::Constraints => ("Constraints", "제약"),
+        AiText::Add => ("+ Select clips from history", "+ 히스토리에서 클립 선택"),
+        AiText::SaveFavorite => ("★ Save request as template", "★ 요청을 템플릿으로 저장"),
+        AiText::FavoriteName => (
+            "Template name (request is its body)",
+            "템플릿 이름 (현재 요청을 본문으로 저장)",
+        ),
+        AiText::Variable => ("Fill variable", "변수 채우기"),
+        AiText::Review => ("Review & prepare safe copy", "검사 후 안전한 복사 준비"),
+        AiText::Confirm => ("Confirm: copy reviewed text", "확인: 검토한 텍스트 복사"),
+        AiText::Back => ("← Back", "← 돌아가기"),
+        AiText::Clear => (
+            "Remove all tray clips (originals kept)",
+            "트레이 클립 모두 비우기 (원본 보존)",
+        ),
+        AiText::History => ("← Clipboard history", "← 클립보드 히스토리"),
+        AiText::Findings => ("Replacements", "치환 내역"),
+        AiText::Sensitive => ("Possible secret", "비밀정보 의심"),
+        AiText::Image => (
+            "[Image: attach the original separately]",
+            "[이미지: 원본을 별도로 첨부하세요]",
+        ),
+        AiText::Help => (
+            "Select an action below. Templates use {task}, {file}, {check}.",
+            "아래 작업을 선택하세요. 템플릿: {작업 내용}, {대상 파일}, {검증 명령}",
+        ),
+        AiText::Keys => (
+            "Enter: action · ←→: section · Ctrl+P/Z: move · Del: remove",
+            "Enter 실행 · ←→ 섹션 · Ctrl+P/Z 순서 · Del 제거",
+        ),
+        AiText::EditKeys => (
+            "Enter save · Ctrl+Enter newline · Ctrl+A/V · Esc cancel",
+            "Enter 저장 · Ctrl+Enter 줄바꿈 · Ctrl+A/V · Esc 취소",
+        ),
+        AiText::Limit => (
+            "Tray limit reached: 40 clips / 256 KiB per project.",
+            "프로젝트 제한: 40개 / 총 256 KiB에 도달했습니다.",
+        ),
+        AiText::Added => (
+            "Added to tray. Keep selecting or Ctrl+B to return.",
+            "트레이에 추가했습니다. 계속 선택하거나 Ctrl+B로 돌아가세요.",
+        ),
+        AiText::Invalid => (
+            "Invalid input or storage limit reached.",
+            "입력이 올바르지 않거나 저장 한도에 도달했습니다.",
+        ),
+        AiText::Unfilled => (
+            "Fill all template variables before reviewing.",
+            "검사 전에 모든 템플릿 변수를 채우세요.",
+        ),
+        AiText::Empty => (
+            "Add a request or clips first.",
+            "요청 또는 클립을 먼저 추가하세요.",
+        ),
+        AiText::Copied => (
+            "Reviewed copy ready. Originals preserved.",
+            "검토한 사본을 복사했습니다. 원본은 보존됩니다.",
+        ),
+        AiText::Adding => (
+            "Click clips to add · Ctrl+B: return to AI tray",
+            "클립 클릭으로 추가 · Ctrl+B: AI 트레이로 돌아가기",
+        ),
+        AiText::Warning => (
+            "Local pattern check only. Review for missed secrets before sharing.",
+            "로컬 패턴 검사입니다. 공유 전 누락된 비밀정보를 확인하세요.",
+        ),
+        AiText::Token => ("token", "토큰"),
+        AiText::Bearer => ("Bearer", "Bearer"),
+        AiText::Assignment => ("assignment", "할당 값"),
+        AiText::PrivateKey => ("private key", "개인 키"),
+        AiText::SaveFailed => (
+            "Could not save the tray. Changes remain in memory; retry on exit.",
+            "트레이를 저장하지 못했습니다. 변경은 메모리에 유지되며 종료 시 재시도합니다.",
+        ),
+        AiText::Cancel => ("Cancel editing", "편집 취소"),
+    };
+    if lang == Lang::Ko {
+        ko
+    } else {
+        en
+    }
+}

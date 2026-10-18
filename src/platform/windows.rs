@@ -83,6 +83,7 @@ const CMD_LANG_EN: usize = 50;
 const CMD_LANG_KO: usize = 51;
 const CMD_WINLEVEL0: usize = 52; // 52 top, 53 normal, 54 hide
 const CMD_HOTKEY: usize = 55;
+const CMD_WORKBENCH: usize = 56;
 
 fn wz(s: &str) -> Vec<u16> {
     s.encode_utf16().chain(std::iter::once(0)).collect()
@@ -1499,6 +1500,8 @@ unsafe fn show_menu(hwnd: HWND, ms: &MenuSnapshot) -> usize {
         CMD_AUTOCLOSE,
         wz(t(lang, Msg::MenuAutoClose)).as_ptr(),
     );
+    AppendMenuW(menu, MF_STRING, CMD_WORKBENCH,
+        wz(i18n::ai(lang, i18n::AiText::Entry)).as_ptr());
     // Panel hotkey: one click cycles to the next preset (no rebind dialog).
     AppendMenuW(
         menu,
@@ -1736,6 +1739,13 @@ unsafe fn open_menu(hwnd: HWND) {
                     a.pet.dirty = true;
                 });
             }
+            CMD_WORKBENCH => {
+                with_app(|a| {
+                    a.pet.show_window();
+                    a.apply_window_level();
+                    a.pet.open_workbench();
+                });
+            }
             CMD_PANEL => {
                 with_app(|a| a.pet.toggle_panel());
             }
@@ -1839,6 +1849,7 @@ fn map_nav_key(vk: u16, ctrl: bool) -> Option<NavKey> {
         0x1B => Some(NavKey::Esc),       // VK_ESCAPE
         0x09 => Some(NavKey::Tab),       // VK_TAB: source filter
         0x41 if ctrl => Some(NavKey::SelectAll),
+        0x42 if ctrl => Some(NavKey::Workbench),
         0x54 if ctrl => Some(NavKey::Tags), // Ctrl+T: edit tags
         0x50 if ctrl => Some(NavKey::Pin),  // Ctrl+P: pin clip
         0x5A if ctrl => Some(NavKey::Undo), // Ctrl+Z: undo delete
@@ -1880,6 +1891,32 @@ unsafe fn caret_screen_pos() -> Option<(i32, i32)> {
     Some((pt.x, pt.y))
 }
 
+/// Paste only into an explicitly active workbench editor. Read outside the
+/// App borrow: delayed clipboard rendering can dispatch window messages.
+unsafe fn paste_workbench_editor(hwnd: HWND, key: WPARAM) -> bool {
+    if key as u16 != 0x56 || GetKeyState(0x11) >= 0 {
+        return false;
+    }
+    if !with_app(|a| a.pet.workbench_editing()).unwrap_or(false) {
+        return false;
+    }
+    for attempt in 0..5 {
+        if attempt > 0 {
+            Sleep(15);
+        }
+        if OpenClipboard(hwnd) == 0 {
+            continue;
+        }
+        let text = read_unicode_open();
+        CloseClipboard();
+        if let Some(text) = text {
+            with_app(|a| a.pet.workbench_paste(&text));
+        }
+        break;
+    }
+    true
+}
+
 /// Messages for the flyout window are routed here (it shares the class +
 /// wndproc with the cat window). Only the panel-relevant messages are
 /// handled; everything else defers to `DefWindowProcW`.
@@ -1911,6 +1948,9 @@ unsafe fn flyout_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRESULT {
             0
         }
         WM_KEYDOWN => {
+            if paste_workbench_editor(hwnd, wp) {
+                return 0;
+            }
             let ctrl = GetKeyState(0x11) < 0; // VK_CONTROL
             if let Some(key) = map_nav_key(wp as u16, ctrl) {
                 with_app(|a| a.flyout_nav(key));
@@ -2146,6 +2186,9 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
             0
         }
         WM_KEYDOWN => {
+            if paste_workbench_editor(hwnd, wp) {
+                return 0;
+            }
             let handled = with_app(|a| {
                 if !a.pet.panel_open() {
                     return false;

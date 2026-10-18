@@ -589,6 +589,9 @@ impl PortableApp {
     fn panel_key(&mut self, event: &winit::event::KeyEvent) {
         // Ctrl on Linux/Windows-portable, Cmd on macOS — accept either
         let ctrl = self.mods.control_key() || self.mods.super_key();
+        if self.paste_workbench_editor(event, ctrl) {
+            return;
+        }
         if let Some(key) = nav_from_key(event, ctrl) {
             if let Some(pick) = self.pet.panel_nav(key) {
                 self.set_clipboard(pick);
@@ -596,6 +599,22 @@ impl PortableApp {
             return;
         }
         self.forward_text_input(event, ctrl);
+    }
+
+    /// Clipboard reads are explicit and scoped to the workbench text editor.
+    fn paste_workbench_editor(&mut self, event: &winit::event::KeyEvent, ctrl: bool) -> bool {
+        if !ctrl
+            || event.physical_key != PhysicalKey::Code(KeyCode::KeyV)
+            || !self.pet.workbench_editing()
+        {
+            return false;
+        }
+        if let Ok(mut clipboard) = arboard::Clipboard::new() {
+            if let Ok(text) = clipboard.get_text() {
+                self.pet.workbench_paste(&text);
+            }
+        }
+        true
     }
 
     /// Forwards printable characters to the panel search box, skipping
@@ -837,6 +856,9 @@ impl PortableApp {
     /// (hide on dismiss, paste on pick) after each navigation key.
     fn flyout_key(&mut self, event: &winit::event::KeyEvent) {
         let ctrl = self.mods.control_key() || self.mods.super_key();
+        if self.paste_workbench_editor(event, ctrl) {
+            return;
+        }
         if let Some(key) = nav_from_key(event, ctrl) {
             let pick = self.pet.panel_nav(key);
             self.after_flyout_action(pick);
@@ -1158,6 +1180,7 @@ fn nav_from_key(event: &winit::event::KeyEvent, ctrl: bool) -> Option<NavKey> {
         PhysicalKey::Code(KeyCode::Escape) => Some(NavKey::Esc),
         PhysicalKey::Code(KeyCode::Tab) => Some(NavKey::Tab), // source filter
         PhysicalKey::Code(KeyCode::KeyA) if ctrl => Some(NavKey::SelectAll),
+        PhysicalKey::Code(KeyCode::KeyB) if ctrl => Some(NavKey::Workbench),
         PhysicalKey::Code(KeyCode::KeyT) if ctrl => Some(NavKey::Tags),
         PhysicalKey::Code(KeyCode::KeyP) if ctrl => Some(NavKey::Pin),
         PhysicalKey::Code(KeyCode::KeyZ) if ctrl => Some(NavKey::Undo),

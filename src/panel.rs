@@ -175,6 +175,8 @@ pub enum PanelAction {
 /// Keyboard navigation keys forwarded by the backends while the panel is open.
 #[derive(Clone, Copy, PartialEq)]
 pub enum NavKey {
+    /// Open the explicit local AI request workbench (Ctrl/Cmd+B).
+    Workbench,
     Up,
     Down,
     PageUp,
@@ -214,6 +216,8 @@ pub enum PanelDrag {
 }
 
 pub struct Panel {
+    pub ai_view: Option<crate::ai_workbench::View>,
+    pub ai_adding: bool,
     pub open: bool,
     /// The panel is rendered in its own flyout window (hotkey path), so its
     /// geometry comes from the card-only [`layout_standalone`] canvas rather
@@ -269,6 +273,8 @@ impl Default for Panel {
             open: false,
             standalone: false,
             query: String::new(),
+            ai_view: None,
+            ai_adding: false,
             tag_edit: None,
             tag_select_all: false,
             source: None,
@@ -722,7 +728,7 @@ impl Panel {
             self.expanded = None;
         }
         match key {
-            NavKey::SelectAll => return None,
+            NavKey::SelectAll | NavKey::Workbench => return None,
             NavKey::Tags => unreachable!(),
             NavKey::Up => {
                 self.sel = self.sel.saturating_sub(1);

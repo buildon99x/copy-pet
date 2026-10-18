@@ -5,6 +5,7 @@
 //! The `clipcat` binary calls [`platform::run`]; `gen_icon` reuses
 //! [`render::draw_icon_scaled`] to regenerate the embedded `.ico` asset.
 
+pub mod ai_workbench;
 pub mod clip_image;
 pub mod clipboard;
 pub mod hotkey;

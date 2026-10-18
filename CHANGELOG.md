@@ -17,6 +17,14 @@ versions follow [SemVer](https://semver.org/). Maintenance rules:
 ## [Unreleased]
 
 ### Added
+- **AI request workbench** — assemble multiple clips into ordered request/code/error/constraint
+  sections, save named templates with fillable variables, and keep separate project
+  trays with unfinished drafts and default tags. Open it from the panel footer,
+  Ctrl/Cmd+B, or the Windows tray.
+- **Reviewed AI request copies** — check assembled requests locally for common
+  credentials, inspect numbered replacements and the outgoing text, then confirm
+  a plain-text copy. Original clips and templates stay intact; images show a
+  separate-attachment reminder. No AI service or additional network connection.
 - **Clip tags** — edit tags from each clip's `...` menu or Ctrl/Cmd+T, and
   find tagged text or images with `#tag` searches. Tags stay with saved history.
 - **Image clipboard history on Windows** — capture screenshots and copied

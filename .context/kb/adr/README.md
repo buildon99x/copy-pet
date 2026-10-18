@@ -22,3 +22,4 @@ rather than rewrite.
 | [0013](0013-flyout-panel-caret-anchor.md) | Caret-anchored clipboard flyout in a separate OS window (Windows + macOS) | Accepted |
 | [0014](0014-rich-clipboard-formats.md) | Rich clipboard formats (HTML/RTF) preserved by default + per-row "paste as text" | Accepted |
 | [0015](0015-clipboard-tags-and-windows-images.md) | Tags and bounded PNG/DIB image history on Windows | Accepted |
+| [0016](0016-local-ai-request-workbench.md) | Explicit local AI request workbench, project trays and confirmed safe copies | Accepted |

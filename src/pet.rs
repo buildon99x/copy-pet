@@ -88,6 +88,7 @@ fn seed() -> u32 {
 pub struct Pet {
     pub st: Persist,
     pub clips: ClipStore,
+    pub workbench: crate::ai_workbench::Workbench,
     pub panel: Panel,
     pub dirty: bool,
     last_save: Instant,
@@ -159,6 +160,7 @@ impl Pet {
         Pet {
             st,
             clips: ClipStore::load(),
+            workbench: crate::ai_workbench::Workbench::load(),
             panel,
             dirty: false,
             last_save: now,
@@ -687,6 +689,7 @@ impl Pet {
                 self.st.panel_h = self.panel.h;
                 self.dirty = true;
                 self.flyout_resized = true;
+                self.sync_workbench();
             }
             return;
         }
@@ -698,6 +701,7 @@ impl Pet {
         self.st.panel_off_x = self.panel.off.0;
         self.st.panel_off_y = self.panel.off.1;
         self.dirty = true;
+        self.sync_workbench();
     }
 
     /// The kind of card drag in progress, if any. The flyout backends use it
@@ -744,6 +748,13 @@ impl Pet {
     fn run_action(&mut self, action: PanelAction) -> Option<ClipPick> {
         match action {
             PanelAction::Copy(id) => {
+                if self.workbench.adding {
+                    if let Some(clip) = self.clips.get(id) {
+                        self.workbench.add_clip(clip);
+                    }
+                    self.sync_workbench();
+                    return None;
+                }
                 // default pick: preserve the original formatting (ADR-0014)
                 if let Some(clip) = self.clips.get(id) {
                     // The caret-anchored flyout is the Win+V parity path: the
@@ -764,6 +775,13 @@ impl Pet {
                 return None;
             }
             PanelAction::PasteText(id) => {
+                if self.workbench.adding {
+                    if let Some(clip) = self.clips.get(id) {
+                        self.workbench.add_clip(clip);
+                    }
+                    self.sync_workbench();
+                    return None;
+                }
                 // "paste as text": strip formatting and paste it explicitly
                 if let Some(clip) = self.clips.get(id) {
                     if clip.image.is_some() { return None; }
@@ -886,24 +904,121 @@ impl Pet {
 
     /// A click at window-canvas coords while the panel is open.
     pub fn panel_click(&mut self, cx: f32, cy: f32) -> Option<ClipPick> {
+        let lt = self.panel.active_layout();
+        if self.workbench.open {
+            if cy >= lt.footer_y && cx < lt.row_x + lt.row_w - 30.0 {
+                self.workbench.nav(NavKey::Esc, self.lang(), lt.rows);
+            } else if cy >= lt.rows_y && cy < lt.rows_y + lt.row_h * lt.rows as f32 {
+                let row = self.workbench.scroll + ((cy - lt.rows_y) / lt.row_h) as usize;
+                let text = self.workbench.click_row(row, self.lang(), lt.rows);
+                self.sync_workbench();
+                return text.map(|text| ClipPick {
+                    text,
+                    paste: false,
+                    formats: None,
+                    plain_only: true,
+                    image: None,
+                });
+            } else if cy >= lt.btn_y && cy < lt.btn_y + crate::panel::BTN {
+                if cx >= lt.btn_close_x - 2.0 {
+                    self.dismiss_panel();
+                } else if cx >= lt.btn_lang_x - 2.0 {
+                    self.st.lang = self.lang().toggled().code().into();
+                    self.dirty = true;
+                } else {
+                    self.workbench.choose_projects();
+                }
+            }
+            self.sync_workbench();
+            return None;
+        }
+        if cy >= lt.footer_y && cx >= lt.row_x + lt.row_w / 2.0 {
+            self.open_workbench();
+            return None;
+        }
         let action = self.panel.click(cx, cy, &self.clips)?;
         self.run_action(action)
     }
 
     /// Mouse wheel over the panel (positive rows = scroll down).
     pub fn panel_wheel(&mut self, rows: i32) {
-        self.panel.wheel(rows, &self.clips);
+        if self.workbench.open {
+            self.workbench
+                .wheel(rows, self.panel.active_layout().rows, self.lang());
+            self.sync_workbench();
+        } else {
+            self.panel.wheel(rows, &self.clips);
+        }
     }
 
     /// Printable character while the panel is open (search input).
     pub fn panel_char(&mut self, c: char) {
-        self.panel.input_char(c);
+        if self.workbench.open {
+            self.workbench.input(c);
+            self.sync_workbench();
+        } else {
+            self.panel.input_char(c);
+        }
     }
 
     /// Navigation key while the panel is open.
     pub fn panel_nav(&mut self, key: NavKey) -> Option<ClipPick> {
+        if key == NavKey::Workbench {
+            if self.workbench.open {
+                self.workbench.toggle();
+                self.sync_workbench();
+            } else {
+                self.open_workbench();
+            }
+            return None;
+        }
+        if self.workbench.open {
+            let text = self
+                .workbench
+                .nav(key, self.lang(), self.panel.active_layout().rows);
+            self.sync_workbench();
+            return text.map(|text| ClipPick {
+                text,
+                paste: false,
+                formats: None,
+                plain_only: true,
+                image: None,
+            });
+        }
         let action = self.panel.nav(key, &self.clips)?;
         self.run_action(action)
+    }
+
+    /// Opens the existing panel in explicit request-preparation mode.
+    pub fn open_workbench(&mut self) {
+        if !self.panel.open {
+            self.toggle_panel();
+        }
+        self.workbench.open = true;
+        self.workbench.adding = false;
+        self.workbench.review = None;
+        self.sync_workbench();
+    }
+
+    fn sync_workbench(&mut self) {
+        self.workbench.text_width = self.panel.active_layout().row_w - 14.0;
+        self.panel.ai_view = self
+            .workbench
+            .open
+            .then(|| self.workbench.view(self.lang()));
+        self.panel.ai_adding = self.workbench.adding;
+    }
+
+    pub fn workbench_editing(&self) -> bool {
+        self.panel.open && self.workbench.open && self.workbench.editing()
+    }
+
+    /// Receives an explicit paste while our editor has focus, never global input.
+    pub fn workbench_paste(&mut self, text: &str) {
+        if self.workbench_editing() {
+            self.workbench.paste(text);
+            self.sync_workbench();
+        }
     }
 
     // ---- per-frame update --------------------------------------------------
@@ -1287,6 +1402,7 @@ impl Pet {
             MenuAction::TogglePanel,
             self.panel.open,
         ));
+        m.push(MenuItem::leaf(crate::i18n::ai(lang, crate::i18n::AiText::Entry), MenuAction::OpenWorkbench, self.workbench.open));
         m.push(MenuItem::leaf(
             t(lang, Msg::MenuCapturePause),
             MenuAction::ToggleCapture,
@@ -1397,6 +1513,7 @@ impl Pet {
     pub fn apply_menu_action(&mut self, action: MenuAction) -> MenuOutcome {
         match action {
             MenuAction::TogglePanel => self.toggle_panel(),
+            MenuAction::OpenWorkbench => self.open_workbench(),
             MenuAction::ToggleCapture => {
                 self.run_action(PanelAction::ToggleCapture);
             }
@@ -1547,7 +1664,7 @@ impl Pet {
     /// True when there are unsaved changes and enough time has elapsed that
     /// the platform should capture the window position and persist.
     pub fn should_autosave(&self) -> bool {
-        (self.dirty || self.clips.dirty) && self.last_save.elapsed().as_secs() >= 30
+        (self.dirty || self.clips.dirty || self.workbench.dirty) && self.last_save.elapsed().as_secs() >= 30
     }
 
     /// Records the current window position and writes state to disk.
@@ -1561,6 +1678,8 @@ impl Pet {
     pub fn save(&mut self) {
         self.st.save();
         self.clips.save_if_dirty();
+        self.workbench.save();
+        self.sync_workbench();
         self.dirty = false;
         self.last_save = Instant::now();
     }

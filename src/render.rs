@@ -972,6 +972,91 @@ pub fn draw_panel(pm: &mut Pixmap, v: &PanelView) {
     cv.fill(&card, (255, 255, 255, 247));
     cv.stroke(&card, OUTLINE, 2.5);
 
+    if let Some(view) = &v.panel.ai_view {
+        let title = sysfont::truncate_to_width(&view.title, 1.8, lt.btn_view_x - lt.row_x - 8.0);
+        cv.ui_text(&title, lt.row_x + 4.0, lt.btn_y + 2.0, 1.8, TEXT);
+        cv.fill(
+            &round_rect(
+                lt.btn_filter_x,
+                lt.btn_y,
+                crate::panel::BTN,
+                crate::panel::BTN,
+                4.0,
+            ),
+            (229, 239, 251, 255),
+        );
+        cv.ui_text(
+            crate::i18n::ai(lang, crate::i18n::AiText::ProjectsIcon),
+            lt.btn_filter_x + 4.0,
+            lt.btn_y + 2.0,
+            1.5,
+            TEXT,
+        );
+        draw_btn(&mut cv, lt.btn_lang_x, lt.btn_y, BtnIcon::Lang(lang));
+        draw_btn(&mut cv, lt.btn_close_x, lt.btn_y, BtnIcon::Close);
+        cv.fill(
+            &round_rect(lt.search_x, lt.search_y, lt.search_w, lt.search_h, 7.0),
+            (229, 239, 251, 255),
+        );
+        let input =
+            sysfont::truncate_to_width(&view.input.replace('\n', " | "), 1.4, lt.search_w - 14.0);
+        cv.ui_text(&input, lt.search_x + 7.0, lt.search_y + 6.0, 1.4, TEXT_DIM);
+        let scroll = if view.editing {
+            view.rows.len().saturating_sub(lt.rows)
+        } else {
+            view.scroll
+        };
+        for (visible, (i, row)) in view
+            .rows
+            .iter()
+            .enumerate()
+            .skip(scroll)
+            .take(lt.rows)
+            .enumerate()
+        {
+            let y = lt.rows_y + visible as f32 * lt.row_h;
+            if !view.editing && i == view.selected {
+                cv.fill(
+                    &round_rect(lt.row_x, y, lt.row_w, lt.row_h - 2.0, 5.0),
+                    (226, 238, 253, 255),
+                );
+            }
+            let label = sysfont::truncate_to_width(row, 1.5, lt.row_w - 14.0);
+            cv.ui_text(
+                &label,
+                lt.row_x + 7.0,
+                y + (lt.row_h - 14.0) / 2.0,
+                1.5,
+                TEXT,
+            );
+        }
+        let progress = format!("{} / {}", view.selected + 1, view.rows.len());
+        if !view.editing {
+            cv.ui_text(
+                &progress,
+                lt.row_x + lt.row_w - 55.0,
+                lt.footer_y - 10.0,
+                1.1,
+                TEXT_DIM,
+            );
+        }
+        let back = crate::i18n::ai(lang, crate::i18n::AiText::Back);
+        cv.ui_text(back, lt.row_x, lt.footer_y + 2.0, 1.35, TEXT_DIM);
+        let hint = sysfont::truncate_to_width(&view.hint, 1.15, lt.row_w);
+        cv.ui_text(&hint, lt.row_x, lt.footer_y + 17.0, 1.15, TEXT_DIM);
+        for i in 0..3 {
+            let d = 5.0 + i as f32 * 4.0;
+            cv.line(
+                &[
+                    (lt.card_x + lt.card_w - d, lt.card_y + lt.card_h - 3.0),
+                    (lt.card_x + lt.card_w - 3.0, lt.card_y + lt.card_h - d),
+                ],
+                fade(OUTLINE, 0.45),
+                1.6,
+            );
+        }
+        return;
+    }
     // header: fish mark + title, vertically centered on the button row
     // (the header strip doubles as the card's move-drag handle)
     let hx = lt.card_x + 10.0;
@@ -1276,10 +1361,11 @@ pub fn draw_panel(pm: &mut Pixmap, v: &PanelView) {
         1.0,
     );
     let count = i18n::clip_count(lang, v.store.len(), v.store.pinned_count());
-    cv.ui_text(&count, lt.card_x + 10.0, lt.footer_y + 3.0, 1.4, TEXT_DIM);
-    let hw = sysfont::measure(v.hint, 1.4);
+    if !v.panel.ai_adding {cv.ui_text(&count, lt.card_x + 10.0, lt.footer_y + 3.0, 1.4, TEXT_DIM);}
+    let workbench_hint = crate::i18n::ai(lang, if v.panel.ai_adding {crate::i18n::AiText::Adding}else{crate::i18n::AiText::Entry});
+    let hw = sysfont::measure(workbench_hint, 1.4);
     cv.ui_text(
-        v.hint,
+        workbench_hint,
         lt.card_x + lt.card_w - 10.0 - hw,
         lt.footer_y + 3.0,
         1.4,

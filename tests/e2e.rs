@@ -799,3 +799,153 @@ fn tag_search_cache_refreshes_after_edit_in_both_panel_layouts() {
         assert_eq!(pick.paste, flyout);
     }
 }
+
+// Workbench rows are driven through exactly the public panel API used by both
+// native and portable backends; no clipboard writes occur until confirmation.
+fn ai_action(p: &mut Pet, prefix: &str) -> Option<clipcat::pet::ClipPick> {
+    let view = p.workbench.view(Lang::En);
+    let index = view
+        .rows
+        .iter()
+        .position(|s| s.starts_with(prefix))
+        .unwrap();
+    p.workbench.sel = index;
+    p.panel_nav(NavKey::Enter)
+}
+
+#[test]
+fn ai_workbench_public_flow_collects_reorders_fills_and_confirms_a_safe_copy() {
+    let mut p = pet();
+    p.st.lang = "en".into();
+    p.workbench = clipcat::ai_workbench::Workbench::default();
+    copy(&mut p, "example source", None);
+    copy(&mut p, "API_KEY=synthetic-example", None);
+    p.apply_menu_action(MenuAction::OpenWorkbench);
+    assert!(p.panel_open());
+    assert!(p.panel.ai_view.is_some());
+    ai_action(&mut p, "Request:");
+    assert!(p.workbench_editing());
+    p.workbench_paste("Implement {task}\nRun {check}");
+    p.panel_nav(NavKey::Enter);
+    ai_action(&mut p, "★ Save request");
+    p.workbench_paste("Implementation");
+    p.panel_nav(NavKey::Enter);
+    ai_action(&mut p, "Fill variable {task}");
+    p.workbench_paste("the feature");
+    p.panel_nav(NavKey::Enter);
+    ai_action(&mut p, "Fill variable {check}");
+    p.workbench_paste("cargo test");
+    p.panel_nav(NavKey::Enter);
+    ai_action(&mut p, "+ Select clips");
+    assert!(p.panel.ai_adding);
+    // Selecting in collection mode adds snapshots and cannot paste a secret.
+    assert!(p.panel_nav(NavKey::Enter).is_none());
+    p.panel_nav(NavKey::Down);
+    assert!(p.panel_nav(NavKey::Enter).is_none());
+    p.panel_nav(NavKey::Workbench);
+    assert_eq!(p.workbench.project().items.len(), 2);
+    ai_action(&mut p, "2. [Related code]");
+    assert_eq!(p.workbench.project().items[1].section, 2);
+    assert!(ai_action(&mut p, "Review &").is_none());
+    let review = p.workbench.review.as_ref().unwrap();
+    assert_eq!(review.findings.len(), 1);
+    assert!(!review.text.contains("synthetic-example"));
+    let pick = ai_action(&mut p, "Confirm:").unwrap();
+    assert!(!pick.paste);
+    assert!(pick.plain_only);
+    assert!(pick.formats.is_none());
+    assert!(pick.text.contains("Implement the feature"));
+    assert!(pick.text.contains("cargo test"));
+    assert!(pick.text.contains("[REDACTED_1]"));
+    assert!(p.clips.visible_filtered("synthetic-example", None).len() == 1);
+}
+
+#[test]
+fn workbench_keeps_history_sensitive_text_pick_and_flyout_intent_unchanged() {
+    let mut p = pet();
+    p.workbench = clipcat::ai_workbench::Workbench::default();
+    p.workbench.projects[0].request = "existing draft".into();
+    copy(&mut p, "Authorization: Bearer synthetic0123456789", None);
+    p.open_flyout();
+    let pick = p.panel_nav(NavKey::Enter).unwrap();
+    assert!(pick.paste);
+    assert_eq!(pick.text, "Authorization: Bearer synthetic0123456789");
+    assert_eq!(p.workbench.project().request, "existing draft");
+    assert!(p.workbench.review.is_none());
+}
+
+#[test]
+fn workbench_editor_paste_is_scoped_and_drafts_restore_after_project_switch() {
+    let mut p = pet();
+    p.st.lang = "en".into();
+    p.workbench = clipcat::ai_workbench::Workbench::default();
+    p.workbench_paste("ignored");
+    assert!(p.workbench.project().request.is_empty());
+    p.open_workbench();
+    ai_action(&mut p, "Request:");
+    p.workbench_paste("first");
+    p.panel_nav(NavKey::SelectAll);
+    p.workbench_paste("한글\nreplacement");
+    // Header P button remains reachable while an editor is open.
+    let lt = p.panel.active_layout();
+    p.panel_click(lt.btn_filter_x + 8.0, lt.btn_y + 8.0);
+    assert!(!p.workbench_editing());
+    ai_action(&mut p, "Create project");
+    ai_action(&mut p, "Request:");
+    p.workbench_paste("project two");
+    p.panel_nav(NavKey::Enter);
+    ai_action(&mut p, "Switch project:");
+    ai_action(&mut p, "Default");
+    assert!(p.workbench_editing());
+    assert_eq!(
+        p.workbench.project().editor.as_ref().unwrap().text,
+        "한글\nreplacement"
+    );
+    p.panel_nav(NavKey::Enter);
+    assert_eq!(p.workbench.project().request, "한글\nreplacement");
+}
+
+#[test]
+fn hidden_workbench_editor_does_not_accept_an_explicit_paste() {
+    let mut p = pet();
+    p.st.lang = "en".into();
+    p.workbench = clipcat::ai_workbench::Workbench::default();
+    p.open_workbench();
+    ai_action(&mut p, "Request:");
+    p.workbench_paste("retained");
+    p.toggle_panel();
+    assert!(!p.panel_open());
+    assert!(!p.workbench_editing());
+    p.workbench_paste("must be ignored");
+    assert_eq!(
+        p.workbench.project().editor.as_ref().unwrap().text,
+        "retained"
+    );
+}
+
+#[test]
+fn resizing_embedded_workbench_rewraps_the_complete_review() {
+    let mut p = pet();
+    p.st.lang = "en".into();
+    p.workbench = clipcat::ai_workbench::Workbench::default();
+    p.open_workbench();
+    ai_action(&mut p, "Request:");
+    p.workbench_paste(&"한글 검토 문구입니다. ".repeat(30));
+    p.panel_nav(NavKey::Enter);
+    ai_action(&mut p, "Review &");
+    let before = p.panel.ai_view.as_ref().unwrap().rows.len();
+    let lt = p.panel.active_layout();
+    assert!(p.panel_drag_start(lt.card_x + lt.card_w - 3.0, lt.card_y + lt.card_h - 3.0));
+    p.panel_drag_update(clipcat::panel::MIN_W - lt.card_w, 0.0);
+    p.panel_drag_end();
+    let view = p.panel.ai_view.as_ref().unwrap();
+    assert!(view.rows.len() > before);
+    let max = p.panel.active_layout().row_w - 14.0;
+    let first = view.rows.iter().position(|s| s == "← Back").unwrap() + 1;
+    assert!(view.rows[first..]
+        .iter()
+        .all(|s| clipcat::sysfont::measure(s, 1.5) <= max));
+    assert!(view.rows[first..]
+        .concat()
+        .contains(&"한글 검토 문구입니다. ".repeat(29)));
+}

@@ -368,6 +368,84 @@ fn main() {
         save(&sheet, &dir, "6-accessories");
     }
 
+    // Explicit, local AI request preparation in the existing clipboard panel.
+    for lang in [Lang::En, Lang::Ko] {
+        use clipcat::ai_workbench::{redact, EditKind, Editor, Favorite, Item, Workbench};
+        let mut workbench = Workbench::default();
+        workbench.projects[0].name = "ClipCat".into();
+        workbench.projects[0].request = if lang == Lang::Ko {
+            "{작업 내용}을 구현하세요.\n검증: {검증 명령}"
+        } else {
+            "Implement {task}.\nValidate: {check}"
+        }
+        .into();
+        workbench.projects[0].tags = vec!["clipcat".into(), "review".into()];
+        let template_body = workbench.projects[0].request.clone();
+        workbench.projects[0].favorites.push(Favorite {
+            name: if lang == Lang::Ko {
+                "버그 수정 요청"
+            } else {
+                "Bug fix request"
+            }
+            .into(),
+            body: template_body,
+        });
+        workbench.projects[0].items = vec![
+            Item {
+                text: "fn prepare_request() -> String { /* local only */ }".into(),
+                image: false,
+                section: 1,
+                tags: vec!["code".into()],
+            },
+            Item {
+                text: "Expected: copied text has no API key".into(),
+                image: false,
+                section: 2,
+                tags: vec![],
+            },
+            Item {
+                text: String::new(),
+                image: true,
+                section: 3,
+                tags: vec![],
+            },
+        ];
+        for mode in ["home", "clips", "edit", "review", "review-narrow"] {
+            let width=if mode=="review-narrow" {clipcat::panel::MIN_W}else{540.0};
+            let mut panel = Panel::with_geometry(width, 480.0, (-56.0, -282.0));
+            panel.toggle();
+            panel.standalone = true;
+            panel.view = 0;
+            workbench.scroll = if mode == "clips" { 7 } else { 0 };
+            workbench.sel = workbench.scroll;
+            workbench.projects[0].editor = if mode == "edit" {
+                Some(Editor{kind:EditKind::Request,text:if lang==Lang::Ko {"이 프로젝트의 오류를 수정하세요.\n대상 파일: src/pet.rs\n원본 클립은 보존하세요.\n검증 명령: cargo test --locked --release"}else{"Fix this project's request preparation flow.\nTarget file: src/pet.rs\nKeep original clips intact.\nValidation: cargo test --locked --release"}.into()})
+            } else {
+                None
+            };
+            workbench.review = if mode.starts_with("review") {
+                Some(redact("## Request\nReview this local example.\n\n## Related code\nAPI_KEY=synthetic-example-token\n\n## Constraints\nKeep originals intact.",lang))
+            } else {
+                None
+            };
+            workbench.text_width = panel.active_layout().row_w - 14.0;
+            panel.ai_view = Some(workbench.view(lang));
+            let lt = panel.active_layout();
+            let mut pm = Pixmap::new(lt.canvas_w as u32, lt.canvas_h as u32).unwrap();
+            render::draw_panel(
+                &mut pm,
+                &PanelView {
+                    panel: &panel,
+                    store: &demo_store(),
+                    lang,
+                    capture: true,
+                    hint: "Ctrl+B",
+                    caret: true,
+                },
+            );
+            save(&pm, &dir, &format!("8-ai-{mode}-{}", lang.code()));
+        }
+    }
     // 7. shipped collection: every unlockable accessory, rendered via from_id
     // (canonical check that the ids line up with state::ACCESSORIES)
     {
