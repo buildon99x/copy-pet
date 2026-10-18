@@ -685,3 +685,117 @@ fn ctrl_enter_pastes_selected_clip_as_text() {
     assert!(pick.plain_only && pick.paste, "plain text, explicitly pasted");
     assert!(pick.formats.is_none());
 }
+
+
+#[test]
+fn edit_tags_by_mouse_and_keyboard_then_filter() {
+    let mut p = pet();
+    copy(&mut p, "tagged note", None);
+    p.toggle_panel();
+    let id = p.clips.visible("")[0].id;
+    let l = p.panel.active_layout();
+    // The overflow reveals a # tag editor reachable on both panel layouts.
+    p.panel_click(l.row_x+l.row_w-4.0, l.rows_y+10.0);
+    p.panel_click(l.row_x+l.row_w-2.5*panel::ACT_ZONE, l.rows_y+10.0);
+    assert!(p.panel.tag_edit.is_some());
+    for c in "업무, Work".chars() { p.panel_char(c); }
+    assert!(p.panel_nav(NavKey::Enter).is_none(), "saving tags never copies or pastes");
+    assert!(p.panel.tag_edit.is_none());
+    assert!(p.panel_open());
+    assert_eq!(p.clips.get(id).unwrap().tags, ["업무", "Work"]);
+    p.panel_nav(NavKey::Tags);
+    p.panel_char('x');
+    p.panel_nav(NavKey::Esc);
+    assert_eq!(p.clips.get(id).unwrap().tags, ["업무", "Work"], "Esc discards draft");
+    p.panel_nav(NavKey::Tags);
+    p.panel_nav(NavKey::SelectAll);
+    for c in "work, 참고".chars() { p.panel_char(c); }
+    p.panel_nav(NavKey::Enter);
+    assert_eq!(p.clips.get(id).unwrap().tags, ["work", "참고"]);
+    p.panel_nav(NavKey::Tags);
+    p.panel_nav(NavKey::SelectAll);
+    for c in "a b c d e f g h i".chars() { p.panel_char(c); }
+    p.panel_nav(NavKey::Enter);
+    assert!(p.panel.tag_edit.is_some(), "invalid draft stays editable");
+    assert_eq!(p.clips.get(id).unwrap().tags, ["work", "참고"]);
+    p.panel_nav(NavKey::Esc);
+    for c in "#work".chars() { p.panel_char(c); }
+    assert_eq!(p.panel.visible(&p.clips).len(), 1);
+    assert_eq!(p.panel_nav(NavKey::Enter).unwrap().text, "tagged note");
+}
+
+#[test]
+fn image_pick_preserves_pixels_and_flyout_paste_intent() {
+    use clipcat::clip_image::ClipImage;
+    for flyout in [false,true] {
+        let mut p = pet();
+        let mut pm = Pixmap::new(20,10).unwrap();
+        pm.fill(tiny_skia::Color::from_rgba8(30,60,90,255));
+        let image = ClipImage::from_pixmap(&pm).unwrap();
+        p.on_copy_image(image.clone(), Some("Paint".into()), None);
+        assert_eq!(p.st.total_copies, 1);
+        assert_eq!(p.st.total_xp, clipcat::pet::XP_PER_COPY);
+        if flyout { p.open_flyout(); } else { p.toggle_panel(); }
+        assert!(p.panel_nav(NavKey::PasteText).is_none(), "images never paste an empty text label");
+        assert!(p.panel_open());
+        let (w,h) = if flyout { p.flyout_size() } else { p.canvas_size() };
+        let mut rendered = Pixmap::new(w as u32,h as u32).unwrap();
+        if flyout { p.render_flyout(&mut rendered); } else { p.render_card(&mut rendered); }
+        assert!(rendered.data().iter().any(|&b| b != 0));
+        let pick = p.panel_nav(NavKey::Enter).unwrap();
+        assert_eq!(pick.image, Some(image));
+        assert!(pick.text.is_empty());
+        assert_eq!(pick.paste, flyout);
+        assert!(!pick.plain_only);
+    }
+}
+
+#[test]
+fn paused_capture_does_not_store_images_or_award_xp() {
+    let mut p = pet();
+    p.st.clip_capture = false;
+    let image = clipcat::clip_image::ClipImage::from_pixmap(&Pixmap::new(1,1).unwrap()).unwrap();
+    p.on_copy_image(image, None, None);
+    assert!(p.clips.is_empty());
+    assert_eq!(p.st.total_copies, 0);
+}
+
+/// Saving while a tag filter is active must refresh cached rows immediately,
+/// including removing the selected row and clamping selection before a pick.
+#[test]
+fn tag_search_cache_refreshes_after_edit_in_both_panel_layouts() {
+    for flyout in [false, true] {
+        let mut p = pet();
+        copy(&mut p, "분기 보고서", Some("Paint"));
+        let text_id = p.clips.visible("")[0].id;
+        let image = clipcat::clip_image::ClipImage::from_pixmap(&Pixmap::new(2, 2).unwrap()).unwrap();
+        p.on_copy_image(image.clone(), Some("Paint".into()), None);
+        let image_id = p.clips.visible("")[0].id;
+        assert!(p.clips.set_tags(text_id, "업무 Work"));
+        assert!(p.clips.set_tags(image_id, "업무 Work"));
+        assert!(p.clips.visible_filtered("wor 업 PAINT", Some("paint")).iter().any(|c| c.id == image_id),
+            "images are searchable by partial tags and source without body text");
+        assert!(p.clips.visible("#Paint").is_empty(), "an app name is not an exact tag");
+        copy(&mut p, "다른 앱 보고서", Some("Code"));
+        let other_id = p.clips.visible("")[0].id;
+        assert!(p.clips.set_tags(other_id, "업무 Work"));
+        if flyout { p.open_flyout(); } else { p.toggle_panel(); }
+        p.panel_nav(NavKey::Tab); // Code
+        p.panel_nav(NavKey::Tab); // Paint
+        assert_eq!(p.panel.source.as_deref(), Some("Paint"));
+        for c in "#업무 #wOrK".chars() { p.panel_char(c); }
+        assert_eq!(p.panel.visible(&p.clips).iter().map(|c| c.id).collect::<Vec<_>>(), [image_id, text_id]);
+        p.panel_nav(NavKey::Down);
+        p.panel_nav(NavKey::Tags);
+        p.panel_nav(NavKey::SelectAll);
+        for c in "보관".chars() { p.panel_char(c); }
+        assert!(p.panel_nav(NavKey::Enter).is_none());
+        assert!(p.panel_open());
+        assert_eq!(p.panel.query, "#업무 #wOrK", "editing preserves the active query");
+        assert_eq!(p.panel.visible(&p.clips).iter().map(|c| c.id).collect::<Vec<_>>(), [image_id]);
+        assert_eq!(p.panel.sel, 0, "selection clamps when the edited clip no longer matches");
+        let pick = p.panel_nav(NavKey::Enter).unwrap();
+        assert_eq!(pick.image, Some(image));
+        assert_eq!(pick.paste, flyout);
+    }
+}

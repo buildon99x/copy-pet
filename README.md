@@ -16,6 +16,14 @@ Windows; a portable build sharing the same core on macOS/Linux.
 
 ## Features
 
+- **Tags** — use a clip's **... → #** action or `Ctrl/Cmd+T` to edit tags;
+  search text, apps, or partial tags with ordinary words, or use `#tag` for an
+  exact tag match. Combine tags with `#work #reference` (both required) and
+  text with `#work report`. Searches ignore case. Tags are saved with the clip.
+- **Image history (Windows native)** — copied screenshots and images appear
+  with thumbnails and can be copied/pasted back. Images support tags and pins.
+  See [usage and limits](docs/specs/clipboard-tags-images.md).
+
 - **Clipboard history** — every text copy is captured system-wide and stored
   locally (up to 100 clips + pinned clips that never expire). Rich text keeps
   its original formatting (bold, colors, links) on Windows and macOS.
@@ -179,6 +187,14 @@ automatically" / `auto_update` in `state.json`). There is no other network code.
 네이티브 바이너리 하나로.
 
 ## 특징
+
+- **태그** — 클립의 **... → #** 또는 `Ctrl/Cmd+T`로 태그를 편집하고
+  일반 검색어로 내용·앱·태그 일부를 찾거나 `#태그`로 정확히 일치하는 태그를
+  검색합니다. `#업무 #참고`는 두 태그 모두, `#업무 보고서`는 태그와 검색어
+  모두를 요구하며 대소문자를 구분하지 않습니다. 태그는 클립과 함께 저장됩니다.
+- **이미지 히스토리 (Windows 네이티브)** — 복사한 스크린샷·이미지를 썸네일로
+  확인하고 다시 복사·붙여넣기합니다. 이미지에도 태그와 고정을 적용할 수 있습니다.
+  [사용 방법과 제한](docs/specs/clipboard-tags-images.md)을 참고하세요.
 
 - **클립보드 히스토리** — 시스템 전역의 텍스트 복사를 감지해 로컬에 저장
   (히스토리 100개 + 만료되지 않는 고정 클립). Windows·macOS에서는 리치

@@ -17,6 +17,7 @@ use crate::input;
 use crate::menu::MenuAction;
 use crate::panel::{fit_delta, Layout, NavKey, PanelDrag, Rect};
 use crate::pet::{window_size, ClipPick, Pet, SCALES};
+use crate::clip_image::{ClipImage, MAX_IMAGE_BYTES};
 use crate::render::{self, Badge};
 use crate::state::{Persist, ACCESSORIES};
 use crate::update;
@@ -29,7 +30,7 @@ use windows_sys::Win32::Graphics::Gdi::*;
 use windows_sys::Win32::System::DataExchange::{
     AddClipboardFormatListener, CloseClipboard, EmptyClipboard, GetClipboardData,
     GetClipboardOwner, OpenClipboard, RegisterClipboardFormatW, RemoveClipboardFormatListener,
-    SetClipboardData,
+    SetClipboardData, GetClipboardSequenceNumber,
 };
 use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows_sys::Win32::System::Memory::{
@@ -101,7 +102,7 @@ struct App {
     // simulation
     pet: Pet,
     // clipboard
-    suppress_clip: Option<String>,
+    suppress_clip: Option<u32>,
     // interaction
     mouse_down: bool,
     drag_moved: bool,
@@ -217,15 +218,17 @@ impl App {
     /// setting for the embedded panel), it then restores focus to the app that
     /// was active when the panel opened and synthesizes Ctrl+V there.
     fn copy_back(&mut self, pick: ClipPick) {
-        // Arm the self-suppression marker only on a successful write: on failure
-        // no WM_CLIPBOARDUPDATE fires to consume it, so a stale marker would
-        // silently drop the next identical *external* copy from history.
-        let ok = unsafe {
-            set_clipboard_rich(self.hwnd, &pick.text, pick.formats.as_ref(), pick.plain_only)
+        // Arm sequence-based suppression only after a successful write.
+        // This handles image-only clips without comparing or retaining pixels.
+        let sequence = unsafe {
+            if let Some(image) = &pick.image {
+                set_clipboard_image(self.hwnd, image)
+            } else {
+                set_clipboard_rich(self.hwnd, &pick.text, pick.formats.as_ref(), pick.plain_only)
+            }
         };
-        if ok {
-            self.suppress_clip = Some(pick.text.clone());
-        }
+        self.suppress_clip = sequence;
+        let ok = sequence.is_some();
         // Only paste when the write actually landed: on failure the clipboard
         // still holds the previous content, so synthesizing Ctrl+V would paste
         // stale text into the target field instead of the picked clip. The
@@ -841,6 +844,7 @@ unsafe fn read_unicode_open() -> Option<String> {
     if h.is_null() {
         return None;
     }
+    if GlobalSize(h) > crate::clipboard::MAX_TEXT * 2 + 2 { return None; }
     let p = GlobalLock(h) as *const u16;
     if p.is_null() {
         return None;
@@ -864,21 +868,22 @@ unsafe fn read_format_bytes(fmt: u32) -> Option<Vec<u8>> {
     if h.is_null() {
         return None;
     }
+    let n = GlobalSize(h);
+    if n > crate::clipboard::MAX_RICH { return None; }
     let p = GlobalLock(h) as *const u8;
     if p.is_null() {
         return None;
     }
-    let n = GlobalSize(h);
     let bytes = std::slice::from_raw_parts(p, n).to_vec();
     GlobalUnlock(h);
     Some(trim_nul(bytes))
 }
 
-/// Reads CF_UNICODETEXT plus any CF_HTML / CF_RTF in one OpenClipboard, retrying
+/// Reads PNG/DIB images or CF_UNICODETEXT plus CF_HTML / CF_RTF in one OpenClipboard, retrying
 /// briefly (the copying app may still hold the clipboard open). The CF_HTML blob
 /// is kept verbatim (header included). SAFETY: clipboard-owned handles are only
 /// read between GlobalLock/GlobalUnlock and never freed.
-unsafe fn read_clipboard_rich(hwnd: HWND) -> Option<(String, Option<RichFormats>)> {
+unsafe fn read_clipboard_content(hwnd: HWND) -> Option<CapturedClip> {
     let (cf_html, cf_rtf) = clip_atoms();
     for attempt in 0..5 {
         if attempt > 0 {
@@ -886,6 +891,13 @@ unsafe fn read_clipboard_rich(hwnd: HWND) -> Option<(String, Option<RichFormats>
         }
         if OpenClipboard(hwnd) == 0 {
             continue;
+        }
+        let image = read_blob_open(png_atom(), MAX_IMAGE_BYTES).and_then(|b| ClipImage::from_png(&b))
+            .or_else(|| read_blob_open(17, 64 * 1024 * 1024 + 4096).and_then(|b| ClipImage::from_dib(&b)))
+            .or_else(|| read_blob_open(8, 64 * 1024 * 1024 + 4096).and_then(|b| ClipImage::from_dib(&b)));
+        if let Some(image) = image {
+            CloseClipboard();
+            return Some(CapturedClip::Image(image));
         }
         let text = read_unicode_open();
         let formats = text.as_ref().and_then(|_| {
@@ -895,7 +907,53 @@ unsafe fn read_clipboard_rich(hwnd: HWND) -> Option<(String, Option<RichFormats>
             (!f.is_empty()).then_some(f)
         });
         CloseClipboard();
-        return text.map(|t| (t, formats));
+        return text.map(|t| CapturedClip::Text(t, formats));
+    }
+    None
+}
+
+enum CapturedClip {
+    Text(String, Option<RichFormats>),
+    Image(ClipImage),
+}
+
+fn png_atom() -> u32 {
+    static ATOM: std::sync::OnceLock<u32> = std::sync::OnceLock::new();
+    *ATOM.get_or_init(|| unsafe { RegisterClipboardFormatW(wz("PNG").as_ptr()) })
+}
+
+/// SAFETY: clipboard is open; GlobalSize bounds the copy and handles remain
+/// owned by Windows. Binary payloads must not be NUL-trimmed.
+unsafe fn read_blob_open(format: u32, limit: usize) -> Option<Vec<u8>> {
+    if format == 0 { return None; }
+    let handle = GetClipboardData(format);
+    if handle.is_null() { return None; }
+    let size = GlobalSize(handle);
+    if size == 0 || size > limit { return None; }
+    let ptr = GlobalLock(handle) as *const u8;
+    if ptr.is_null() { return None; }
+    let bytes = std::slice::from_raw_parts(ptr, size).to_vec();
+    GlobalUnlock(handle);
+    Some(bytes)
+}
+
+/// Prepare validated data before emptying the clipboard. PNG preserves alpha;
+/// CF_DIB supplies a broadly compatible bitmap fallback (including Paint).
+unsafe fn set_clipboard_image(hwnd: HWND, image: &ClipImage) -> Option<u32> {
+    let dib = image.to_dib()?;
+    let png = b64_decode(&image.png_b64)?;
+    for attempt in 0..5 {
+        if attempt > 0 { Sleep(15); }
+        if OpenClipboard(hwnd) == 0 { continue; }
+        if EmptyClipboard() == 0 { CloseClipboard(); return None; }
+        let dib_ok = write_format(8, &dib);
+        let atom = png_atom();
+        let png_ok = atom != 0 && write_format(atom, &png);
+        // Capture the marker while the clipboard is locked, so another app
+        // cannot replace it before we remember our own sequence number.
+        let sequence = (dib_ok || png_ok).then(|| GetClipboardSequenceNumber());
+        CloseClipboard();
+        return sequence;
     }
     None
 }
@@ -925,14 +983,14 @@ unsafe fn write_format(fmt: u32, bytes: &[u8]) -> bool {
 
 /// Replaces the clipboard with `text` (CF_UNICODETEXT, always), plus the
 /// original CF_HTML / CF_RTF when `!plain_only` and present (ADR-0014). One
-/// OpenClipboard for all formats. The self-suppression marker is keyed on the
-/// text, which is always written, so it stays valid.
+/// OpenClipboard for all formats. Return our sequence number while still
+/// holding the clipboard open, for exact self-copy suppression.
 unsafe fn set_clipboard_rich(
     hwnd: HWND,
     text: &str,
     formats: Option<&RichFormats>,
     plain_only: bool,
-) -> bool {
+) -> Option<u32> {
     let (cf_html, cf_rtf) = clip_atoms();
     let wide: Vec<u16> = text.encode_utf16().chain(std::iter::once(0)).collect();
     let text_bytes = std::slice::from_raw_parts(wide.as_ptr() as *const u8, wide.len() * 2);
@@ -943,7 +1001,7 @@ unsafe fn set_clipboard_rich(
         if OpenClipboard(hwnd) == 0 {
             continue;
         }
-        EmptyClipboard();
+        if EmptyClipboard() == 0 { CloseClipboard(); return None; }
         let ok = write_format(CF_UNICODETEXT, text_bytes);
         if ok && !plain_only {
             if let Some(f) = formats {
@@ -960,10 +1018,11 @@ unsafe fn set_clipboard_rich(
                 }
             }
         }
+        let sequence = ok.then(|| GetClipboardSequenceNumber());
         CloseClipboard();
-        return ok;
+        return sequence;
     }
-    false
+    None
 }
 
 impl App {
@@ -1779,6 +1838,8 @@ fn map_nav_key(vk: u16, ctrl: bool) -> Option<NavKey> {
         0x08 => Some(NavKey::Backspace), // VK_BACK
         0x1B => Some(NavKey::Esc),       // VK_ESCAPE
         0x09 => Some(NavKey::Tab),       // VK_TAB: source filter
+        0x41 if ctrl => Some(NavKey::SelectAll),
+        0x54 if ctrl => Some(NavKey::Tags), // Ctrl+T: edit tags
         0x50 if ctrl => Some(NavKey::Pin),  // Ctrl+P: pin clip
         0x5A if ctrl => Some(NavKey::Undo), // Ctrl+Z: undo delete
         // Ctrl+0..9: quick-copy the nth row from the top
@@ -1897,15 +1958,19 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
             })
             .unwrap_or(false);
             if capture {
-                if let Some((text, formats)) = read_clipboard_rich(hwnd) {
-                    with_app(|a| {
-                        if a.suppress_clip.as_deref() == Some(text.as_str()) {
-                            a.suppress_clip = None;
-                            return;
-                        }
-                        let (source, badge) = a.clipboard_source();
-                        a.pet.on_copy_rich(text, source, badge, formats);
-                    });
+                // Sequence-based suppression also handles image-only copies and
+                // never suppresses a later external copy of identical content.
+                let own = with_app(|a| a.suppress_clip.take() == Some(GetClipboardSequenceNumber())).unwrap_or(false);
+                if !own {
+                    if let Some(content) = read_clipboard_content(hwnd) {
+                        with_app(|a| {
+                            let (source, badge) = a.clipboard_source();
+                            match content {
+                                CapturedClip::Text(text, formats) => a.pet.on_copy_rich(text, source, badge, formats),
+                                CapturedClip::Image(image) => a.pet.on_copy_image(image, source, badge),
+                            }
+                        });
+                    }
                 }
             }
             0
@@ -2400,6 +2465,65 @@ pub fn run() {
         while GetMessageW(&mut msg, null_mut(), 0, 0) > 0 {
             TranslateMessage(&msg);
             DispatchMessageW(&msg);
+        }
+    }
+}
+
+#[cfg(test)]
+mod clipboard_tests {
+    use super::*;
+
+    /// Exercises actual Win32 allocation/ownership and format conversion. A
+    /// message-only window owns the clipboard without presenting test UI.
+    #[test]
+    fn native_clipboard_roundtrips_text_png_and_dib() {
+        unsafe {
+            let hwnd = CreateWindowExW(0, wz("STATIC").as_ptr(), wz("ClipCat clipboard test").as_ptr(),
+                0, 0, 0, 0, 0, HWND_MESSAGE, null_mut(), GetModuleHandleW(null()), null());
+            assert!(!hwnd.is_null());
+            struct Cleanup(HWND);
+            impl Drop for Cleanup {
+                fn drop(&mut self) {
+                    unsafe {
+                        if OpenClipboard(self.0) != 0 { EmptyClipboard(); CloseClipboard(); }
+                        DestroyWindow(self.0);
+                    }
+                }
+            }
+            let _cleanup = Cleanup(hwnd);
+            let formats = RichFormats { html: Some("<b>clip</b>".into()), rtf_b64: Some(b64_encode(b"{\\rtf1 clip}")) };
+            assert!(set_clipboard_rich(hwnd, "클립 text", Some(&formats), false).is_some());
+            match read_clipboard_content(hwnd).unwrap() {
+                CapturedClip::Text(text, rich) => {
+                    assert_eq!(text, "클립 text");
+                    assert_eq!(rich, Some(formats));
+                }
+                _ => panic!("text clip changed type"),
+            }
+            let mut pm = tiny_skia::Pixmap::new(3,2).unwrap();
+            pm.fill(tiny_skia::Color::from_rgba8(40,80,120,255));
+            let image = ClipImage::from_pixmap(&pm).unwrap();
+            let before = GetClipboardSequenceNumber();
+            assert!(set_clipboard_image(hwnd, &image).is_some());
+            assert_ne!(GetClipboardSequenceNumber(), before);
+            match read_clipboard_content(hwnd).unwrap() {
+                CapturedClip::Image(captured) => assert_eq!(captured, image),
+                _ => panic!("image clipboard was not captured"),
+            }
+            // A DIB-only producer such as a bitmap screenshot must work too.
+            assert_ne!(OpenClipboard(hwnd), 0);
+            assert_ne!(EmptyClipboard(), 0);
+            assert!(write_format(8, &image.to_dib().unwrap()));
+            CloseClipboard();
+            match read_clipboard_content(hwnd).unwrap() {
+                CapturedClip::Image(captured) => assert_eq!(captured.pixmap().unwrap().data(), pm.data()),
+                _ => panic!("DIB-only clipboard was not captured"),
+            }
+            assert!(set_clipboard_rich(hwnd, "plain", None, true).is_some());
+            match read_clipboard_content(hwnd).unwrap() {
+                CapturedClip::Text(text, rich) => { assert_eq!(text,"plain"); assert!(rich.is_none()); }
+                _ => panic!("old image format survived text copy"),
+            }
         }
     }
 }

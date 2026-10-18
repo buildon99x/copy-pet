@@ -155,6 +155,7 @@ pub enum PanelAction {
     /// Put this clip's *plain* text on the clipboard and paste it (formatting
     /// stripped) — the revealed "paste as text" row action (ADR-0014).
     PasteText(u64),
+    SetTags(u64, String),
     TogglePin(u64),
     Delete(u64),
     /// First press of the clear button: ask for the confirming second press.
@@ -183,6 +184,10 @@ pub enum NavKey {
     Enter,
     /// Paste the selected clip as plain text (Ctrl/Cmd+Enter): strips formatting.
     PasteText,
+    /// Edit tags on the selected clip (Ctrl/Cmd+T).
+    Tags,
+    /// Select the whole tag draft (Ctrl/Cmd+A).
+    SelectAll,
     /// Reveal the selected row's actions ("paste as text" / delete).
     Right,
     /// Collapse the selected row's revealed actions.
@@ -219,6 +224,9 @@ pub struct Panel {
     /// [`layout_standalone`]: Panel::layout_standalone
     pub standalone: bool,
     pub query: String,
+    /// Selected clip and draft tag list. Enter saves; Esc cancels.
+    pub tag_edit: Option<(u64, String)>,
+    pub tag_select_all: bool,
     /// Active source-app filter; None shows clips from every app.
     pub source: Option<String>,
     /// Index of the first visible row into the filtered clip list.
@@ -261,6 +269,8 @@ impl Default for Panel {
             open: false,
             standalone: false,
             query: String::new(),
+            tag_edit: None,
+            tag_select_all: false,
             source: None,
             scroll: 0,
             sel: 0,
@@ -412,6 +422,7 @@ impl Panel {
 
     pub fn toggle(&mut self) {
         self.open = !self.open;
+        self.tag_edit = None;
         if self.open {
             self.query.clear();
             self.source = None;
@@ -575,6 +586,12 @@ impl Panel {
             return None;
         }
         let l = self.active_layout();
+        if self.tag_edit.is_some() {
+            if (l.search_x..=l.search_x+l.search_w).contains(&x)
+                && (l.search_y..=l.search_y+l.search_h).contains(&y) { return None; }
+            // Clicking elsewhere cancels the draft, then handles the click.
+            self.tag_edit = None;
+        }
         // header buttons
         let on_btn = |bx: f32| {
             x >= bx - 2.0
@@ -619,8 +636,12 @@ impl Panel {
                 if x > right - ACT_ZONE {
                     return Some(PanelAction::Delete(id));
                 }
-                if x > right - 2.0 * ACT_ZONE {
+                if x > right - 2.0 * ACT_ZONE && visible[i].image.is_none() {
                     return Some(PanelAction::PasteText(id));
+                }
+                if x > right - 3.0 * ACT_ZONE {
+                    self.begin_tags(id, store);
+                    return None;
                 }
                 // body of an expanded row: copy it and collapse the actions
                 self.expanded = None;
@@ -648,10 +669,23 @@ impl Panel {
         if c.is_control() {
             return;
         }
+        if let Some((_, draft)) = &mut self.tag_edit {
+            if std::mem::take(&mut self.tag_select_all) { draft.clear(); }
+            if draft.chars().count() < 256 { draft.push(c); }
+            return;
+        }
         if self.query.chars().count() < 60 {
             self.query.push(c);
             self.scroll = 0;
             self.sel = 0;
+        }
+    }
+
+    fn begin_tags(&mut self, id: u64, store: &ClipStore) {
+        if let Some(clip) = store.get(id) {
+            self.tag_edit = Some((id, clip.tags.join(", ")));
+            self.tag_select_all = false;
+            self.expanded = None;
         }
     }
 
@@ -661,6 +695,24 @@ impl Panel {
 
     /// Navigation key while the panel is open.
     pub fn nav(&mut self, key: NavKey, store: &ClipStore) -> Option<PanelAction> {
+        if let Some((id, draft)) = &mut self.tag_edit {
+            match key {
+                NavKey::Enter => return Some(PanelAction::SetTags(*id, draft.clone())),
+                NavKey::Esc => self.tag_edit = None,
+                NavKey::SelectAll => self.tag_select_all = true,
+                NavKey::End | NavKey::Right => self.tag_select_all = false,
+                NavKey::Backspace | NavKey::Delete => {
+                    if std::mem::take(&mut self.tag_select_all) { draft.clear(); }
+                    else { draft.pop(); }
+                },
+                _ => {},
+            }
+            return None;
+        }
+        if key == NavKey::Tags {
+            if let Some(id) = self.selected_id(store) { self.begin_tags(id, store); }
+            return None;
+        }
         let armed = std::mem::take(&mut self.clear_armed);
         let total = self.visible(store).len();
         let rows = self.visible_rows();
@@ -670,6 +722,8 @@ impl Panel {
             self.expanded = None;
         }
         match key {
+            NavKey::SelectAll => return None,
+            NavKey::Tags => unreachable!(),
             NavKey::Up => {
                 self.sel = self.sel.saturating_sub(1);
             }

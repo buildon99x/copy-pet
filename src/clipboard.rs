@@ -1,9 +1,10 @@
 //! Clipboard history: the platform-agnostic clip store. Backends feed copied
-//! text in via [`ClipStore::add_copy`] (Win32 clipboard listener on native,
+//! text and images in via [`ClipStore::add_copy`] and [`ClipStore::add_image`] (Win32 clipboard listener on native,
 //! arboard polling on portable) and ask for text to put back on the clipboard
 //! when the user picks a clip from the panel. Persisted as JSON next to
 //! `state.json`. Everything stays local — there is no network code.
 
+use crate::clip_image::ClipImage;
 use serde::{Deserialize, Serialize};
 use std::cell::OnceCell;
 use std::collections::VecDeque;
@@ -23,10 +24,28 @@ pub const MAX_TEXT: usize = 256 * 1024;
 pub const MAX_RICH: usize = 1024 * 1024;
 /// Most delete operations kept for undo (session-only, not persisted).
 const MAX_UNDO: usize = 20;
+pub const MAX_TAGS: usize = 8;
+pub const MAX_TAG_CHARS: usize = 24;
+/// Total encoded image budget, including pinned images.
+const MAX_STORED_IMAGES: usize = 64 * 1024 * 1024;
+
+/// Commas or whitespace separate tags; # is optional. Reject oversized input
+/// rather than silently dropping the user's tags. Dedupe case-insensitively.
+pub fn parse_tags(input: &str) -> Option<Vec<String>> {
+    let mut tags: Vec<String> = Vec::new();
+    for token in input.split(|c: char| c == ',' || c.is_whitespace()) {
+        let tag = token.trim_start_matches('#');
+        if tag.is_empty() { continue; }
+        if tag.chars().count() > MAX_TAG_CHARS || tag.chars().any(char::is_control) { return None; }
+        if !tags.iter().any(|t| eq_ci(t, tag)) { tags.push(tag.to_string()); }
+        if tags.len() > MAX_TAGS { return None; }
+    }
+    Some(tags)
+}
 
 /// Optional rich clipboard formats kept alongside a clip's plain [`Clip::text`]
 /// (ADR-0014). Opaque to the core — backends encode/decode the OS formats. The
-/// plain text is always the source of truth for search, preview and de-dupe;
+/// plain text is the source of truth for text search, preview and de-dupe;
 /// these are only re-emitted when the user pastes with formatting preserved.
 /// Captured on Windows + macOS; Linux leaves them `None` (arboard is text-only).
 #[derive(Serialize, Deserialize, Clone, Default, PartialEq, Eq, Debug)]
@@ -64,6 +83,12 @@ pub struct Clip {
     /// platform supports them. `None` for old clips, plain copies and Linux.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub formats: Option<RichFormats>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tags: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub image: Option<ClipImage>,
+    #[serde(skip, default)]
+    thumbnail: OnceCell<Option<tiny_skia::Pixmap>>,
     /// Memoized [`Clip::flattened`] result. `text` never changes after
     /// construction, but `flattened()` is called once per visible panel row
     /// on every ~33ms render tick while the panel is open — caching avoids
@@ -154,6 +179,10 @@ fn collapse_whitespace(chars: impl Iterator<Item = char>, cap: usize) -> String 
 }
 
 impl Clip {
+    pub fn thumbnail(&self) -> Option<&tiny_skia::Pixmap> {
+        self.thumbnail.get_or_init(|| self.image.as_ref().and_then(ClipImage::thumbnail)).as_ref()
+    }
+
     /// Single-line preview: first non-empty line, whitespace collapsed.
     pub fn preview(&self) -> String {
         let line = self
@@ -308,6 +337,17 @@ impl ClipStore {
     }
 
     fn from_items(mut items: Vec<Clip>) -> ClipStore {
+        // Validate persisted images before they can be rendered or re-emitted.
+        let mut image_bytes = 0usize;
+        items.retain_mut(|c| {
+            c.tags = parse_tags(&c.tags.join(",")).unwrap_or_default();
+            if let Some(image) = &c.image {
+                image_bytes = image_bytes.saturating_add(image.png_b64.len());
+                image_bytes <= MAX_STORED_IMAGES && image.pixmap().is_some()
+            } else {
+                !c.text.trim().is_empty() && c.text.len() <= MAX_TEXT
+            }
+        });
         // A hand-edited/corrupt clips.json can carry duplicate ids or an id at
         // the very top of the u64 range. Either breaks the invariant that
         // get/delete/toggle_pin rely on — next_id is a fresh, unique id greater
@@ -374,12 +414,32 @@ impl ClipStore {
         source: Option<String>,
         formats: Option<RichFormats>,
     ) -> bool {
-        if text.trim().is_empty() || text.len() > MAX_TEXT {
+        self.add_content(text, source, formats, None)
+    }
+
+    pub fn add_image(&mut self, image: ClipImage, source: Option<String>) -> bool {
+        if image.pixmap().is_none() { return false; }
+        self.add_content(String::new(), source, None, Some(image))
+    }
+
+    fn add_content(&mut self, text: String, source: Option<String>, formats: Option<RichFormats>, image: Option<ClipImage>) -> bool {
+        if image.is_none() && (text.trim().is_empty() || text.len() > MAX_TEXT) {
             return false;
+        }
+        let existing = self.items.iter().position(|c| {
+            if let Some(image) = &image { c.image.as_ref() == Some(image) }
+            else { c.image.is_none() && c.text == text }
+        });
+        if let Some(image) = &image {
+            let undo_bytes: usize = self.undo.iter().flatten().filter_map(|c| c.image.as_ref()).map(|i| i.png_b64.len()).sum();
+            let used: usize = self.items.iter().enumerate()
+                .filter(|(i, _)| Some(*i) != existing)
+                .filter_map(|(_, c)| c.image.as_ref()).map(|i| i.png_b64.len()).sum();
+            if used.saturating_add(undo_bytes).saturating_add(image.png_b64.len()) > MAX_STORED_IMAGES { return false; }
         }
         let formats = formats.filter(|f| !f.is_empty() && f.byte_len() <= MAX_RICH);
         let ts = now_ts();
-        if let Some(i) = self.items.iter().position(|c| c.text == text) {
+        if let Some(i) = existing {
             // same text copied again: bump to top, refresh meta
             let mut clip = self.items.remove(i);
             clip.ts = ts;
@@ -394,6 +454,9 @@ impl ClipStore {
                 pinned: false,
                 ts,
                 formats,
+                tags: Vec::new(),
+                image,
+                thumbnail: OnceCell::new(),
                 flat: OnceCell::new(),
             };
             self.next_id += 1;
@@ -444,6 +507,13 @@ impl ClipStore {
         if unpinned {
             self.evict();
         }
+    }
+
+    pub fn set_tags(&mut self, id: u64, input: &str) -> bool {
+        let Some(tags) = parse_tags(input) else { return false; };
+        let Some(clip) = self.items.iter_mut().find(|c| c.id == id) else { return false; };
+        if clip.tags != tags { clip.tags = tags; self.touch(); }
+        true
     }
 
     pub fn delete(&mut self, id: u64) -> bool {
@@ -521,7 +591,7 @@ impl ClipStore {
 
     /// Clips for the panel: pinned first (newest first), then history
     /// (newest first), filtered by a case-insensitive substring query on
-    /// text and source app.
+    /// text, source app and tags. A `#tag` token matches a whole tag only.
     pub fn visible(&self, query: &str) -> Vec<&Clip> {
         self.visible_filtered(query, None)
     }
@@ -540,7 +610,8 @@ impl ClipStore {
     /// so the filter doesn't re-run over every clip text each frame.
     ///
     /// The query is split on whitespace into tokens; a clip is shown only when
-    /// **every** token occurs in its text or source (AND), and the rows are
+    /// **every** token occurs in its text, source or tags (AND). Tokens starting
+    /// with `#` require an exact tag match; all comparisons ignore case. Rows are
     /// ranked by relevance (prefix/word-start and earlier hits first, with a
     /// bonus when the whole query appears contiguously). Pinned clips always
     /// come first; ties keep newest-first.
@@ -561,9 +632,15 @@ impl ClipStore {
             }
             let mut total: i64 = 0;
             for tok in &tokens {
-                // each token may land in the text or the source app name
-                let best =
-                    match_score(&c.text, tok).max(c.source.as_deref().and_then(|s| match_score(s, tok)));
+                // Ordinary tokens may land in any searchable field; #tokens
+                // only match whole tags, including on image clips.
+                let best = if let Some(tag) = tok.strip_prefix('#') {
+                    c.tags.iter().any(|t| eq_ci(t, tag)).then_some(1000)
+                } else {
+                    match_score(&c.text, tok)
+                        .max(c.source.as_deref().and_then(|s| match_score(s, tok)))
+                        .max(c.tags.iter().filter_map(|tag| match_score(tag, tok)).max())
+                };
                 match best {
                     Some(s) => total += i64::from(s),
                     None => return None, // a token matched nowhere => hide the clip
@@ -851,6 +928,9 @@ mod tests {
             pinned: false,
             ts: 0,
             formats: None,
+            tags: Vec::new(),
+            image: None,
+            thumbnail: OnceCell::new(),
             flat: OnceCell::new(),
         };
         assert_eq!(c.preview(), "fn main() {");
@@ -984,4 +1064,113 @@ mod tests {
         ids.dedup();
         assert_eq!(ids.len(), n, "ids stay unique across the u64 boundary");
     }
+    #[test]
+    fn tags_normalize_search_and_survive_copy_delete_undo_and_reload() {
+        let mut s = store_with(&["invoice", "unrelated"]);
+        let id = s.visible("invoice")[0].id;
+        let version = s.version();
+        assert!(s.set_tags(id, "#업무, Work, work, 참고"));
+        assert!(s.version() > version);
+        assert_eq!(s.get(id).unwrap().tags, ["업무", "Work", "참고"]);
+        assert_eq!(s.visible("#WORK #업무 invoice").len(), 1);
+        assert_eq!(s.visible("참고").len(), 1);
+        assert!(s.visible("#wor").is_empty(), "#tag is an exact tag filter");
+        assert!(s.visible("#invoice").is_empty(), "#tag never matches body text");
+        assert!(s.add_copy("invoice".into(), None));
+        assert_eq!(s.visible("#업무")[0].id, id);
+        assert!(s.delete(id));
+        assert!(s.visible("#업무").is_empty());
+        assert_eq!(s.undo_delete(), Some(id));
+        let json = serde_json::to_string(&ClipsOut { clips: &s.items }).unwrap();
+        let loaded = ClipStore::from_items(serde_json::from_str::<ClipsFile>(&json).unwrap().clips);
+        assert_eq!(loaded.visible("#업무")[0].tags, ["업무", "Work", "참고"]);
+        assert!(s.set_tags(id, ""));
+        assert!(s.get(id).unwrap().tags.is_empty());
+    }
+
+    #[test]
+    fn invalid_tags_leave_existing_tags_intact() {
+        let mut s = store_with(&["clip"]);
+        let id = s.visible("")[0].id;
+        assert!(s.set_tags(id, "keep"));
+        assert!(!s.set_tags(id, &"가".repeat(MAX_TAG_CHARS+1)));
+        assert!(!s.set_tags(id, "a b c d e f g h i"));
+        assert_eq!(s.get(id).unwrap().tags, ["keep"]);
+        assert!(!s.set_tags(u64::MAX, "tag"));
+    }
+
+    #[test]
+    fn tag_search_combines_exact_and_partial_terms_with_source_filter() {
+        let mut s = ClipStore::default();
+        s.add_copy("분기 보고서".into(), Some("Code".into()));
+        let report = s.visible("")[0].id;
+        assert!(s.set_tags(report, "업무 Work 참고"));
+        s.add_copy("#Work 업무 보고서".into(), Some("Chrome".into()));
+        s.add_copy("다른 메모".into(), Some("Code".into()));
+        let note = s.visible("")[0].id;
+        assert!(s.set_tags(note, "Work"));
+
+        for query in ["#wOrK #업무", "#업무 보고 CODE", "wor 참고", "  #업무\t#WORK  "] {
+            let found = s.visible_filtered(query, Some("cOdE"));
+            assert_eq!(found.len(), 1, "query: {query}");
+            assert_eq!(found[0].id, report, "query: {query}");
+        }
+        assert_eq!(s.visible("wor").len(), 3, "ordinary terms search text and partial tags");
+        assert_eq!(s.visible("#work").len(), 2, "body hashtags do not satisfy a tag filter");
+        for query in ["#wor", "#업", "#Work #없는태그", "#업무 missing"] {
+            assert!(s.visible(query).is_empty(), "query: {query}");
+        }
+        assert!(s.visible_filtered("#work #업무", Some("Chrome")).is_empty());
+    }
+
+    #[test]
+    fn image_history_dedupes_separately_from_text_and_roundtrips() {
+        let mut s = store_with(&["text"]);
+        let mut pm = tiny_skia::Pixmap::new(3,2).unwrap();
+        pm.fill(tiny_skia::Color::from_rgba8(5,20,80,255));
+        let image = ClipImage::from_pixmap(&pm).unwrap();
+        assert!(s.add_image(image.clone(), Some("Paint".into())));
+        let id = s.visible("")[0].id;
+        assert!(s.set_tags(id, "사진"));
+        s.toggle_pin(id);
+        assert!(s.add_image(image.clone(), None));
+        assert_eq!(s.len(), 2);
+        assert_eq!(s.visible("#사진")[0].id, id);
+        assert!(s.get(id).unwrap().pinned);
+        assert!(s.get(id).unwrap().thumbnail().is_some());
+        let json = serde_json::to_string(&ClipsOut { clips: &s.items }).unwrap();
+        let loaded = ClipStore::from_items(serde_json::from_str::<ClipsFile>(&json).unwrap().clips);
+        assert_eq!(loaded.get(id).unwrap().image.as_ref(), Some(&image));
+        assert_eq!(loaded.visible("#사진").len(), 1);
+        let old = r#"{"clips":[{"id":1,"text":"old","source":null,"pinned":false,"ts":0}]}"#;
+        let old = ClipStore::from_items(serde_json::from_str::<ClipsFile>(old).unwrap().clips);
+        assert!(old.get(1).unwrap().image.is_none());
+        assert!(old.get(1).unwrap().tags.is_empty());
+    }
+
+    #[test]
+    fn persisted_corrupt_image_is_skipped_without_losing_text_history() {
+        let s = store_with(&["valid", "bad"]);
+        let mut items = s.items;
+        items[0].image = Some(ClipImage { width: u32::MAX, height: 100, png_b64: "invalid".into() });
+        let loaded = ClipStore::from_items(items);
+        assert_eq!(loaded.len(), 1);
+        assert_eq!(loaded.visible("")[0].text, "valid");
+    }
+
+    #[test]
+    fn image_budget_includes_pinned_and_undo_payloads() {
+        let mut s = store_with(&["budget"]);
+        let id = s.visible("")[0].id;
+        let image = ClipImage::from_pixmap(&tiny_skia::Pixmap::new(1,1).unwrap()).unwrap();
+        // Simulate a full existing image store without allocating random pixels.
+        s.items[0].image = Some(ClipImage { png_b64: "A".repeat(MAX_STORED_IMAGES), ..image.clone() });
+        s.toggle_pin(id);
+        assert!(!s.add_image(image.clone(), None));
+        assert_eq!(s.len(), 1, "never evict a pinned item to admit an image");
+        assert!(s.delete(id));
+        assert!(!s.add_image(image, None), "undo payloads count toward the budget");
+        assert_eq!(s.undo_delete(), Some(id));
+    }
+
 }

@@ -4,6 +4,7 @@
 //! trays — the platform backends drive it by feeding input counts and copy
 //! events, calling [`Pet::advance`] each tick and presenting [`Pet::render`].
 
+use crate::clip_image::ClipImage;
 use crate::clipboard::{ClipStore, RichFormats};
 use crate::i18n::{self, t, Lang, Msg};
 use crate::menu::{MenuAction, MenuEntry, MenuItem, MenuOutcome};
@@ -34,6 +35,7 @@ pub struct ClipPick {
     pub paste: bool,
     pub formats: Option<RichFormats>,
     pub plain_only: bool,
+    pub image: Option<ClipImage>,
 }
 
 /// Flight time of one fish, in seconds.
@@ -482,6 +484,16 @@ impl Pet {
         if !self.clips.add_copy_rich(text, source, formats) {
             return;
         }
+        self.copy_feedback(badge);
+    }
+
+    pub fn on_copy_image(&mut self, image: ClipImage, source: Option<String>, badge: Option<Badge>) {
+        if !self.st.clip_capture { return; }
+        let badge = badge.unwrap_or_else(|| Badge::from_source(source.as_deref()));
+        if self.clips.add_image(image, source) { self.copy_feedback(badge); }
+    }
+
+    fn copy_feedback(&mut self, badge: Badge) {
         if self.fish_queue.len() >= FISH_QUEUE_MAX {
             self.fish_queue.pop_front();
         }
@@ -569,6 +581,7 @@ impl Pet {
     /// needs no relayout.
     pub fn close_flyout(&mut self) {
         self.panel.open = false;
+        self.panel.tag_edit = None;
         self.panel.standalone = false;
         self.flyout = false;
         self.flyout_resized = false;
@@ -743,6 +756,7 @@ impl Pet {
                         paste: self.st.paste_on_select || self.flyout,
                         formats: clip.formats.clone(),
                         plain_only: false,
+                        image: clip.image.clone(),
                     };
                     self.after_pick(Msg::ToastCopied);
                     return Some(pick);
@@ -752,17 +766,28 @@ impl Pet {
             PanelAction::PasteText(id) => {
                 // "paste as text": strip formatting and paste it explicitly
                 if let Some(clip) = self.clips.get(id) {
+                    if clip.image.is_some() { return None; }
                     let pick = ClipPick {
                         text: clip.text.clone(),
                         paste: true,
                         formats: None,
                         plain_only: true,
+                        image: None,
                     };
                     self.panel.collapse_actions();
                     self.after_pick(Msg::ToastPastedPlain);
                     return Some(pick);
                 }
                 return None;
+            }
+            PanelAction::SetTags(id, input) => {
+                if self.clips.set_tags(id, &input) {
+                    self.panel.tag_edit = None;
+                    self.panel.focus_id(&self.clips, id);
+                    self.toast_msg(Msg::ToastTagsSaved, 1.8);
+                } else {
+                    self.toast_msg(Msg::ToastTagsInvalid, 3.0);
+                }
             }
             PanelAction::TogglePin(id) => {
                 self.clips.toggle_pin(id);

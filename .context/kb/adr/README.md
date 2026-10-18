@@ -21,3 +21,4 @@ rather than rewrite.
 | [0012](0012-auto-paste.md) | Opt-in auto-paste on clip select via synthesized Ctrl/Cmd+V (no new dependency) | Accepted |
 | [0013](0013-flyout-panel-caret-anchor.md) | Caret-anchored clipboard flyout in a separate OS window (Windows + macOS) | Accepted |
 | [0014](0014-rich-clipboard-formats.md) | Rich clipboard formats (HTML/RTF) preserved by default + per-row "paste as text" | Accepted |
+| [0015](0015-clipboard-tags-and-windows-images.md) | Tags and bounded PNG/DIB image history on Windows | Accepted |

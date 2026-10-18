@@ -64,6 +64,46 @@ fn main() {
     let dir = std::env::args().nth(1).unwrap_or_else(|| "/tmp/clipcat-preview".into());
     std::fs::create_dir_all(&dir).unwrap();
 
+    // Windows image history and inline tag editing, in both panel layouts.
+    {
+        let mut store = demo_store();
+        let mut image = Pixmap::new(240,256).unwrap();
+        render::render_card(&mut image, &base_scene(Lang::Ko), 1.0);
+        store.add_image(clipcat::clip_image::ClipImage::from_pixmap(&image).unwrap(), Some("SnippingTool".into()));
+        let id = store.visible("").iter().find(|c| c.image.is_some()).unwrap().id;
+        store.set_tags(id, "디자인, 참고");
+        // Keep the image ahead of the demo's pinned text for this preview.
+        store.toggle_pin(id);
+        for (lang,name) in [(Lang::Ko,"8-images-tags-ko"),(Lang::En,"8-images-tags-en")] {
+            let mut panel = Panel::default();
+            panel.toggle();
+            panel.standalone = true;
+            panel.view = 1;
+            let l = panel.active_layout();
+            let mut pm = Pixmap::new(l.canvas_w as u32,l.canvas_h as u32).unwrap();
+            let mut draw = |panel: &Panel, suffix: &str| {
+                pm.fill(tiny_skia::Color::TRANSPARENT);
+                render::draw_panel(&mut pm, &PanelView { panel, store: &store, lang, capture: true, hint:"WIN+SHIFT+V", caret:true });
+                save(&pm,&dir,&format!("{name}{suffix}"));
+            };
+            draw(&panel, "");
+            panel.tag_edit=Some((id,"디자인, 참고".into()));
+            draw(&panel, "-editor");
+            panel.tag_edit=None;
+            panel.expanded=Some(id);
+            let l=panel.active_layout();
+            panel.cursor=Some((l.row_x+l.row_w-2.5*clipcat::panel::ACT_ZONE,l.rows_y+13.0));
+            draw(&panel, "-actions");
+            panel.expanded=None;
+            panel.cursor=None;
+            panel.view=0;
+            draw(&panel, "-compact");
+            panel.query = "#디자인 #참고".into();
+            panel.source = Some("SnippingTool".into());
+            draw(&panel, "-search");
+        }
+    }
+
     // 1. text rendering: the system font (every UI surface) at several sizes
     {
         let mut pm = Pixmap::new(560, 200).unwrap();

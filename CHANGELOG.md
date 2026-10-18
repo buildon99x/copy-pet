@@ -16,6 +16,13 @@ versions follow [SemVer](https://semver.org/). Maintenance rules:
 
 ## [Unreleased]
 
+### Added
+- **Clip tags** — edit tags from each clip's `...` menu or Ctrl/Cmd+T, and
+  find tagged text or images with `#tag` searches. Tags stay with saved history.
+- **Image clipboard history on Windows** — capture screenshots and copied
+  images, view thumbnails, and copy or paste them back from the history panel.
+  Images support pins, tags, deletion and undo alongside text clips.
+
 ### Fixed
 - Dragging the cat while the clipboard panel was open via the hotkey flyout no
   longer jumps the cat window or corrupts the saved position of the middle-click

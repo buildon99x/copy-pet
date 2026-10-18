@@ -430,6 +430,7 @@ impl PortableApp {
     /// can't reliably re-focus the previous app, so the paste lands in whatever
     /// is frontmost after the panel closes.
     fn set_clipboard(&self, pick: ClipPick) {
+        if pick.image.is_some() { return; } // Image clipboard is Windows-native only.
         // suppression is keyed on the text, which is always written, so it stays
         // valid whether or not we also write the rich formats (ADR-0014).
         if let Ok(mut guard) = self.suppress.lock() {
@@ -1156,6 +1157,8 @@ fn nav_from_key(event: &winit::event::KeyEvent, ctrl: bool) -> Option<NavKey> {
         PhysicalKey::Code(KeyCode::Backspace) => Some(NavKey::Backspace),
         PhysicalKey::Code(KeyCode::Escape) => Some(NavKey::Esc),
         PhysicalKey::Code(KeyCode::Tab) => Some(NavKey::Tab), // source filter
+        PhysicalKey::Code(KeyCode::KeyA) if ctrl => Some(NavKey::SelectAll),
+        PhysicalKey::Code(KeyCode::KeyT) if ctrl => Some(NavKey::Tags),
         PhysicalKey::Code(KeyCode::KeyP) if ctrl => Some(NavKey::Pin),
         PhysicalKey::Code(KeyCode::KeyZ) if ctrl => Some(NavKey::Undo),
         // Ctrl/Cmd+0..9: quick-copy the nth row from the top

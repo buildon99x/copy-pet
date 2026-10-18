@@ -1016,7 +1016,7 @@ pub fn draw_panel(pm: &mut Pixmap, v: &PanelView) {
     // search box
     let (sx, sy, sw, sh) = (lt.search_x, lt.search_y, lt.search_w, lt.search_h);
     let sb = round_rect(sx, sy, sw, sh, 9.0);
-    cv.fill(&sb, (243, 240, 235, 255));
+    cv.fill(&sb, if v.panel.tag_edit.is_some() { (225,238,253,255) } else { (243, 240, 235, 255) });
     cv.stroke(&sb, fade(OUTLINE, 0.5), 1.6);
     // magnifier
     let scy = sy + sh / 2.0;
@@ -1024,7 +1024,7 @@ pub fn draw_panel(pm: &mut Pixmap, v: &PanelView) {
     cv.line(&[(sx + 13.2, scy + 1.5), (sx + 16.2, scy + 4.5)], TEXT_DIM, 1.8);
     let mut qx = sx + 23.0;
     // active source filter: a chip inside the search box; query starts after
-    if let Some(src) = &v.panel.source {
+    if let Some(src) = v.panel.source.as_ref().filter(|_| v.panel.tag_edit.is_none()) {
         let dot = source_color(src);
         let label = sysfont::truncate_to_width(src, 1.4, 90.0);
         let cw = sysfont::measure(&label, 1.4) + 18.0;
@@ -1038,14 +1038,15 @@ pub fn draw_panel(pm: &mut Pixmap, v: &PanelView) {
     let qmax = sx + sw - 8.0 - qx;
     let qpx = 1.8;
     let qy = sy + (sh - 7.0 * qpx) / 2.0;
-    if v.panel.query.is_empty() {
-        cv.ui_text(t(lang, Msg::SearchHint), qx, qy, qpx, fade(TEXT_DIM, 0.8));
+    let query = v.panel.tag_edit.as_ref().map_or(v.panel.query.as_str(), |(_, draft)| draft.as_str());
+    if query.is_empty() {
+        cv.ui_text(t(lang, if v.panel.tag_edit.is_some() { Msg::TagEditHint } else { Msg::SearchHint }), qx, qy, qpx, fade(TEXT_DIM, 0.8));
         if v.caret {
             cv.fill(&round_rect(qx - 3.0, sy + 3.0, 1.6, sh - 6.0, 0.8), fade(TEXT, 0.7));
         }
     } else {
         // show the tail of long queries
-        let mut q: &str = &v.panel.query;
+        let mut q: &str = query;
         // `!q.is_empty()` guards the terminal case: once q is empty,
         // measure("") == 0 would still exceed a negative `qmax - 6.0` (a very
         // narrow search box), spinning the render thread forever.
@@ -1053,6 +1054,9 @@ pub fn draw_panel(pm: &mut Pixmap, v: &PanelView) {
             let mut it = q.chars();
             it.next();
             q = it.as_str();
+        }
+        if v.panel.tag_edit.is_some() && v.panel.tag_select_all {
+            cv.fill(&round_rect(qx-1.0, sy+2.0, sysfont::measure(q,qpx)+2.0, sh-4.0, 2.0), (176,207,246,255));
         }
         cv.ui_text(q, qx, qy, qpx, TEXT);
         if v.caret {
@@ -1093,6 +1097,7 @@ pub fn draw_panel(pm: &mut Pixmap, v: &PanelView) {
     const BODY_BOLD: usize = 10;
     // a row's pin ★ under the cursor: drawn as a tooltip after the loop (on top)
     let mut pin_tip: Option<(f32, f32, bool)> = None;
+    let mut tags_tip: Option<(f32, f32)> = None;
     for i in 0..lt.rows {
         let idx = v.panel.scroll + i;
         let Some(clip) = visible.get(idx) else { break };
@@ -1142,14 +1147,26 @@ pub fn draw_panel(pm: &mut Pixmap, v: &PanelView) {
         // shows; the first few characters are bolded for scannability). The
         // thumbnail view wraps it onto a second line for even more. The body
         // shrinks to leave room for the right-side gadget cluster.
-        let tx = lt.row_x + pl::BODY_X;
+        let mut tx = lt.row_x + pl::BODY_X;
+        if let Some(image) = clip.thumbnail() {
+            let available_h = lt.row_h - 8.0;
+            let k = (available_h / image.height() as f32).min(52.0 / image.width() as f32).min(1.0);
+            let iw = image.width() as f32 * k;
+            let ih = image.height() as f32 * k;
+            let iy = ry + (lt.row_h - ih) / 2.0;
+            cv.fill(&round_rect(tx, iy, iw, ih, 2.0), (255,255,255,255));
+            let transform = cv.ts.pre_translate(tx, iy).pre_scale(k,k);
+            cv.pm.draw_pixmap(0,0,image.as_ref(), &PixmapPaint { quality: FilterQuality::Bilinear, ..Default::default() }, transform, None);
+            tx += iw + 6.0;
+        }
         let cluster = if expanded {
-            2.0 * pl::ACT_ZONE
+            3.0 * pl::ACT_ZONE
         } else {
             pl::OVF_ZONE + pl::PIN_ZONE + if quick { 16.0 } else { 0.0 }
         };
         let tmax = right - cluster - tx - 6.0;
-        let flat = clip.flattened();
+        let image_label = clip.image.as_ref().map(|image| format!("{} {} × {}", t(lang,Msg::ImageClip), image.width, image.height));
+        let flat = image_label.as_deref().unwrap_or_else(|| clip.flattened());
         let (line1, line2) = if thumb {
             sysfont::wrap_two(flat, BODY_PX, tmax)
         } else {
@@ -1167,6 +1184,9 @@ pub fn draw_panel(pm: &mut Pixmap, v: &PanelView) {
 
         // meta line (source dot + app - age - size)
         let mut meta = i18n::time_ago(lang, now.saturating_sub(clip.ts));
+        if !clip.tags.is_empty() {
+            meta = format!("{} · {meta}", clip.tags.iter().map(|s| format!("#{s}")).collect::<Vec<_>>().join(" "));
+        }
         if clip.text.len() > 500 {
             let size = i18n::fmt_clip_size(lang, clip.text.len() as f32 / 1024.0);
             meta = format!("{meta} - {size}");
@@ -1187,7 +1207,12 @@ pub fn draw_panel(pm: &mut Pixmap, v: &PanelView) {
             let del_cx = right - pl::ACT_ZONE / 2.0;
             let paste_cx = right - pl::ACT_ZONE - pl::ACT_ZONE / 2.0;
             let hot = |cx: f32| hx.is_some_and(|x| (x - cx).abs() <= pl::ACT_ZONE / 2.0);
-            draw_row_btn(&mut cv, paste_cx, mid, RowBtn::PasteText, hot(paste_cx));
+            let tags_cx = right - 2.5 * pl::ACT_ZONE;
+            draw_row_btn(&mut cv, tags_cx, mid, RowBtn::Tags, hot(tags_cx));
+            if hot(tags_cx) { tags_tip = Some((tags_cx,mid)); }
+            if clip.image.is_none() {
+                draw_row_btn(&mut cv, paste_cx, mid, RowBtn::PasteText, hot(paste_cx));
+            }
             draw_row_btn(&mut cv, del_cx, mid, RowBtn::Delete, hot(del_cx));
         } else {
             let ovf_cx = right - pl::OVF_ZONE / 2.0;
@@ -1260,7 +1285,7 @@ pub fn draw_panel(pm: &mut Pixmap, v: &PanelView) {
         1.4,
         fade(TEXT_DIM, 0.8),
     );
-    let keys = sysfont::truncate_to_width(t(lang, Msg::FooterKeys), 1.25, lt.row_w);
+    let keys = sysfont::truncate_to_width(t(lang, if v.panel.tag_edit.is_some() { Msg::TagEditKeys } else { Msg::FooterKeys }), 1.25, lt.row_w);
     let kw = sysfont::measure(&keys, 1.25);
     cv.ui_text(
         &keys,
@@ -1310,6 +1335,9 @@ pub fn draw_panel(pm: &mut Pixmap, v: &PanelView) {
     // pin ★ tooltip: teaches the keyboard shortcut at the point of use. The
     // cursor can be over a header button or a row pin, never both, so this and
     // the header tooltip above are mutually exclusive.
+    if let Some((cx,cy)) = tags_tip {
+        draw_tooltip(&mut cv, &lt, cx, cy-22.0, t(lang,Msg::TipTags));
+    }
     if let Some((cx, cy, pinned)) = pin_tip {
         let msg = if pinned { Msg::TipUnpin } else { Msg::TipPin };
         draw_tooltip(&mut cv, &lt, cx, cy - 22.0, t(lang, msg));
@@ -1336,6 +1364,7 @@ fn draw_tooltip(cv: &mut Cv, lt: &pl::Layout, anchor_x: f32, top_y: f32, label: 
 
 /// A revealed per-row action button.
 enum RowBtn {
+    Tags,
     PasteText,
     Delete,
 }
@@ -1364,6 +1393,10 @@ fn draw_row_btn(cv: &mut Cv, cx: f32, cy: f32, kind: RowBtn, hot: bool) {
     let b = pl::BTN;
     let bg = round_rect(cx - b / 2.0, cy - b / 2.0, b, b, 6.0);
     match kind {
+        RowBtn::Tags => {
+            fill_chip(cv, &bg, if hot { ChipState::Active } else { ChipState::Neutral });
+            cv.ui_text("#", cx-4.0, cy-6.0, 1.65, TEXT);
+        }
         RowBtn::Delete => {
             fill_chip(cv, &bg, if hot { ChipState::Warn } else { ChipState::Neutral });
             let c = if hot { (217, 79, 79, 255) } else { TEXT };

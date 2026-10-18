@@ -11,7 +11,8 @@ src/
   lib.rs               module wiring
   pet.rs               Pet: platform-agnostic simulation, fish animation,
                        clip/panel orchestration + scene building
-  clipboard.rs         ClipStore: clip history model + clips.json persistence
+  clipboard.rs         ClipStore: text/image history, tags + clips.json persistence
+  clip_image.rs        bounded PNG storage, Windows DIB conversion and thumbnails
   panel.rs             clipboard panel UI state, dynamic Layout geometry
                        (user-movable/resizable card), hit testing, drag zones
   render.rs            all vector art (cat, fish, panel, accessories, bubble, icon)
