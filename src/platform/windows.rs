@@ -1938,11 +1938,11 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
                 let (cx, cy) = a.client_xy(lp);
                 // header strip / resize grip start a card drag (the grip
                 // pokes slightly past the card edge, hence the extra check)
-                if a.pet.panel_drag_start(cx, cy) {
+                if a.pet.embedded_panel_open() && a.pet.panel_drag_start(cx, cy) {
                     a.begin_panel_drag(hwnd);
                     return;
                 }
-                if a.pet.panel_hit(cx, cy) {
+                if a.pet.embedded_panel_open() && a.pet.panel_hit(cx, cy) {
                     // panel interactions act on press; no dragging from there
                     if let Some(pick) = a.pet.panel_click(cx, cy) {
                         a.copy_back(pick);
@@ -1961,7 +1961,7 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
         WM_MOUSEMOVE => {
             with_app(|a| {
                 let (cx, cy) = a.client_xy(lp);
-                a.pet.set_cursor(cx, cy);
+                if a.pet.embedded_panel_open() { a.pet.set_cursor(cx, cy); }
                 a.pet.cat_motion(cx, cy);
                 if !a.hover_tracking {
                     a.hover_tracking = true;
@@ -1974,7 +1974,7 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
                     };
                     TrackMouseEvent(&mut tme);
                 }
-                if a.panel_drag {
+                if a.pet.embedded_panel_open() && a.panel_drag {
                     // card drag: feed screen-pixel deltas as panel units (1.0);
                     // the tick applies the new layout (resize + shift)
                     a.panel_drag_step();
@@ -1985,7 +1985,7 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
                     if a.drag_moved || dx.abs() > 3 || dy.abs() > 3 {
                         a.pet.cancel_cat_press();
                         a.drag_moved = true;
-                        if a.pet.panel_open() {
+                        if a.pet.embedded_panel_open() {
                             // cat-body drag with the panel open: slide the cat,
                             // keep the card fixed (incremental, re-base each step;
                             // the tick applies the window shift). Don't move the
@@ -2011,14 +2011,14 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
         WM_MOUSELEAVE => {
             with_app(|a| {
                 a.pet.set_hover(false);
-                a.pet.clear_cursor();
+                if a.pet.embedded_panel_open() { a.pet.clear_cursor(); }
                 a.hover_tracking = false;
             });
             0
         }
         WM_LBUTTONUP => {
             with_app(|a| {
-                if a.panel_drag {
+                if a.pet.embedded_panel_open() && a.panel_drag {
                     a.panel_drag = false;
                     a.pet.panel_drag_end();
                     ReleaseCapture();
@@ -2030,7 +2030,7 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
                         // a panel-open cat drag lives in the card offset (already
                         // persisted by drag_pet); only a plain window move needs
                         // its new screen position saved
-                        if !a.pet.panel_open() {
+                        if !a.pet.embedded_panel_open() {
                             let (x, y) = a.window_pos();
                             a.pet.save_pos(x, y);
                         }
@@ -2047,7 +2047,7 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
             with_app(|a| {
                 a.pet.cancel_cat_press();
                 a.mouse_down = false;
-                if a.panel_drag { a.panel_drag = false; a.pet.panel_drag_end(); }
+                if a.pet.embedded_panel_open() && a.panel_drag { a.panel_drag = false; a.pet.panel_drag_end(); }
             });
             0
         }
@@ -2057,7 +2057,7 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
         }
         WM_MOUSEWHEEL => {
             with_app(|a| {
-                if a.pet.panel_open() {
+                if a.pet.embedded_panel_open() {
                     let delta = App::wheel_delta(wp);
                     if delta != 0 {
                         a.pet.panel_wheel(if delta > 0 { -1 } else { 1 });
@@ -2068,18 +2068,19 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
         }
         WM_CHAR => {
             with_app(|a| {
-                if a.pet.panel_open() {
+                if a.pet.embedded_panel_open() {
                     a.panel_char_utf16(wp as u16);
                 }
             });
             0
         }
         WM_KEYDOWN => {
-            if paste_workbench_editor(hwnd, wp) {
+            if with_app(|a| a.pet.embedded_panel_open()).unwrap_or(false)
+                && paste_workbench_editor(hwnd, wp) {
                 return 0;
             }
             let handled = with_app(|a| {
-                if !a.pet.panel_open() {
+                if !a.pet.embedded_panel_open() {
                     return false;
                 }
                 let ctrl = GetKeyState(0x11) < 0; // VK_CONTROL

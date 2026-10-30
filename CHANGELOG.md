@@ -33,6 +33,10 @@ versions follow [SemVer](https://semver.org/). Maintenance rules:
   animate, wake or make the cat play tap sounds. Clipboard collection remains
   expressive; shortcuts and dragging continue to work.
 
+### Fixed
+- Clicking or dragging the cat while a separate clipboard flyout is open keeps
+  the flyout search intact and no longer selects a clipboard item.
+
 ### Removed
 - **Activity statistics and growth** — typing, clicks, scrolls and copies no longer
   accumulate activity counts, XP or levels. Removed statistics displays and

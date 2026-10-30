@@ -232,7 +232,7 @@ impl PortableApp {
         // sits near an edge, or a persisted offset put it offscreen), slide
         // the card — not the cat — back into view and re-apply once. `fit` is
         // already drained, so the recursive call can't loop.
-        if fit && self.pet.panel_open() {
+        if fit && self.pet.embedded_panel_open() {
             if let Some((sdx, sdy)) = self.panel_fit_shift(&window) {
                 self.pet.shift_panel(sdx, sdy);
                 self.apply_size();
@@ -932,8 +932,10 @@ impl ApplicationHandler<HotkeyEvent> for PortableApp {
                 self.panel_dragging = false;
                 self.cat_drag = false;
                 self.reset_click_state();
-                self.pet.panel_drag_end();
-                self.pet.clear_cursor();
+                if self.pet.embedded_panel_open() {
+                    self.pet.panel_drag_end();
+                    self.pet.clear_cursor();
+                }
                 self.apply_size();
                 if self.pet.embedded_panel_open() {
                     if let Some(window) = self.window.as_ref() {
@@ -949,12 +951,12 @@ impl ApplicationHandler<HotkeyEvent> for PortableApp {
             WindowEvent::CursorLeft { .. } => {
                 self.pet.set_hover(false);
                 self.pet.cancel_cat_press();
-                self.pet.clear_cursor();
+                if self.pet.embedded_panel_open() { self.pet.clear_cursor(); }
             }
             WindowEvent::CursorMoved { position, .. } => {
                 self.cursor = position;
                 let (cx, cy) = self.client_xy();
-                self.pet.set_cursor(cx, cy);
+                if self.pet.embedded_panel_open() { self.pet.set_cursor(cx, cy); }
                 self.pet.cat_motion(cx, cy);
                 if self.panel_dragging || self.cat_drag {
                     // card drag / cat-body drag (mirror images of each other):
@@ -977,7 +979,7 @@ impl ApplicationHandler<HotkeyEvent> for PortableApp {
                         self.pet.cancel_cat_press();
                         self.dragging = true;
                         self.mouse_down = false;
-                        if self.pet.panel_open() {
+                        if self.pet.embedded_panel_open() {
                             // keep the card fixed; move the cat incrementally
                             // (drag_window() is a one-shot whole-window move,
                             // which would drag the card along — not wanted here)
@@ -996,13 +998,13 @@ impl ApplicationHandler<HotkeyEvent> for PortableApp {
                         let (cx, cy) = self.client_xy();
                         // header strip / resize grip start a card drag (the
                         // grip pokes slightly past the card edge)
-                        if self.pet.panel_drag_start(cx, cy) {
+                        if self.pet.embedded_panel_open() && self.pet.panel_drag_start(cx, cy) {
                             self.panel_dragging = true;
                             self.drag_screen = self.screen_cursor();
                             self.reset_click_state();
                             return;
                         }
-                        if self.pet.panel_hit(cx, cy) {
+                        if self.pet.embedded_panel_open() && self.pet.panel_hit(cx, cy) {
                             // panel interactions act on press; no drag/petting
                             if let Some(pick) = self.pet.panel_click(cx, cy) {
                                 self.set_clipboard(pick);
@@ -1047,12 +1049,12 @@ impl ApplicationHandler<HotkeyEvent> for PortableApp {
                 let dy = scroll_rows(delta);
                 let (cx, cy) = self.client_xy();
                 // Local panel scrolling only.
-                if self.pet.panel_hit(cx, cy) && dy != 0.0 {
+                if self.pet.embedded_panel_open() && self.pet.panel_hit(cx, cy) && dy != 0.0 {
                     self.pet.panel_wheel(if dy < 0.0 { 1 } else { -1 });
                 }
             }
             WindowEvent::Ime(Ime::Commit(s)) => {
-                if self.pet.panel_open() {
+                if self.pet.embedded_panel_open() {
                     for c in s.chars() {
                         self.pet.panel_char(c);
                     }
@@ -1061,7 +1063,7 @@ impl ApplicationHandler<HotkeyEvent> for PortableApp {
             WindowEvent::ModifiersChanged(m) => self.mods = m.state(),
             WindowEvent::KeyboardInput { event, .. } => {
                 if event.state == ElementState::Pressed {
-                    if self.pet.panel_open() {
+                    if self.pet.embedded_panel_open() {
                         self.panel_key(&event);
                     } else if let PhysicalKey::Code(code) = event.physical_key {
                         self.shortcut(code, event_loop);

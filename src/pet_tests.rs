@@ -856,6 +856,66 @@ fn local_affection_requires_silhouette_press_release_and_no_logical_drag() {
 }
 
 #[test]
+fn separate_flyout_keeps_cat_affection_and_search_independent() {
+    let mut p = pet();
+    // Seed real history without starting decorative copy animation.
+    p.clips.add_copy("synthetic flyout first".into(), None);
+    p.clips.add_copy("synthetic flyout second".into(), None);
+    p.st.panel_autoclose = false;
+    let (x, y) = (194., 86.); // silhouette and standalone clipboard row overlap
+    assert!(p.cat_hit(x, y));
+    let canvas = p.canvas_size();
+    p.open_flyout();
+    for c in "synthetic".chars() { p.panel_char(c); }
+    p.panel_nav(NavKey::Down);
+    assert_eq!(p.panel.sel, 1);
+    assert!(p.panel_hit(x, y), "the other window still owns its panel hit area");
+    assert!(p.cat_press(x, y), "standalone panel coordinates must not consume the cat");
+    assert!(p.cat_release(x, y));
+    assert!(p.affection.is_some(), "the deliberate cat click starts affection");
+    assert!(p.flyout_open());
+    assert!(!p.embedded_panel_open());
+    assert_eq!(p.panel.query, "synthetic");
+    assert_eq!(p.panel.sel, 1);
+    assert_eq!(p.canvas_size(), canvas);
+    assert!(p.toast.is_none(), "cat interaction did not perform a clipboard pick");
+    assert_eq!(p.clips.visible("").len(), 2);
+
+    // Dragging the cat is independent of flyout geometry and is never affection.
+    let (drag_x, drag_y) = body_point(&p); // affection may change the silhouette
+    assert!(p.cat_press(drag_x, drag_y));
+    p.cat_motion(drag_x + 10., drag_y);
+    assert!(!p.cat_release(drag_x, drag_y));
+    assert!(!p.drag_pet(10., 0.), "cat-window backend must move its own window");
+    assert_eq!(p.panel.query, "synthetic");
+    assert_eq!(p.panel.sel, 1);
+
+    // The flyout's own handler still uses these operations in its own coordinates.
+    let l = p.panel.layout_standalone();
+    assert!(p.panel_drag_start(l.card_x + l.card_w - 4., l.card_y + l.card_h - 4.));
+    p.panel_drag_update(20., 10.);
+    p.panel_drag_end();
+    assert!(p.take_flyout_resized());
+    let pick = p.panel_click(x, y).expect("own-window clipboard row still works");
+    assert!(pick.text.starts_with("synthetic flyout"));
+    assert!(pick.paste, "flyout pick retains paste intent");
+}
+
+#[test]
+fn embedded_panel_toggle_replaces_separate_flyout() {
+    let mut p = pet();
+    p.open_flyout();
+    p.toggle_panel(); // middle-click / local panel toggle
+    assert!(p.embedded_panel_open(), "middle-click opens a cat-window panel");
+    assert!(!p.flyout_open());
+    let l = p.panel.layout();
+    assert!(p.panel_hit(l.card_x + 20., l.card_y + 20.));
+    assert!(!p.cat_press(l.card_x + 20., l.card_y + 20.));
+    p.toggle_panel();
+    assert!(!p.panel_open());
+}
+
+#[test]
 fn affection_is_bounded_yields_at_copy_boundary_and_clears_on_hide() {
     let mut p = pet();
     p.sleep = 1.;

@@ -486,6 +486,8 @@ impl Pet {
     }
 
     pub fn toggle_panel(&mut self) {
+        // This toggle belongs to the cat window (middle-click / local menu).
+        if self.flyout { self.close_flyout(); }
         if self.cat_picker.is_some() { self.close_cat_picker(); return; }
         self.drag = None;
         self.relayout(|p| {
@@ -1379,7 +1381,8 @@ impl Pet {
 
     /// Tests the rendered character alpha, excluding panel and transparent space.
     pub fn cat_hit(&self, cx: f32, cy: f32) -> bool {
-        if self.st.window_level == 2 || self.panel_hit(cx, cy) { return false; }
+        if self.st.window_level == 2
+            || (self.embedded_panel_open() && self.panel_hit(cx, cy)) { return false; }
         let (x, mut y) = self.cat_point(cx, cy);
         let squash = 1. - 0.035 * self.squash;
         y = 232. + (y - 232.) / squash;
