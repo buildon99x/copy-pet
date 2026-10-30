@@ -13,7 +13,6 @@ pub mod hotkey;
 pub mod hunter_art;
 pub mod hunter_motion;
 pub mod i18n;
-pub mod input;
 pub mod menu;
 pub mod panel;
 pub mod pet;

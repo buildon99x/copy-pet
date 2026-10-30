@@ -32,6 +32,9 @@ pub struct Persist {
     /// Global panel hotkey spec, e.g. "win+shift+v" (see [`crate::hotkey`]).
     /// Editable in state.json; invalid values reset to the default on load.
     pub hotkey: String,
+    /// Version of the once-only macOS default migration; missing legacy marker is zero.
+    #[serde(default)]
+    pub hotkey_version: u8,
     /// When false, the daily GitHub release check is skipped entirely
     /// (see [`crate::update`], ADR-0009).
     pub auto_update: bool,
@@ -77,6 +80,7 @@ impl Default for Persist {
             lang: String::new(),
             clip_capture: true,
             hotkey: crate::hotkey::DEFAULT.to_string(),
+            hotkey_version: 1,
             auto_update: true,
             panel_w: crate::panel::DEFAULT_W,
             panel_h: crate::panel::DEFAULT_H,
@@ -161,12 +165,30 @@ fn migrate_legacy_dir() {
 }
 
 impl Persist {
+    fn migrate_hotkey(&mut self, mac: bool) {
+        if self.hotkey_version >= 1 {
+            return;
+        }
+        if mac
+            && crate::hotkey::Hotkey::parse(&self.hotkey)
+                == crate::hotkey::Hotkey::parse("win+shift+v")
+        {
+            self.hotkey = "ctrl+shift+v".into();
+        }
+        self.hotkey_version = 1;
+    }
+
     pub fn load() -> Persist {
         migrate_legacy_dir();
         let mut st: Persist = state_file()
             .and_then(|p| std::fs::read_to_string(p).ok())
             .and_then(|s| serde_json::from_str(&s).ok())
             .unwrap_or_default();
+        let migrating = st.hotkey_version < 1;
+        st.migrate_hotkey(cfg!(target_os = "macos"));
+        if migrating {
+            st.save();
+        }
         if Lang::from_code(&st.lang).is_none() {
             st.lang = detect_lang().code().to_string();
         }
@@ -251,6 +273,26 @@ pub fn detect_lang() -> Lang {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn mac_hotkey_migrates_old_default_only_once() {
+        let mut st: Persist = serde_json::from_str(r#"{"hotkey":"Cmd+Shift+V"}"#).unwrap();
+        st.migrate_hotkey(true);
+        assert_eq!(st.hotkey, "ctrl+shift+v");
+        assert_eq!(st.hotkey_version, 1);
+        st.hotkey = "win+shift+v".into();
+        let saved = serde_json::to_string(&st).unwrap();
+        let mut st: Persist = serde_json::from_str(&saved).unwrap();
+        st.migrate_hotkey(true);
+        assert_eq!(st.hotkey, "win+shift+v", "later intentional choice survives");
+        let mut st: Persist = serde_json::from_str(r#"{"hotkey":"ctrl+alt+k"}"#).unwrap();
+        st.migrate_hotkey(true);
+        assert_eq!(st.hotkey, "ctrl+alt+k");
+        assert_eq!(st.hotkey_version, 1);
+        let mut st: Persist = serde_json::from_str(r#"{"hotkey":"win+shift+v"}"#).unwrap();
+        st.migrate_hotkey(false);
+        assert_eq!(st.hotkey, "win+shift+v");
+    }
 
     #[test]
     fn legacy_statistics_are_discarded_on_normal_serialization() {

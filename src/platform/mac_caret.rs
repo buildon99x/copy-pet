@@ -3,8 +3,8 @@
 //! Returns where to anchor the flyout panel: the focused UI element's text
 //! caret, via the Accessibility API (`AXUIElement`). Reads **geometry only** —
 //! the caret's screen rectangle — never the element's text, value, title or
-//! any other content (privacy: golden rule #1; the same posture as the input
-//! event tap in [`super::mac_input`]). Falls back to the mouse-cursor location
+//! any other content. Accessibility for this optional geometry lookup is
+//! separate from [`super::mac_hotkey`] registration. Falls back to the cursor
 //! when the focused app exposes no AX caret (many Electron/Java apps), so the
 //! flyout always has somewhere to open.
 //!

@@ -300,14 +300,15 @@ fn hotkey_spec_lifecycle() {
     let st = Persist::default();
     assert_eq!(st.hotkey, hotkey::DEFAULT);
     let hk = Hotkey::from_spec(&st.hotkey);
-    assert!(hk.win && hk.shift && !hk.ctrl && !hk.alt);
-    // the `win` modifier is the OS super key: WIN+...+V / CMD+...+V / SUPER+...+V
-    let expect = format!("{}+SHIFT+V", hotkey::super_name());
+    assert!(hk.shift && !hk.alt);
+    assert_eq!(hk.ctrl, cfg!(target_os = "macos"));
+    assert_eq!(hk.win, !cfg!(target_os = "macos"));
+    let expect = if cfg!(target_os = "macos") { "CTRL+SHIFT+V".into() } else { format!("{}+SHIFT+V", hotkey::super_name()) };
     assert_eq!((hk.key, hk.display()), ('V', expect));
 
     // round-trips through the state.json representation
     let json = serde_json::to_string(&st).unwrap();
-    assert!(json.contains("\"hotkey\":\"win+shift+v\""));
+    assert_eq!(serde_json::from_str::<serde_json::Value>(&json).unwrap()["hotkey"], hotkey::DEFAULT);
     let back: Persist = serde_json::from_str(&json).unwrap();
     assert_eq!(back.hotkey, hotkey::DEFAULT);
 
@@ -532,25 +533,6 @@ fn panel_autoclose_toggle_keeps_panel_open() {
     let json = serde_json::to_string(&p.st).unwrap();
     let back: Persist = serde_json::from_str(&json).unwrap();
     assert!(back.panel_autoclose);
-}
-
-/// Holding a key must not inflate the stats: the input gate counts a key
-/// once per physical press, exactly what both backends' hooks feed it.
-#[test]
-fn held_key_counts_once_through_the_input_gate() {
-    use clipcat::input;
-    let _ = input::drain();
-    input::key_down(0x41);
-    input::key_down(0x41); // OS auto-repeat while held
-    input::key_down(0x41);
-    input::key_down(0x42); // another key pressed alongside
-    let (k, _, _) = input::drain();
-    assert_eq!(k, 2, "auto-repeat does not count");
-    input::key_up(0x41);
-    input::key_down(0x41); // released and pressed again: counts
-    assert_eq!(input::drain().0, 1);
-    input::key_up(0x41);
-    input::key_up(0x42);
 }
 
 /// Every gallery card is free, previews do not apply, and Apply persists stable IDs.

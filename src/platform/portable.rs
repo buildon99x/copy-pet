@@ -1,48 +1,13 @@
-//! Portable backend for macOS, Linux and (with `--features portable`) Windows.
-//!
-//! Windowing via `winit`, software presentation via `softbuffer`, global
-//! keyboard/mouse activity via `rdev` on its own listener thread, and the
-//! clipboard via `arboard` (a polling watcher thread; ADR-0005). The pet is
-//! drawn on an opaque rounded "card" because `softbuffer` cannot carry
-//! per-pixel alpha to the desktop compositor (the native Win32 backend keeps
-//! the fully transparent, click-through look). See ADR-0001 / ADR-0003.
-//!
-//! Interactions: drag to move, middle-click to toggle the clipboard panel,
-//! cat gallery (A),
-//! and the global panel hotkey (Cmd+Shift+V on macOS, Super+Shift+V on
-//! Linux by default — the configured `win` modifier maps to the OS super
-//! key). The panel card itself is movable (drag its header strip) and
-//! resizable (drag the bottom-right grip) independently of the cat.
-//! Settings have no system tray here; when the window is focused
-//! these keys apply: S size · A cat gallery · M sound ·
-//! L lock · G language · C clipboard panel · O auto-close after copy ·
-//! V list/thumbnail view · U update download page · Q/Esc quit. While the panel is open the
-//! keyboard drives it instead (type to search, arrows/Home/End + Enter,
-//! Ctrl+0..9 quick-copies the badged top rows, Del deletes, Ctrl+Z undoes,
-//! Ctrl+P pins — Cmd works too on macOS — Tab cycles the source-app
-//! filter, Esc closes).
-//!
-//! Updates (ADR-0009): the shared daily release check (`crate::update`)
-//! toasts when a newer version exists; `U` then opens the releases page in
-//! the browser — no self-replacement on the portable backend. The check is
-//! disabled via `auto_update` in `state.json`.
-//!
-//! Privacy note (ADR-0008): the global-input listener increments the activity
-//! counters and additionally compares each key event against the one
-//! configured hotkey chord, in memory, discarding it immediately — key
-//! identities are never stored, logged, buffered or transmitted. The only
-//! other key-shaped state is [`KeyGate`]'s held-keys set, kept solely to
-//! ignore OS auto-repeat and dropped on release.
-//!
-//! macOS uses a bespoke CoreGraphics event tap ([`super::mac_input`]) rather
-//! than `rdev::listen`: rdev translates every keypress to text via Text Input
-//! Source APIs that hard-crash off the main thread on macOS 15 (LNR-0005).
-//! Linux keeps `rdev::listen` (X11). If the macOS tap can't be created
-//! (Accessibility permission missing) the app stays up and shows a hint.
+//! Portable winit backend with registered OS shortcuts (ADR-0020).
+//! Clipboard observation is independent of shortcut registration. rdev is used
+//! only to synthesize optional paste output; no keyboard or mouse monitoring.
+//! macOS presents transparent CALayers; Linux/Windows portable use softbuffer.
+//! Middle click and local C open history even if global registration fails.
 
 use crate::clipboard::RichFormats;
 use crate::hotkey::Hotkey;
-use crate::input;
+use super::registered_hotkey::{HotkeyEvent, RegisteredHotkey};
+use crate::hotkey::Registration;
 use crate::panel::{self, fit_delta, NavKey, Rect};
 use crate::pet::{ClipPick, Pet};
 use crate::viewport::Density;
@@ -89,15 +54,6 @@ type Surface = softbuffer::Surface<Rc<Window>, Rc<Window>>;
 /// Text we just wrote to the clipboard ourselves; the watcher skips it once.
 type Suppress = Arc<Mutex<Option<String>>>;
 
-/// Cross-thread handles wired from the global-input listener into the app: the
-/// hotkey-fired and permission-needed flags it raises, plus the channel the app
-/// uses to push a newly cycled chord back to it.
-struct InputSignals {
-    panel_toggle: Arc<AtomicBool>,
-    perm_needed: Arc<AtomicBool>,
-    hk_tx: Sender<Hotkey>,
-}
-
 struct PortableApp {
     pet: Pet,
     window: Option<Rc<Window>>,
@@ -120,17 +76,8 @@ struct PortableApp {
     /// Mirror of `st.clip_capture` for the watcher thread: while false the
     /// clipboard is not even read.
     capture_flag: Arc<AtomicBool>,
-    /// Raised by the global-input thread when the panel hotkey chord fires.
-    panel_toggle: Arc<AtomicBool>,
-    /// Raised by the global-input thread when the (macOS) event tap could not
-    /// be installed — Accessibility permission is not granted yet.
-    perm_needed: Arc<AtomicBool>,
-    /// Panel-hotkey display label (e.g. "CMD+SHIFT+V") for the context menu.
-    #[cfg(target_os = "macos")]
+    hotkey: RegisteredHotkey,
     hotkey_label: String,
-    /// Sends a new panel chord to the global-input thread when the user cycles
-    /// the hotkey preset, so the listener matches the new combo immediately.
-    hk_tx: Sender<Hotkey>,
     // interaction
     cursor: PhysicalPosition<f64>,
     mouse_down: bool,
@@ -219,16 +166,10 @@ impl PortableApp {
         clip_rx: Receiver<ClipCapture>,
         suppress: Suppress,
         capture_flag: Arc<AtomicBool>,
-        signals: InputSignals,
+        hotkey: RegisteredHotkey,
         hotkey_label: String,
     ) -> Self {
         let (w, h) = pet.canvas_size();
-        let _ = &hotkey_label; // used only by the macOS context menu
-        let InputSignals {
-            panel_toggle,
-            perm_needed,
-            hk_tx,
-        } = signals;
         PortableApp {
             pet,
             window: None,
@@ -246,11 +187,8 @@ impl PortableApp {
             clip_rx,
             suppress,
             capture_flag,
-            panel_toggle,
-            perm_needed,
-            #[cfg(target_os = "macos")]
+            hotkey,
             hotkey_label,
-            hk_tx,
             cursor: PhysicalPosition::new(0.0, 0.0),
             mouse_down: false,
             dragging: false,
@@ -465,16 +403,16 @@ impl PortableApp {
         }
     }
 
-    /// Pushes a (already-persisted) hotkey spec to the global-input thread and
-    /// refreshes the visible labels. The portable chord matcher registers
-    /// exactly what it is given, so the displayed chord is always the new one.
+    /// Replaces the OS registration and labels only the chord that succeeded.
     fn apply_new_hotkey(&mut self, spec: &str) {
-        let hk = Hotkey::from_spec(spec);
-        let _ = self.hk_tx.send(hk);
-        self.pet.set_panel_hint(format!("{} / C", hk.display()));
-        #[cfg(target_os = "macos")]
-        {
-            self.hotkey_label = hk.display();
+        let mut registration = Registration::default();
+        registration.rebind(spec, |hk| self.hotkey.bind(hk));
+        self.hotkey_label = registration.label();
+        self.pet.set_panel_hint(if self.hotkey_label.is_empty() { "C".into() }
+            else { format!("{} / C", self.hotkey_label) });
+        if self.hotkey_label.is_empty() { self.pet.notify_hotkey_failed(); }
+        else if registration.fallback() {
+            self.pet.notify_hotkey_fallback(&Hotkey::from_spec(spec).display(), &self.hotkey_label);
         }
     }
 
@@ -894,7 +832,15 @@ impl PortableApp {
     }
 }
 
-impl ApplicationHandler for PortableApp {
+impl ApplicationHandler<HotkeyEvent> for PortableApp {
+    fn user_event(&mut self, event_loop: &ActiveEventLoop, _: HotkeyEvent) {
+        #[cfg(target_os = "macos")]
+        self.open_flyout(event_loop);
+        #[cfg(not(target_os = "macos"))]
+        { let _ = event_loop; self.pet.open_panel(); self.reveal(); }
+        self.apply_size();
+        if let Some(window) = &self.window { window.request_redraw(); }
+    }
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
         if self.window.is_some() {
             return;
@@ -1110,10 +1056,7 @@ impl ApplicationHandler for PortableApp {
             WindowEvent::MouseWheel { delta, .. } => {
                 let dy = scroll_rows(delta);
                 let (cx, cy) = self.client_xy();
-                // Only scroll the panel here. A wheel's "activity" is already
-                // counted once by the global input listener (rdev / the macOS
-                // event tap), so also counting it here double-counted scrolls
-                // over the pet relative to scrolls over other apps.
+                // Local panel scrolling only.
                 if self.pet.panel_hit(cx, cy) && dy != 0.0 {
                     self.pet.panel_wheel(if dy < 0.0 { 1 } else { -1 });
                 }
@@ -1143,26 +1086,6 @@ impl ApplicationHandler for PortableApp {
         let now = Instant::now();
         if now.duration_since(self.last_frame) >= TICK {
             self.last_frame = now;
-            // the global panel hotkey fired on the input thread
-            if self.panel_toggle.swap(false, Ordering::Relaxed) {
-                // macOS: open the panel as a caret-anchored flyout in its own
-                // window (Win+V parity) — the cat never moves. Linux/Windows-
-                // portable keep the embedded cat-window panel for the hotkey.
-                #[cfg(target_os = "macos")]
-                self.open_flyout(event_loop);
-                #[cfg(not(target_os = "macos"))]
-                {
-                    // the hotkey always *shows* the panel (never toggles
-                    // closed) and reveals the window so an obscured or hidden
-                    // panel reappears
-                    self.pet.open_panel();
-                    self.reveal();
-                }
-            }
-            // the macOS event tap couldn't start (Accessibility not granted)
-            if self.perm_needed.swap(false, Ordering::Relaxed) {
-                self.pet.notify_accessibility_needed();
-            }
             // the daily release check found a newer version
             if let Some(v) = crate::update::take_found() {
                 self.pet.notify_update(&v);
@@ -1173,8 +1096,7 @@ impl ApplicationHandler for PortableApp {
             while let Ok(cap) = self.clip_rx.try_recv() {
                 self.pet.on_copy_rich(cap.text, None, None, cap.formats);
             }
-            let (k, c, wh) = input::drain();
-            let redraw = self.pet.advance(k, c, wh);
+            let redraw = self.pet.advance();
             if self.pet.take_size_changed() {
                 self.apply_size();
             }
@@ -1249,214 +1171,30 @@ fn quick_digit(code: KeyCode) -> Option<u8> {
     })
 }
 
-/// The rdev key the configured hotkey letter/digit corresponds to.
-fn rdev_key_of(c: char) -> Option<rdev::Key> {
-    use rdev::Key::*;
-    Some(match c {
-        'A' => KeyA, 'B' => KeyB, 'C' => KeyC, 'D' => KeyD, 'E' => KeyE,
-        'F' => KeyF, 'G' => KeyG, 'H' => KeyH, 'I' => KeyI, 'J' => KeyJ,
-        'K' => KeyK, 'L' => KeyL, 'M' => KeyM, 'N' => KeyN, 'O' => KeyO,
-        'P' => KeyP, 'Q' => KeyQ, 'R' => KeyR, 'S' => KeyS, 'T' => KeyT,
-        'U' => KeyU, 'V' => KeyV, 'W' => KeyW, 'X' => KeyX, 'Y' => KeyY,
-        'Z' => KeyZ,
-        '0' => Num0, '1' => Num1, '2' => Num2, '3' => Num3, '4' => Num4,
-        '5' => Num5, '6' => Num6, '7' => Num7, '8' => Num8, '9' => Num9,
-        _ => return None,
-    })
-}
-
-/// Matches the global key stream against one configured chord. Holds only
-/// five booleans of state (the four modifiers + main-key-down for repeat
-/// suppression); key identities are compared and immediately discarded —
-/// never stored, logged or transmitted (ADR-0008).
-struct ChordTracker {
-    hk: Hotkey,
-    main: Option<rdev::Key>,
-    ctrl: bool,
-    shift: bool,
-    alt: bool,
-    meta: bool,
-    main_down: bool,
-}
-
-impl ChordTracker {
-    fn new(hk: Hotkey) -> ChordTracker {
-        ChordTracker {
-            main: rdev_key_of(hk.key),
-            hk,
-            ctrl: false,
-            shift: false,
-            alt: false,
-            meta: false,
-            main_down: false,
-        }
-    }
-
-    /// Swaps the chord this tracker matches (the user cycled the panel hotkey).
-    /// Refreshes the cached `main` key so the new chord is recognised.
-    fn set_hotkey(&mut self, hk: Hotkey) {
-        self.main = rdev_key_of(hk.key);
-        self.hk = hk;
-    }
-
-    /// Feeds one global key event; true when the chord fired (on the initial
-    /// press only — OS auto-repeat while held does not re-fire).
-    fn on_event(&mut self, event: &rdev::EventType) -> bool {
-        use rdev::Key::*;
-        let (key, down) = match event {
-            rdev::EventType::KeyPress(k) => (k, true),
-            rdev::EventType::KeyRelease(k) => (k, false),
-            _ => return false,
-        };
-        match key {
-            ControlLeft | ControlRight => self.ctrl = down,
-            ShiftLeft | ShiftRight => self.shift = down,
-            Alt | AltGr => self.alt = down,
-            MetaLeft | MetaRight => self.meta = down,
-            k if Some(*k) == self.main => {
-                let fresh = down && !self.main_down;
-                self.main_down = down;
-                return fresh
-                    && self.meta == self.hk.win
-                    && self.ctrl == self.hk.ctrl
-                    && self.shift == self.hk.shift
-                    && self.alt == self.hk.alt;
-            }
-            _ => {}
-        }
-        false
-    }
-}
-
 /// Synthesizes the paste shortcut (Ctrl+V, or Cmd+V on macOS) into the focused
 /// app via `rdev::simulate` (auto-paste). Output-only: it injects keystrokes,
 /// never reads them, so the input-privacy guarantee is untouched (golden rule
 /// 1); and being a `simulate` call it avoids the macOS TIS *listen* crash path
 /// (LNR-0005).
 fn paste_synthesize() {
-    #[cfg(target_os = "macos")]
-    let modifier = rdev::Key::MetaLeft;
-    #[cfg(not(target_os = "macos"))]
-    let modifier = rdev::Key::ControlLeft;
-    for et in [
-        rdev::EventType::KeyPress(modifier),
-        rdev::EventType::KeyPress(rdev::Key::KeyV),
-        rdev::EventType::KeyRelease(rdev::Key::KeyV),
-        rdev::EventType::KeyRelease(modifier),
-    ] {
-        let _ = rdev::simulate(&et);
+    for event in paste_events(cfg!(target_os = "macos")) {
+        let _ = rdev::simulate(&event);
     }
 }
 
-/// Suppresses OS key auto-repeat for the activity counters: a key counts
-/// once when pressed and not again until released. Key identities are kept
-/// only while the key is physically held, then dropped — never logged,
-/// persisted or transmitted (ADR-0008 / golden rule 1). On X11, auto-repeat
-/// arrives as release+press pairs and passes this gate; macOS (repeated
-/// KeyDown without KeyUp) and Windows-portable are fully filtered.
-struct KeyGate {
-    down: Vec<rdev::Key>,
-}
-
-impl KeyGate {
-    fn new() -> KeyGate {
-        KeyGate { down: Vec::new() }
+/// Output-only neutralization prevents still-held panel modifiers from turning
+/// a fast pick into paste-special or another shortcut. Never reads input state.
+fn paste_events(mac: bool) -> Vec<rdev::EventType> {
+    use rdev::{EventType::*, Key::*};
+    let mut events: Vec<_> = [ShiftLeft, ShiftRight, ControlLeft, ControlRight, Alt, AltGr]
+        .into_iter().map(KeyRelease).collect();
+    if mac {
+        events.extend([KeyRelease(MetaLeft), KeyRelease(MetaRight)]);
     }
-
-    /// True when this press is fresh (the key was not already held).
-    fn fresh_press(&mut self, k: rdev::Key) -> bool {
-        if self.down.contains(&k) {
-            return false;
-        }
-        // a missed release can't wedge the gate: beyond this many "held"
-        // keys the press still counts, it just isn't tracked
-        if self.down.len() < 64 {
-            self.down.push(k);
-        }
-        true
-    }
-
-    fn release(&mut self, k: rdev::Key) {
-        self.down.retain(|d| *d != k);
-    }
-}
-
-/// One global input event: bump the shared activity counters (key presses
-/// gated for auto-repeat) and feed the chord matcher (the only key
-/// inspection we permit; see [`ChordTracker`] / [`KeyGate`]).
-///
-/// `hk_rx` carries runtime hotkey changes (the user cycled the preset); we
-/// drain it with a cheap non-blocking `try_recv` so the swap happens off the
-/// hot path without locking on every keystroke.
-fn pump(
-    et: rdev::EventType,
-    chord: &mut ChordTracker,
-    gate: &mut KeyGate,
-    panel_toggle: &AtomicBool,
-    hk_rx: &Receiver<Hotkey>,
-) {
-    while let Ok(hk) = hk_rx.try_recv() {
-        chord.set_hotkey(hk);
-    }
-    match et {
-        rdev::EventType::KeyPress(k) => {
-            if gate.fresh_press(k) {
-                input::key();
-            }
-        }
-        rdev::EventType::KeyRelease(k) => gate.release(k),
-        rdev::EventType::ButtonPress(_) => input::click(),
-        rdev::EventType::Wheel { .. } => input::wheel(),
-        _ => {}
-    }
-    if chord.on_event(&et) {
-        panel_toggle.store(true, Ordering::Relaxed);
-    }
-}
-
-/// Spawns the global input listener: increments the shared counters on every
-/// key/button/wheel event system-wide and raises `panel_toggle` when the
-/// configured panel chord is pressed.
-///
-/// macOS uses [`super::mac_input`] (a TIS-free event tap; LNR-0005); if its
-/// tap can't be installed — Accessibility permission not granted —
-/// `perm_needed` is raised and the listener exits without crashing the app.
-/// Other platforms use `rdev::listen`.
-/// `hk_rx` receives runtime hotkey changes (preset cycling) and is drained
-/// inside [`pump`].
-#[cfg(target_os = "macos")]
-fn spawn_global_input(
-    hk: Hotkey,
-    hk_rx: Receiver<Hotkey>,
-    panel_toggle: Arc<AtomicBool>,
-    perm_needed: Arc<AtomicBool>,
-) {
-    std::thread::spawn(move || {
-        let mut chord = ChordTracker::new(hk);
-        let mut gate = KeyGate::new();
-        let res = super::mac_input::listen(move |et| {
-            pump(et, &mut chord, &mut gate, &panel_toggle, &hk_rx)
-        });
-        if res.is_err() {
-            perm_needed.store(true, Ordering::Relaxed);
-        }
-    });
-}
-
-#[cfg(not(target_os = "macos"))]
-fn spawn_global_input(
-    hk: Hotkey,
-    hk_rx: Receiver<Hotkey>,
-    panel_toggle: Arc<AtomicBool>,
-    _perm_needed: Arc<AtomicBool>,
-) {
-    std::thread::spawn(move || {
-        let mut chord = ChordTracker::new(hk);
-        let mut gate = KeyGate::new();
-        let _ = rdev::listen(move |event| {
-            pump(event.event_type, &mut chord, &mut gate, &panel_toggle, &hk_rx)
-        });
-    });
+    // Leave Win/Super alone outside macOS: a lone Win-up can open Start.
+    let modifier = if mac { MetaLeft } else { ControlLeft };
+    events.extend([KeyPress(modifier), KeyPress(KeyV), KeyRelease(KeyV), KeyRelease(modifier)]);
+    events
 }
 
 /// Spawns the clipboard watcher: polls `arboard` for text changes and sends
@@ -1522,124 +1260,33 @@ pub fn run() {
     crate::update::set_enabled(st.auto_update);
     crate::update::spawn_checker();
 
-    let hk = Hotkey::from_spec(&st.hotkey);
-    let panel_toggle = Arc::new(AtomicBool::new(false));
-    let perm_needed = Arc::new(AtomicBool::new(false));
-    // Runtime hotkey changes (preset cycling) flow to the listener thread here.
-    let (hk_tx, hk_rx) = std::sync::mpsc::channel::<Hotkey>();
-    spawn_global_input(hk, hk_rx, panel_toggle.clone(), perm_needed.clone());
-
-    let mut pet = Pet::new(st);
-    pet.set_panel_hint(format!("{} / C", hk.display()));
-    let signals = InputSignals {
-        panel_toggle,
-        perm_needed,
-        hk_tx,
-    };
-    let mut app = PortableApp::new(pet, rx, suppress, capture_flag, signals, hk.display());
-
-    let event_loop = match EventLoop::new() {
+    let event_loop = match EventLoop::<HotkeyEvent>::with_user_event().build() {
         Ok(el) => el,
         Err(_) => return,
     };
+    let hotkey = RegisteredHotkey::new(event_loop.create_proxy());
+    let spec = st.hotkey.clone();
+    let pet = Pet::new(st);
+    let mut app = PortableApp::new(pet, rx, suppress, capture_flag, hotkey, String::new());
+    app.apply_new_hotkey(&spec);
     event_loop.set_control_flow(ControlFlow::WaitUntil(Instant::now() + TICK));
     let _ = event_loop.run_app(&mut app);
 }
 
 #[cfg(test)]
-mod tests {
+mod paste_tests {
     use super::*;
-    use rdev::EventType::{KeyPress, KeyRelease};
-    use rdev::Key;
-
-    fn tracker(spec: &str) -> ChordTracker {
-        ChordTracker::new(Hotkey::from_spec(spec))
-    }
-
     #[test]
-    fn fires_on_exact_chord_only() {
-        let mut t = tracker("win+shift+v"); // = Cmd+Shift+V on macOS
-        assert!(!t.on_event(&KeyPress(Key::MetaLeft)));
-        assert!(!t.on_event(&KeyPress(Key::ShiftLeft)));
-        assert!(t.on_event(&KeyPress(Key::KeyV)), "chord complete");
-        // wrong modifiers never fire: Ctrl+Shift+V is a different chord
-        let mut t = tracker("win+shift+v");
-        t.on_event(&KeyPress(Key::ControlLeft));
-        t.on_event(&KeyPress(Key::ShiftLeft));
-        assert!(!t.on_event(&KeyPress(Key::KeyV)));
-        // extra modifier on top of the chord also blocks it
-        let mut t = tracker("win+shift+v");
-        t.on_event(&KeyPress(Key::MetaLeft));
-        t.on_event(&KeyPress(Key::ShiftLeft));
-        t.on_event(&KeyPress(Key::ControlLeft));
-        assert!(!t.on_event(&KeyPress(Key::KeyV)));
-    }
-
-    #[test]
-    fn auto_repeat_fires_once_until_released() {
-        let mut t = tracker("win+shift+v");
-        t.on_event(&KeyPress(Key::MetaRight));
-        t.on_event(&KeyPress(Key::ShiftRight));
-        assert!(t.on_event(&KeyPress(Key::KeyV)));
-        assert!(!t.on_event(&KeyPress(Key::KeyV)), "OS auto-repeat");
-        assert!(!t.on_event(&KeyRelease(Key::KeyV)));
-        assert!(t.on_event(&KeyPress(Key::KeyV)), "re-press fires again");
-    }
-
-    #[test]
-    fn releasing_a_modifier_disarms() {
-        let mut t = tracker("ctrl+alt+9");
-        t.on_event(&KeyPress(Key::ControlLeft));
-        t.on_event(&KeyPress(Key::Alt));
-        t.on_event(&KeyRelease(Key::Alt));
-        assert!(!t.on_event(&KeyPress(Key::Num9)));
-        t.on_event(&KeyPress(Key::AltGr)); // right alt counts too
-        t.on_event(&KeyRelease(Key::Num9));
-        assert!(t.on_event(&KeyPress(Key::Num9)));
-    }
-
-    #[test]
-    fn set_hotkey_swaps_the_matched_chord_at_runtime() {
-        // start matching Win+Shift+V
-        let mut t = tracker("win+shift+v");
-        t.on_event(&KeyPress(Key::MetaLeft));
-        t.on_event(&KeyPress(Key::ShiftLeft));
-        assert!(t.on_event(&KeyPress(Key::KeyV)), "old chord fires");
-        // user lifts the keys, then cycles the preset to Ctrl+Shift+C
-        t.on_event(&KeyRelease(Key::KeyV));
-        t.on_event(&KeyRelease(Key::ShiftLeft));
-        t.on_event(&KeyRelease(Key::MetaLeft));
-        t.set_hotkey(Hotkey::from_spec("ctrl+shift+c"));
-        // the new combo must now fire
-        t.on_event(&KeyPress(Key::ControlLeft));
-        t.on_event(&KeyPress(Key::ShiftLeft));
-        assert!(t.on_event(&KeyPress(Key::KeyC)), "new chord fires after swap");
-        // the previous chord no longer triggers
-        let mut t = tracker("win+shift+v");
-        t.set_hotkey(Hotkey::from_spec("ctrl+shift+c"));
-        t.on_event(&KeyPress(Key::MetaLeft));
-        t.on_event(&KeyPress(Key::ShiftLeft));
-        assert!(!t.on_event(&KeyPress(Key::KeyV)), "old chord is disarmed");
-    }
-
-    #[test]
-    fn plain_key_without_modifiers_never_fires() {
-        let mut t = tracker("win+shift+v");
-        assert!(!t.on_event(&KeyPress(Key::KeyV)));
-        // and non-key events are ignored entirely
-        assert!(!t.on_event(&rdev::EventType::Wheel { delta_x: 0, delta_y: 1 }));
-    }
-
-    #[test]
-    fn key_gate_ignores_auto_repeat_until_release() {
-        let mut g = KeyGate::new();
-        assert!(g.fresh_press(Key::KeyA));
-        assert!(!g.fresh_press(Key::KeyA), "auto-repeat while held");
-        assert!(g.fresh_press(Key::KeyB), "other keys still count");
-        g.release(Key::KeyA);
-        assert!(g.fresh_press(Key::KeyA), "re-press after release counts");
-        // releasing a key that was never tracked is harmless
-        g.release(Key::KeyZ);
-        assert!(!g.fresh_press(Key::KeyB), "B is still held");
+    fn synthesized_paste_clears_hotkey_modifiers_before_clean_paste() {
+        use rdev::{EventType::*, Key::*};
+        for mac in [false, true] {
+            let events = paste_events(mac);
+            let modifier = if mac { MetaLeft } else { ControlLeft };
+            assert_eq!(&events[events.len()-4..], &[KeyPress(modifier), KeyPress(KeyV), KeyRelease(KeyV), KeyRelease(modifier)]);
+            for key in [ShiftLeft, ShiftRight, ControlLeft, ControlRight, Alt, AltGr] {
+                assert!(events[..events.len()-4].contains(&KeyRelease(key)), "hotkey modifiers cannot alter paste");
+            }
+            assert!(events[..events.len()-4].iter().all(|event| matches!(event, KeyRelease(_))));
+        }
     }
 }

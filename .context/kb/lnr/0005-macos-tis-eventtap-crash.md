@@ -1,5 +1,7 @@
 # LNR-0005: macOS 15 SIGTRAP — rdev translates keys (TIS) off the main thread
 
+> Historical listener implementation removed by [ADR-0020](../adr/0020-registered-shortcuts-without-input-monitoring.md). Use OS registration; do not restore a listener or event tap.
+
 - Date: 2026-06-12 · Area: portable input (macOS)
 
 ## Symptom

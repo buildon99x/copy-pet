@@ -22,7 +22,7 @@ macOS와 Linux는 같은 코어를 사용하는 portable 백엔드로 동작한�
 
 ## 개인정보와 의존성
 
-- 전역 입력 훅은 `src/input.rs`의 활동 카운터만 갱신한다. 허용되는 키코드 처리는 핫키 조합 비교 후 즉시 폐기하는 처리와 자동 반복을 막기 위한 held/released 상태뿐이다. 입력 내용·창 제목·입력 타이밍을 기록하거나 전송하지 않는다.
+- 전역 키·마우스 입력 훅과 활동 카운터를 사용하지 않는다. 핫키는 OS 등록 알림만 받으며 `rdev`는 선택적 붙여넣기 출력에만 사용한다. 입력 내용·창 제목·입력 타이밍을 기록하거나 전송하지 않는다.
 - 클립보드 내용과 서식은 사용자 설정 디렉터리에만 저장한다. 수집 일시정지와 재개 시 동기화 동작을 유지한다. 검증에는 합성한 테스트 문구를 사용한다.
 - 커서 기반 플라이아웃은 위치·크기만 조회한다. 접근성 API로 요소의 텍스트나 값을 읽지 않는다.
 - 앱의 유일한 네트워크 기능은 `src/update.rs`의 GitHub 릴리스 확인·다운로드다. 시스템 `curl`을 사용하고 `auto_update`로 끌 수 있다. 다른 네트워크 기능을 추가하지 않는다. 이 규칙은 앱 동작에 관한 것이며 개발 의존성 설치와 구분한다.
@@ -36,7 +36,7 @@ macOS와 Linux는 같은 코어를 사용하는 portable 백엔드로 동작한�
 - `cat.rs`는 12종의 고정 ID·개별 모션·입 위치를 정의한다. `Pet`이 선택한 한 마리의 `CatArt`를 소유하며 종류별 전역 상세 캐시를 만들지 않는다. 액세서리와 레벨 해금은 사용하지 않는다. 배포 아틀라스 제작·메모리 기준은 ADR-0018을 따른다.
 - `ClipPick`은 텍스트, 서식, 붙여넣기 의도, 일반 텍스트 여부를 백엔드에 전달한다. Windows·macOS는 HTML/RTF를 보존하고 Linux는 일반 텍스트로 동작한다. Windows 네이티브는 PNG·DIB 이미지도 캡처하고 다시 복사한다. 검색·미리보기·중복 판정은 일반 텍스트를 기준으로 한다.
 - Windows 네이티브와 macOS의 핫키 패널은 별도 커서 기반 플라이아웃 창이다. 가운데 클릭은 고양이 창의 내장 패널을 사용한다. Linux·Windows portable은 내장 패널을 사용한다.
-- macOS 전역 입력은 `mac_input.rs`의 CoreGraphics 이벤트 탭을 사용한다. macOS 키보드 경로를 `rdev`로 되돌리지 않는다. macOS 투명 표시는 CALayer, Linux·Windows portable 표시는 불투명 softbuffer 카드다.
+- 전역 단축키는 Windows `RegisterHotKey`, macOS `mac_hotkey.rs`의 Carbon `RegisterEventHotKey`, Linux X11 `XGrabKey`로 등록한다 (ADR-0020). Wayland에서는 등록 실패를 알리고 가운데 클릭·로컬 C·메뉴를 유지한다. macOS 기본값은 Control+Shift+V이며 입력 모니터링 권한을 요구하지 않는다. macOS 투명 표시는 CALayer, Linux·Windows portable 표시는 불투명 softbuffer 카드다.
 - macOS UI는 논리 포인트로 계산하며 `viewport::Density`를 통해 창·입력 경계에서만 물리 픽셀과 변환한다. 폰트도 배율을 적용한 해상도로 직접 래스터화한다. TTC의 첫 서체를 Regular로 가정하지 않는다(ADR-0019).
 
 ### 변경 시 지켜야 할 계약

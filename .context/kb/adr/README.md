@@ -14,7 +14,7 @@ rather than rewrite.
 | [0005](0005-clipboard-manager.md) | Clipboard manager: native listener on Windows, arboard polling on portable, text-only | Superseded by 0014 |
 | [0006](0006-i18n-vector-hangul.md) | English/Korean i18n with an in-code vector Hangul font | Superseded by 0011 |
 | [0007](0007-system-font-ui-text.md) | System font for UI text via ab_glyph (tooltip keeps pixel font) | Accepted |
-| [0008](0008-portable-global-hotkey.md) | Global panel hotkey on portable via rdev chord matching (Cmd+Shift+V on macOS) | Accepted |
+| [0008](0008-portable-global-hotkey.md) | Global panel hotkey via rdev chord matching | Superseded by 0020 |
 | [0009](0009-auto-update.md) | Auto-update via GitHub releases: system curl probe, exe swap on Windows | Accepted |
 | [0010](0010-movable-resizable-panel.md) | Movable, resizable clipboard panel on a dynamic union canvas | Accepted |
 | [0011](0011-remove-pixel-font.md) | Remove the built-in pixel font and vector Hangul; system fonts everywhere | Accepted |
@@ -26,3 +26,4 @@ rather than rewrite.
 | [0017](0017-cached-illustrated-pet.md) | Cached illustrated ragdoll frames and visible-state redraws | Accepted |
 | [0018](0018-selected-cat-atlases.md) | Twelve cats, bounded selected art, free gallery and quiet input | Accepted |
 | [0019](0019-logical-ui-and-system-font-faces.md) | Logical macOS UI geometry, native-density text and explicit Regular faces | Accepted |
+| [0020](0020-registered-shortcuts-without-input-monitoring.md) | Registered shortcuts without input monitoring | Accepted |

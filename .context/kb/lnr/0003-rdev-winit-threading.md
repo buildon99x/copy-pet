@@ -1,5 +1,7 @@
 # LNR-0003: rdev global input — its own thread, plus macOS/Wayland caveats
 
+> Historical listener implementation removed by [ADR-0020](../adr/0020-registered-shortcuts-without-input-monitoring.md). Use OS registration; do not restore a listener or event tap.
+
 - Date: 2026-06-12 · Area: portable input
 
 ## Symptom / risk

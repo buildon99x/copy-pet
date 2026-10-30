@@ -30,25 +30,25 @@ fn illustrated_ragdoll_has_blue_eyes_and_floats_without_the_old_desk() {
 fn hunter_idle_stops_redrawing_but_panel_and_copy_changes_still_render() {
     let mut p = pet();
     p.st.onboarded = true;
-    assert!(p.advance(0, 0, 0), "initial state must draw");
+    assert!(p.advance(), "initial state must draw");
     for _ in 0..10 {
         p.last_tick -= std::time::Duration::from_millis(33);
-        assert!(!p.advance(0, 0, 0), "a stable illustrated loaf must not repaint");
+        assert!(!p.advance(), "a stable illustrated loaf must not repaint");
     }
     p.open_panel();
-    assert!(p.advance(0, 0, 0), "opening the history must invalidate the frame");
+    assert!(p.advance(), "opening the history must invalidate the frame");
     p.panel_char('x');
-    assert!(p.advance(0, 0, 0), "search changes must render immediately");
+    assert!(p.advance(), "search changes must render immediately");
     p.dismiss_panel();
     p.on_copy("new synthetic clip".into(), None, None);
-    assert!(p.advance(0, 0, 0), "a real copy starts its reaction");
+    assert!(p.advance(), "a real copy starts its reaction");
 }
 
 #[test]
 fn hunter_pause_cancels_copy_feedback_without_removing_collected_clips() {
     let mut p = pet();
     p.on_copy("accepted synthetic clip".into(), None, None);
-    p.advance(0, 0, 0);
+    p.advance();
     assert!(p.fish.is_some());
     p.run_action(PanelAction::ToggleCapture);
     assert!(p.fish.is_none(), "pause stops a running copy reaction");
@@ -60,7 +60,7 @@ fn hunter_pause_cancels_copy_feedback_without_removing_collected_clips() {
 fn hunter_burst_collects_every_clip_but_keeps_only_one_pending_reaction() {
     let mut p = pet();
     p.on_copy("first".into(), None, None);
-    p.advance(0, 0, 0);
+    p.advance();
     for i in 0..20 { p.on_copy(format!("burst {i}"), None, None); }
     assert_eq!(p.clips.len(), 21);
     assert!(p.fish_queue.len() <= 1, "visual work is coalesced independently of captured clips");
@@ -90,14 +90,14 @@ fn every_cat_fish_reaches_its_authored_mouth_and_crunch_location() {
 fn hunter_hidden_captures_keep_history_without_replaying_visual_backlog() {
     let mut p = pet();
     p.on_copy("before hiding".into(), None, None);
-    p.advance(0, 0, 0);
+    p.advance();
     p.set_window_level(2);
     p.on_copy("while hidden".into(), None, None);
     assert_eq!(p.clips.len(), 2);
     assert!(p.fish.is_none() && p.fish_queue.is_empty());
-    assert!(!p.advance(0, 0, 0));
+    assert!(!p.advance());
     assert!(p.show_window());
-    assert!(p.advance(0, 0, 0));
+    assert!(p.advance());
     assert!(p.fish.is_none());
 }
 
@@ -107,10 +107,10 @@ fn hunter_deep_sleep_has_no_continuous_particles_or_repaints() {
     p.st.onboarded = true;
     p.last_event -= std::time::Duration::from_secs(90);
     p.sleep = 1.0;
-    p.advance(0, 0, 0);
+    p.advance();
     for _ in 0..100 {
         p.last_tick -= std::time::Duration::from_millis(33);
-        assert!(!p.advance(0, 0, 0));
+        assert!(!p.advance());
     }
     assert_eq!(p.hunter_frame(p.now_t()), 15);
     assert!(p.particles.is_empty());
@@ -126,7 +126,7 @@ fn every_cat_finishes_its_authored_copy_cycle_with_bounded_visual_work() {
         let mut visited=std::collections::BTreeSet::new();
         for _ in 0..((kind.copy_duration()/0.033).ceil() as usize+3) {
             p.last_tick-=std::time::Duration::from_millis(33);
-            p.advance(0,0,0);
+            p.advance();
             visited.insert(p.hunter_frame(p.now_t()));
         }
         assert!((1..12).all(|frame| visited.contains(&frame)), "{kind:?} complete notice/action/recovery: {visited:?}");
@@ -143,10 +143,10 @@ fn hunter_tag_selection_invalidates_immediately_without_waiting_for_caret_blink(
     p.open_panel();
     p.panel_nav(NavKey::Tags);
     p.panel.tag_select_all = false;
-    p.advance(0, 0, 0);
+    p.advance();
     p.panel_nav(NavKey::SelectAll);
     assert!(p.panel.tag_select_all);
-    assert!(p.advance(0, 0, 0), "Ctrl+A highlight is visible on the next tick");
+    assert!(p.advance(), "Ctrl+A highlight is visible on the next tick");
 }
 
 #[test]
@@ -228,7 +228,9 @@ fn menu_cycle_hotkey_reregisters_with_new_spec() {
     // the menu carries a CycleHotkey leaf labelled with the live chord
     let menu = p.build_menu("HK", false);
     let item = find(&menu, MenuAction::CycleHotkey).unwrap();
-    assert!(item.label.contains(&crate::hotkey::Hotkey::from_spec(&p.st.hotkey).display()));
+    assert!(item.label.contains("HK"), "backend live registration label is authoritative");
+    let unavailable = p.build_menu("", false);
+    assert!(!find(&unavailable, MenuAction::CycleHotkey).unwrap().label.contains(&crate::hotkey::Hotkey::from_spec(&p.st.hotkey).display()));
     // applying it advances the spec and hands the backend the new one to register
     match p.apply_menu_action(MenuAction::CycleHotkey) {
         MenuOutcome::ReregisterHotkey(spec) => assert_eq!(spec, p.st.hotkey),
@@ -383,7 +385,7 @@ fn fish_flies_and_gets_eaten() {
     let mut enjoyed = false;
     for _ in 0..50 {
         p.last_tick -= std::time::Duration::from_millis(33);
-        p.advance(0, 0, 0);
+        p.advance();
         enjoyed |= p.happy > 0.0;
     }
     assert!(p.fish.is_none());
@@ -631,7 +633,7 @@ fn render_panel_open_smoke() {
 fn switching_preserves_selected_cat_and_clears_old_motion() {
     let mut p = pet();
     p.on_copy("synthetic switch".into(), None, None);
-    p.advance(0, 0, 0);
+    p.advance();
     let chosen = crate::cat::CatKind::ALL[3];
     p.select_cat(chosen).unwrap();
     assert_eq!(p.st.cat_kind, chosen.id());
@@ -645,11 +647,11 @@ fn global_input_and_body_clicks_leave_sleeping_character_quiet() {
     p.st.onboarded = true;
     p.sleep = 1.0;
     p.last_event -= std::time::Duration::from_secs(90);
-    p.advance(0, 0, 0);
+    p.advance();
     p.pet();
     p.click_bounce(120.0, 180.0);
     p.set_hover(true);
-    p.advance(3, 2, 1);
+    p.advance();
     assert_eq!(p.hunter_frame(p.now_t()), 15, "input cannot wake the cat");
     assert!(p.particles.is_empty());
     assert_eq!((p.paw_l, p.paw_r, p.rate, p.squash), (0.0, 0.0, 0.0, 0.0));
@@ -681,7 +683,7 @@ fn copy_wakes_a_sleeping_cat_immediately_but_input_is_quiet() {
     let mut p = pet();
     p.sleep = 1.0;
     p.last_event -= std::time::Duration::from_secs(90);
-    p.advance(1,0,0);
+    p.advance();
     assert_eq!(p.sleep,1.0);
     assert!(p.particles.is_empty() && p.toast.is_none());
     p.on_copy("wake synthetic".into(),None,None);
@@ -692,10 +694,10 @@ fn copy_wakes_a_sleeping_cat_immediately_but_input_is_quiet() {
 fn pause_after_catch_cancels_particles_and_compression_without_replay() {
     let mut p = pet();
     p.on_copy("synthetic caught copy".into(), None, None);
-    p.advance(0, 0, 0);
+    p.advance();
     for _ in 0..40 {
         p.last_tick -= std::time::Duration::from_millis(33);
-        p.advance(0, 0, 0);
+        p.advance();
         if !p.particles.is_empty() { break; }
     }
     assert!(!p.particles.is_empty() && p.squash > 0.0, "reach the actual catch effects first");
@@ -704,7 +706,7 @@ fn pause_after_catch_cancels_particles_and_compression_without_replay() {
     assert!(p.particles.is_empty(), "pause cancels already-spawned copy particles");
     assert_eq!((p.squash, p.happy), (0.0, 0.0));
     p.run_action(PanelAction::ToggleCapture);
-    p.advance(0, 0, 0);
+    p.advance();
     assert!(p.fish.is_none() && p.fish_queue.is_empty() && p.particles.is_empty());
     assert_eq!((p.squash, p.happy), (0.0, 0.0));
     assert_eq!(p.clips.len(), 1);
@@ -714,10 +716,10 @@ fn pause_after_catch_cancels_particles_and_compression_without_replay() {
 fn hide_after_catch_cancels_particles_and_compression_before_quick_show() {
     let mut p = pet();
     p.on_copy("synthetic caught hidden copy".into(), None, None);
-    p.advance(0, 0, 0);
+    p.advance();
     for _ in 0..40 {
         p.last_tick -= std::time::Duration::from_millis(33);
-        p.advance(0, 0, 0);
+        p.advance();
         if !p.particles.is_empty() { break; }
     }
     assert!(!p.particles.is_empty() && p.squash > 0.0, "reach the actual catch effects first");
@@ -726,7 +728,7 @@ fn hide_after_catch_cancels_particles_and_compression_before_quick_show() {
     assert!(p.particles.is_empty(), "hide cancels already-spawned copy particles");
     assert_eq!((p.squash, p.happy), (0.0, 0.0));
     assert!(p.show_window());
-    p.advance(0, 0, 0);
+    p.advance();
     assert!(p.fish.is_none() && p.fish_queue.is_empty() && p.particles.is_empty());
     assert_eq!((p.squash, p.happy), (0.0, 0.0));
     assert_eq!(p.clips.len(), 1);
@@ -820,7 +822,7 @@ fn legacy_input_and_copy_preserve_settings_without_growth_effects() {
     let mut p = Pet::new(state);
     p.clips = ClipStore::default();
     let before = serde_json::to_value(&p.st).unwrap();
-    p.advance(1, 0, 0);
+    p.advance();
     assert_eq!(serde_json::to_value(&p.st).unwrap(), before, "global activity cannot change persisted state");
     p.on_copy("synthetic private companion".into(), None, None);
     assert_eq!(p.clips.by_index(0).unwrap().text, "synthetic private companion");

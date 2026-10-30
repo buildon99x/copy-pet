@@ -1,5 +1,5 @@
 //! Native Win32 backend: a per-pixel-alpha layered window (transparent pixels
-//! are click-through), low-level keyboard/mouse hooks feeding `crate::input`,
+//! are click-through), registered shortcuts without global input monitoring,
 //! a clipboard-format listener feeding `crate::clipboard`, a global panel
 //! hotkey (Win+Shift+V by default, configurable — see [`crate::hotkey`]),
 //! and a Shell notification-area (tray) icon with a localized context menu.
@@ -14,7 +14,6 @@ use crate::clip_image::{ClipImage, MAX_IMAGE_BYTES};
 use crate::clipboard::{b64_decode, b64_encode, RichFormats};
 use crate::hotkey::{self, Hotkey};
 use crate::i18n::{self, t, Lang, Msg};
-use crate::input;
 use crate::menu::MenuAction;
 use crate::panel::{fit_delta, Layout, NavKey, PanelDrag, Rect};
 use crate::pet::{window_size, ClipPick, Pet, SCALES};
@@ -114,8 +113,6 @@ struct App {
     hover_tracking: bool,
     pending_surrogate: Option<u16>,
     // win handles
-    kbd_hook: HHOOK,
-    mouse_hook: HHOOK,
     icon: HICON,
     taskbar_created: u32,
     /// Display label of the actually registered panel hotkey (tray menu,
@@ -289,8 +286,7 @@ impl App {
     /// One ~33 ms frame. Returns `true` when an installed update is in
     /// place and the app should relaunch (handled by the WM_TIMER caller).
     fn tick(&mut self) -> bool {
-        let (k, c, wh) = input::drain();
-        let redraw = self.pet.advance(k, c, wh);
+        let redraw = self.pet.advance();
 
         // auto-update: surface a found release / a finished install
         if let Some(v) = update::take_found() {
@@ -1305,42 +1301,6 @@ unsafe fn send_ctrl_v() {
     );
 }
 
-// ---- hooks -------------------------------------------------------------------
-
-unsafe extern "system" fn kbd_hook(code: i32, wp: WPARAM, lp: LPARAM) -> LRESULT {
-    if code >= 0 {
-        let ks = &*(lp as *const KBDLLHOOKSTRUCT);
-        // Skip synthetic events: our own auto-paste Ctrl+V (send_ctrl_v via
-        // SendInput) sets LLKHF_INJECTED, and counting it would inflate the
-        // keystroke/XP totals with keys the user never pressed. Only the flags
-        // bit is inspected, never key contents (golden rule 1).
-        if ks.flags & LLKHF_INJECTED == 0 {
-            // The vkCode is reduced to a held/released bit so holding a key (OS
-            // auto-repeat) counts once; it is never stored or inspected further
-            // (see crate::input and golden rule 1).
-            let vk = ks.vkCode as u16;
-            match wp as u32 {
-                WM_KEYDOWN | WM_SYSKEYDOWN => input::key_down(vk),
-                WM_KEYUP | WM_SYSKEYUP => input::key_up(vk),
-                _ => {}
-            }
-        }
-    }
-    CallNextHookEx(null_mut(), code, wp, lp)
-}
-
-unsafe extern "system" fn mouse_hook(code: i32, wp: WPARAM, lp: LPARAM) -> LRESULT {
-    if code >= 0 {
-        let msg = wp as u32;
-        match msg {
-            WM_LBUTTONDOWN | WM_RBUTTONDOWN | WM_MBUTTONDOWN | WM_XBUTTONDOWN => input::click(),
-            WM_MOUSEWHEEL | WM_MOUSEHWHEEL => input::wheel(),
-            _ => {}
-        }
-    }
-    CallNextHookEx(null_mut(), code, wp, lp)
-}
-
 // ---- tray ----------------------------------------------------------------------
 
 unsafe fn tray_add(hwnd: HWND, icon: HICON) {
@@ -1714,6 +1674,7 @@ unsafe fn open_menu(hwnd: HWND) {
                     a.hotkey_label = label;
                     // If this preset is OS-reserved, replace cycle_hotkey's
                     // chord toast with the explicit fallback explanation.
+                    if matches!(reg, HotkeyReg::None) { a.pet.notify_hotkey_failed(); }
                     if let HotkeyReg::Fallback { wanted, used } = &reg {
                         a.pet.notify_hotkey_fallback(wanted, used);
                     }
@@ -2205,12 +2166,6 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
                 KillTimer(hwnd, TIMER_ID);
                 UnregisterHotKey(hwnd, HOTKEY_ID);
                 RemoveClipboardFormatListener(hwnd);
-                if !a.kbd_hook.is_null() {
-                    UnhookWindowsHookEx(a.kbd_hook);
-                }
-                if !a.mouse_hook.is_null() {
-                    UnhookWindowsHookEx(a.mouse_hook);
-                }
                 tray_remove(hwnd);
             });
             PostQuitMessage(0);
@@ -2362,6 +2317,7 @@ pub fn run() {
 
         let mut pet = Pet::new(st);
         pet.set_panel_hint(hotkey_label.clone());
+        if matches!(reg, HotkeyReg::None) { pet.notify_hotkey_failed(); }
         // Tell the user when the configured chord was unavailable, so the
         // displayed fallback label is not a silent mismatch with state.json.
         if let HotkeyReg::Fallback { wanted, used } = &reg {
@@ -2410,8 +2366,6 @@ pub fn run() {
             drag_win: (0, 0),
             hover_tracking: false,
             pending_surrogate: None,
-            kbd_hook: SetWindowsHookExW(WH_KEYBOARD_LL, Some(kbd_hook), null_mut(), 0),
-            mouse_hook: SetWindowsHookExW(WH_MOUSE_LL, Some(mouse_hook), null_mut(), 0),
             icon,
             taskbar_created: RegisterWindowMessageW(wz("TaskbarCreated").as_ptr()),
             hotkey_label,

@@ -2,7 +2,7 @@
 //!
 //! The simulation, clipboard store and rendering are platform-agnostic
 //! (`clipcat::pet`, `clipcat::clipboard`, `clipcat::render`); the OS event
-//! loop, window, clipboard watcher and global input hooks live in
+//! loop, window, clipboard watcher and registered hotkeys live in
 //! `clipcat::platform`, which selects the native Win32 backend on Windows
 //! and a portable `winit`/`softbuffer`/`rdev`/`arboard` backend on macOS
 //! and Linux.

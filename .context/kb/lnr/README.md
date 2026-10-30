@@ -8,9 +8,9 @@ before touching the related area.
 |--:|--------|------|
 | [0001](0001-softbuffer-no-alpha.md) | softbuffer can't carry per-pixel alpha → black rectangle | portable render |
 | [0002](0002-debug-vs-release-cpu.md) | Debug tiny-skia is ~10× slower; benchmark CPU on release | performance |
-| [0003](0003-rdev-winit-threading.md) | rdev runs on its own thread; macOS/Wayland caveats | portable input |
+| [0003](0003-rdev-winit-threading.md) | Historical rdev threading; superseded by registered shortcuts (ADR-0020) | portable input |
 | [0004](0004-cargo-cross-platform-deps.md) | "optional on Windows, required elsewhere" dependency layout | build/cargo |
-| [0005](0005-macos-tis-eventtap-crash.md) | macOS 15 SIGTRAP: rdev translates keys (TIS) off the main thread | portable input (macOS) |
+| [0005](0005-macos-tis-eventtap-crash.md) | Historical macOS TIS crash; do not restore input listeners (ADR-0020) | portable input (macOS) |
 | [0006](0006-auto-paste-foreground-capture-order.md) | Auto-paste captured our own window as the target on the hotkey path | Windows backend (auto-paste) |
 | [0007](0007-flyout-paste-gated-on-unreachable-setting.md) | Win+V flyout never pasted: gated on a setting unreachable on the Windows tray menu | core pick contract + Windows backend |
 | [0008](0008-flyout-paste-hide-before-paste-race.md) | Win+V flyout paste dropped intermittently: hid the flyout before restoring foreground; held Shift corrupted Ctrl+V | Windows backend (auto-paste) |

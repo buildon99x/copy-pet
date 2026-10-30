@@ -26,6 +26,7 @@ ab_glyph = "0.2"
 # Windows); always required on non-Windows via the target table below.
 winit = { version = "0.30", optional = true }
 softbuffer = { version = "0.4", optional = true }
+# Output-only optional paste simulation. Never use its global input listener.
 rdev = { version = "0.5", optional = true }
 # Clipboard read/write for the portable backend (the native Windows backend
 # talks to the Win32 clipboard directly). Text only — see ADR-0005.
@@ -57,8 +58,8 @@ features = [
 libc = "0.2"
 
 # --- macOS native bits -------------------------------------------------------
-# core-graphics: the global-input event tap (src/platform/mac_input.rs) and the
-#   transparent presenter (src/platform/mac_present.rs). Same crate/version/
+# core-graphics: transparent presenter (src/platform/mac_present.rs).
+#   Same crate/version/
 #   feature rdev already pulls in transitively — no new graph node.
 # objc + foreign-types: drive the window's CALayer for the transparent present
 #   path (ADR-0003). Both already in the tree via winit/rdev.

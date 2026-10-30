@@ -30,27 +30,27 @@ src/
   state.rs             Persist (JSON), settings and stable selected cat
   update.rs            optional self-update (ADR-0009): daily GitHub release
                        check via system curl; exe swap + relaunch on Windows
-  input.rs             shared atomic activity counters (KEYS/CLICKS/WHEEL)
   menu.rs              platform-agnostic context-menu model (entries, actions,
                        check state); Pet::build_menu / apply_menu_action drive
                        it. Native menus (macOS NSMenu) just render it — so the
                        whole menu is unit/e2e testable without a GUI.
   platform/
     mod.rs             selects exactly one backend by cfg
-    windows.rs         native Win32 layered window + LL hooks + clipboard
+    windows.rs         native Win32 layered window + RegisterHotKey + clipboard
                        listener + global panel hotkey (default Win+Shift+V,
                        fallback Ctrl+Shift+V) + Shell tray. The hotkey opens
                        the panel as a caret-anchored flyout in a *second*
                        focusable layered window (ADR-0013); middle-click keeps
                        the embedded panel.
-    portable.rs        winit + softbuffer + rdev + arboard (macOS/Linux,
+    portable.rs        winit + softbuffer + arboard, output-only rdev paste
+                       (macOS/Linux,
                        and Windows --feature portable). On macOS the hotkey
                        opens the panel as a caret-anchored flyout in a second
                        winit window (ADR-0013); Linux keeps the embedded panel.
-    mac_input.rs       macOS-only global-input event tap (CoreGraphics).
-                       Replaces rdev's keyboard listener, which crashes on
-                       macOS 15 by calling Text Input Source APIs off the main
-                       thread (LNR-0005); reads event kind + keycode only.
+    registered_hotkey.rs portable shortcut bridge: Windows message queue and
+                       X11 XGrabKey; explicit Wayland failure, owned cleanup.
+    mac_hotkey.rs      Carbon RegisterEventHotKey on the main run loop; no
+                       input monitoring permission, event taps or TIS calls.
     mac_present.rs     macOS-only transparent presenter: pushes the pixmap to
                        the window's CALayer as a CGImage with alpha, so the pet
                        floats with a transparent background (ADR-0003 update)

@@ -1,6 +1,6 @@
 # ADR-0008: Global panel hotkey on the portable backend via rdev chord matching
 
-- Status: Accepted
+- Status: Superseded by [ADR-0020](0020-registered-shortcuts-without-input-monitoring.md)
 - Date: 2026-06-11
 - Related: [ADR-0001](0001-cross-platform-architecture.md) (backend split),
   [ADR-0005](0005-clipboard-manager.md) (clipboard manager)

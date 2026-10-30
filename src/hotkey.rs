@@ -1,22 +1,53 @@
 //! The global clipboard-panel hotkey: parsing and display formatting of the
 //! persisted spec string (e.g. `"win+shift+v"`, see [`crate::state::Persist`]).
-//! Platform-agnostic — actually detecting the key combination is the
-//! backend's job (`RegisterHotKey` in `platform/windows.rs`; a chord matcher
-//! on the rdev listener in `platform/portable.rs`, see ADR-0008).
-//!
-//! The `win` modifier means the OS "super" key: the Windows key, ⌘ Command
-//! on macOS, Super on Linux — so the one default spec is Win+Shift+V on
-//! Windows and Cmd+Shift+V on macOS.
+//! Platform-agnostic; the backend owns registration and teardown (ADR-0020).
+//! The `win` modifier names the OS super key; the macOS default uses Control.
 
-/// Default panel hotkey: Win+Shift+V (Cmd+Shift+V on macOS).
+/// Default panel hotkey: Control+Shift+V on macOS, Win/Super+Shift+V elsewhere.
+#[cfg(not(target_os = "macos"))]
 pub const DEFAULT: &str = "win+shift+v";
+#[cfg(target_os = "macos")]
+pub const DEFAULT: &str = "ctrl+shift+v";
 /// Fallback when the default cannot be registered (clash with another app).
 pub const FALLBACK: &str = "ctrl+shift+v";
 
 /// Safe, always-parseable presets the settings menu cycles through (instead of
 /// a free-form rebind UI). The default leads, so cycling from a fresh install
 /// advances predictably. Every entry must parse via [`Hotkey::parse`].
-pub const PRESETS: &[&str] = &["win+shift+v", "ctrl+shift+v", "alt+shift+v", "ctrl+shift+c"];
+#[cfg(not(target_os = "macos"))]
+pub const PRESETS: &[&str] = &[DEFAULT, "ctrl+shift+v", "alt+shift+v", "ctrl+shift+c"];
+#[cfg(target_os = "macos")]
+pub const PRESETS: &[&str] = &[DEFAULT, "win+shift+v", "alt+shift+v", "ctrl+shift+c"];
+
+/// The result of the current registration attempt. Backends unregister the old
+/// chord before calling `rebind`; a failure must clear the visible live label.
+#[derive(Default)]
+pub struct Registration {
+    active: Option<Hotkey>,
+    fallback: bool,
+}
+impl Registration {
+    pub fn rebind(&mut self, spec: &str, mut register: impl FnMut(Hotkey) -> bool) {
+        self.active = None;
+        self.fallback = false;
+        let wanted = Hotkey::from_spec(spec);
+        if register(wanted) {
+            self.active = Some(wanted);
+            return;
+        }
+        let fallback = Hotkey::from_spec(FALLBACK);
+        if fallback != wanted && register(fallback) {
+            self.active = Some(fallback);
+            self.fallback = true;
+        }
+    }
+    pub fn label(&self) -> String {
+        self.active.map(|hk| hk.display()).unwrap_or_default()
+    }
+    pub fn fallback(&self) -> bool {
+        self.fallback
+    }
+}
 
 /// The preset after `current` (wrapping). Comparison is on the parsed chord, so
 /// case/spacing don't matter; a spec that isn't a preset (e.g. a hand-edited
@@ -121,12 +152,54 @@ mod tests {
     use super::*;
 
     #[test]
-    fn default_is_super_shift_v() {
+    fn registration_policy_reports_failed_rebind_without_stale_label() {
+        let mut state = Registration::default();
+        state.rebind("ctrl+alt+k", |_| true);
+        assert_eq!(state.label(), "CTRL+ALT+K");
+        let mut attempts = Vec::new();
+        state.rebind("ctrl+shift+c", |chord| {
+            attempts.push(chord);
+            false
+        });
+        assert!(state.label().is_empty());
+        assert_eq!(attempts[0], Hotkey::from_spec("ctrl+shift+c"));
+        assert_eq!(attempts.len(), 2);
+        state.rebind("ctrl+shift+c", |chord| chord == Hotkey::from_spec(FALLBACK));
+        assert_eq!(state.label(), Hotkey::from_spec(FALLBACK).display());
+        assert!(state.fallback());
+        state.rebind("ctrl+alt+k", |_| true);
+        assert!(!state.fallback());
+    }
+
+    #[test]
+    fn failed_fallback_is_attempted_only_once() {
+        let mut registration = Registration::default();
+        let mut attempts = 0;
+        registration.rebind(FALLBACK, |_| {
+            attempts += 1;
+            false
+        });
+        assert_eq!(attempts, 1);
+        assert!(registration.label().is_empty());
+        assert!(!registration.fallback());
+    }
+
+    #[test]
+    fn default_matches_platform_policy() {
         let hk = Hotkey::from_spec(DEFAULT);
-        assert!(hk.win && hk.shift && !hk.ctrl && !hk.alt);
+        assert!(hk.shift && !hk.alt);
+        assert_eq!(hk.ctrl, cfg!(target_os = "macos"));
+        assert_eq!(hk.win, !cfg!(target_os = "macos"));
         assert_eq!(hk.key, 'V');
         // the super key is named per OS: WIN / CMD / SUPER
-        assert_eq!(hk.display(), format!("{}+SHIFT+V", super_name()));
+        assert_eq!(
+            hk.display(),
+            if cfg!(target_os = "macos") {
+                "CTRL+SHIFT+V".into()
+            } else {
+                format!("{}+SHIFT+V", super_name())
+            }
+        );
         if cfg!(target_os = "macos") {
             assert_eq!(super_name(), "CMD");
         }
@@ -165,7 +238,7 @@ mod tests {
             assert_eq!(&spec.as_str(), expected);
         }
         // comparison is on the parsed chord, not the string spelling
-        assert_eq!(next_preset("Win+Shift+V"), PRESETS[1]);
+        assert_eq!(next_preset(DEFAULT), PRESETS[1]);
         // an unknown/custom chord jumps to the first preset
         assert_eq!(next_preset("ctrl+alt+k"), PRESETS[0]);
         // an *unparseable* spec also lands on the first preset (the default),

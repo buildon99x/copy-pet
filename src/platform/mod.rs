@@ -1,9 +1,9 @@
 //! Platform backends. Exactly one is compiled:
 //!
 //! * **windows** — native Win32 layered window with per-pixel alpha and
-//!   click-through, low-level input hooks and a Shell tray icon. The default
+//!   click-through, registered hotkeys and a Shell tray icon. The default
 //!   on Windows and the release target.
-//! * **portable** — `winit` + `softbuffer` window with `rdev` global input;
+//! * **portable** — `winit` + `softbuffer` window with OS registered hotkeys;
 //!   settings are driven by keyboard shortcuts (no system tray — see ADR-0004).
 //!   Used on macOS and Linux, and on Windows when the `portable` feature is
 //!   enabled (so the portable path can be exercised on the development machine).
@@ -25,14 +25,12 @@ pub use portable::run;
 #[cfg(windows)]
 mod windows_sound;
 
-// macOS-only helpers for the portable backend: a bespoke CoreGraphics event
-// tap (replaces rdev's crashing keyboard listener, LNR-0005), a transparent
-// CALayer presenter (replaces softbuffer's opaque card, ADR-0003), the native
-// right-click context menu and its dialogs, plus LaunchAgent autostart.
+// macOS helpers: Carbon shortcut registration on the main run loop,
+// transparent CALayer presentation, native menus and LaunchAgent autostart.
 #[cfg(all(any(not(windows), feature = "portable"), target_os = "macos"))]
 mod mac_util;
 #[cfg(all(any(not(windows), feature = "portable"), target_os = "macos"))]
-mod mac_input;
+mod mac_hotkey;
 #[cfg(all(any(not(windows), feature = "portable"), target_os = "macos"))]
 mod mac_present;
 #[cfg(all(any(not(windows), feature = "portable"), target_os = "macos"))]
@@ -50,3 +48,6 @@ mod mac_caret;
 // parity. The portable watcher reads it; `set_clipboard` writes it.
 #[cfg(all(any(not(windows), feature = "portable"), target_os = "macos"))]
 mod mac_clipboard;
+
+#[cfg(any(not(windows), feature = "portable"))]
+mod registered_hotkey;

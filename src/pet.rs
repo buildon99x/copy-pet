@@ -113,8 +113,6 @@ pub struct Pet {
     // inputs from the platform
     panel_hint: String,
     update_available: Option<String>, // newer release found (crate::update)
-    accessibility_hinted: bool,       // macOS Accessibility hint shown once
-    hotkey_fallback_hinted: bool,     // hotkey-fallback toast shown once
     // bookkeeping
     last_visual: Option<u64>,
     rng: u32,
@@ -177,8 +175,6 @@ impl Pet {
             fish_queue: VecDeque::new(),
             panel_hint: String::new(),
             update_available: None,
-            accessibility_hinted: false,
-            hotkey_fallback_hinted: false,
             last_visual: None,
             rng: seed(),
             size_changed: false,
@@ -246,16 +242,9 @@ impl Pet {
         self.toast_msg(Msg::ToastUpdateFailed, 3.0);
     }
 
-    /// The macOS global-input event tap could not be installed — Accessibility
-    /// permission has not been granted. Point the user at the setting, once;
-    /// the pet, clipboard history and panel (C / middle-click) keep working,
-    /// only the global hotkey is unavailable.
-    pub fn notify_accessibility_needed(&mut self) {
-        if self.accessibility_hinted {
-            return;
-        }
-        self.accessibility_hinted = true;
-        self.toast_msg(Msg::ToastAccessibility, 8.0);
+    /// Global registration failed; local panel gestures remain available.
+    pub fn notify_hotkey_failed(&mut self) {
+        self.toast_msg(Msg::ToastHotkeyFailed, 8.0);
     }
 
     /// The OS rejected the configured panel hotkey (e.g. Windows reserves
@@ -265,10 +254,6 @@ impl Pet {
     /// configured chord is kept in `state.json`, so it registers normally once
     /// whatever was holding it is freed.
     pub fn notify_hotkey_fallback(&mut self, wanted: &str, used: &str) {
-        if self.hotkey_fallback_hinted {
-            return;
-        }
-        self.hotkey_fallback_hinted = true;
         self.set_toast(i18n::hotkey_fallback(self.lang(), wanted, used), 5.0);
     }
 
@@ -1055,9 +1040,8 @@ impl Pet {
 
     /// Advances the simulation one frame and returns a
     /// hint of whether the visuals changed enough to be worth presenting.
-    /// Legacy activity arguments are ignored; only local actions and copies
-    /// affect the pet.
-    pub fn advance(&mut self, _k: u64, _c: u64, _wh: u64) -> bool {
+    /// Only local actions and copies affect the pet.
+    pub fn advance(&mut self) -> bool {
         let now = Instant::now();
         let t = self.now_t();
         let dt = (now - self.last_tick).as_secs_f32().clamp(0.001, 0.1);
@@ -1304,8 +1288,7 @@ impl Pet {
 
         // first-run hint banner: the live panel hotkey, until the panel opens once
         let hint_text = self.show_hint().then(|| {
-            let chord = crate::hotkey::Hotkey::from_spec(&self.st.hotkey).display();
-            i18n::first_run_hint(self.lang(), &chord)
+            i18n::first_run_hint(self.lang(), &self.panel_hint)
         });
 
         let scene = Scene {
@@ -1447,7 +1430,7 @@ impl Pet {
         ));
         // Panel hotkey: a one-click cycle through safe presets (no rebind UI);
         // the label shows the live chord and a click advances to the next.
-        let chord = crate::hotkey::Hotkey::from_spec(&self.st.hotkey).display();
+        let chord = hotkey.to_string();
         m.push(MenuItem::leaf(
             i18n::menu_hotkey(lang, &chord),
             MenuAction::CycleHotkey,

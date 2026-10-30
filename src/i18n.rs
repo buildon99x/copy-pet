@@ -118,8 +118,8 @@ pub enum Msg {
     MenuAutoUpdate,
     ToastUpdateDownloading,
     ToastUpdateFailed,
-    // macOS Accessibility permission (global input tap)
-    ToastAccessibility,
+    // OS hotkey registration failure
+    ToastHotkeyFailed,
 }
 
 /// Looks up a fixed string for the language.
@@ -260,8 +260,8 @@ pub fn t(lang: Lang, msg: Msg) -> &'static str {
         (ToastUpdateDownloading, Lang::Ko) => "업데이트 다운로드 중...",
         (ToastUpdateFailed, Lang::En) => "UPDATE FAILED",
         (ToastUpdateFailed, Lang::Ko) => "업데이트 실패",
-        (ToastAccessibility, Lang::En) => "ENABLE ACCESSIBILITY IN SYSTEM SETTINGS FOR THE HOTKEY",
-        (ToastAccessibility, Lang::Ko) => "단축키 사용: 시스템 설정 > 손쉬운 사용에서 권한을 허용하세요",
+        (ToastHotkeyFailed, Lang::En) => "MIDDLE CLICK · HOTKEY UNAVAILABLE",
+        (ToastHotkeyFailed, Lang::Ko) => "가운데 클릭 · 단축키 오류",
     }
 }
 
@@ -288,6 +288,14 @@ pub fn menu_hotkey(lang: Lang, hotkey: &str) -> String {
 /// First-run hint shown by the pet (until the panel is first opened): the live
 /// hotkey chord that opens the clipboard history.
 pub fn first_run_hint(lang: Lang, hotkey: &str) -> String {
+    let hotkey = if hotkey.is_empty() {
+        match lang {
+            Lang::En => "middle click",
+            Lang::Ko => "가운데 클릭",
+        }
+    } else {
+        hotkey
+    };
     match lang {
         Lang::En => format!("Clipboard: {hotkey}"),
         Lang::Ko => format!("클립보드: {hotkey}"),
@@ -482,7 +490,7 @@ mod tests {
             MenuAutoUpdate,
             ToastUpdateDownloading,
             ToastUpdateFailed,
-            ToastAccessibility,
+            ToastHotkeyFailed,
         ];
         for msg in all {
             assert!(!t(Lang::En, msg).is_empty());
