@@ -51,3 +51,6 @@ mod mac_clipboard;
 
 #[cfg(any(not(windows), feature = "portable"))]
 mod registered_hotkey;
+
+#[cfg(any(all(windows, not(feature = "portable")), target_os = "macos", test))]
+mod flyout;

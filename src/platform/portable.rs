@@ -204,6 +204,8 @@ impl PortableApp {
     /// changed), shifted by `Pet::take_window_shift` so the cat stays put
     /// on screen, then repaints.
     fn apply_size(&mut self) {
+        #[cfg(target_os = "macos")]
+        self.reconcile_flyout();
         let Some(window) = self.window.clone() else {
             return;
         };
@@ -656,8 +658,19 @@ impl PortableApp {
         }
     }
 
+    /// Retire an unowned surface before cat layout/focus or queued flyout input.
+    fn reconcile_flyout(&mut self) -> bool {
+        super::flyout::dispatch(self.pet.flyout_open(), || {
+            if let Some(f) = self.flyout.as_mut() {
+                f.move_drag = false;
+                f.resize_drag = false;
+                if f.window.is_visible().unwrap_or(false) { f.window.set_visible(false); }
+            }
+        }, || ()).is_some()
+    }
+
     fn close_flyout(&mut self) {
-        self.pet.close_flyout();
+        if self.pet.flyout_open() { self.pet.close_flyout(); }
         if let Some(f) = self.flyout.as_ref() {
             f.window.set_visible(false);
         }
@@ -674,6 +687,7 @@ impl PortableApp {
     }
 
     fn flyout_window_event(&mut self, event: WindowEvent) {
+        if !self.reconcile_flyout() { return; }
         match event {
             WindowEvent::RedrawRequested => self.paint_flyout(),
             WindowEvent::ScaleFactorChanged { scale_factor, mut inner_size_writer } => {
@@ -1072,6 +1086,8 @@ impl ApplicationHandler<HotkeyEvent> for PortableApp {
             }
             _ => {}
         }
+        #[cfg(target_os = "macos")]
+        self.reconcile_flyout();
     }
 
     fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {

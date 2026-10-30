@@ -348,6 +348,7 @@ impl App {
     /// focus, the plain pet must never steal it. Move + resize + repaint go
     /// out as one atomic `UpdateLayeredWindow` (no flicker during drags).
     unsafe fn apply_size(&mut self) {
+        self.reconcile_flyout();
         let fit = self.pet.take_fit_panel();
         let (w, h) = self.pet.canvas_size();
         let (dx, dy) = self.pet.take_window_shift();
@@ -576,6 +577,17 @@ impl App {
         ShowWindow(self.flyout_hwnd, SW_SHOW);
         SetForegroundWindow(self.flyout_hwnd);
         SetFocus(self.flyout_hwnd);
+    }
+
+    /// Retire an unowned surface explicitly; focus-loss may be reentrant and skipped.
+    unsafe fn reconcile_flyout(&mut self) -> bool {
+        super::flyout::dispatch(self.pet.flyout_open(), || {
+            if IsWindowVisible(self.flyout_hwnd) != 0 {
+                self.fly_move = false;
+                self.panel_drag = false;
+                ShowWindow(self.flyout_hwnd, SW_HIDE);
+            }
+        }, || ()).is_some()
     }
 
     /// Hides the flyout window and clears core flyout state. Safe to call
@@ -1816,6 +1828,10 @@ unsafe fn paste_workbench_editor(hwnd: HWND, key: WPARAM) -> bool {
 /// wndproc with the cat window). Only the panel-relevant messages are
 /// handled; everything else defers to `DefWindowProcW`.
 unsafe fn flyout_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRESULT {
+    // Queued input/focus events from a retired surface cannot touch its successor.
+    if !with_app(|a| a.reconcile_flyout()).unwrap_or(false) {
+        return DefWindowProcW(hwnd, msg, wp, lp);
+    }
     match msg {
         WM_LBUTTONDOWN | WM_LBUTTONDBLCLK => {
             with_app(|a| a.flyout_lbutton_down(lp));
@@ -2052,7 +2068,10 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
             0
         }
         WM_MBUTTONUP => {
-            with_app(|a| a.pet.toggle_panel());
+            with_app(|a| {
+                a.pet.toggle_panel();
+                a.reconcile_flyout();
+            });
             0
         }
         WM_MOUSEWHEEL => {
