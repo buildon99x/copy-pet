@@ -23,3 +23,4 @@ rather than rewrite.
 | [0014](0014-rich-clipboard-formats.md) | Rich clipboard formats (HTML/RTF) preserved by default + per-row "paste as text" | Accepted |
 | [0015](0015-clipboard-tags-and-windows-images.md) | Tags and bounded PNG/DIB image history on Windows | Accepted |
 | [0016](0016-local-ai-request-workbench.md) | Explicit local AI request workbench, project trays and confirmed safe copies | Accepted |
+| [0017](0017-cached-illustrated-pet.md) | Cached illustrated ragdoll frames and visible-state redraws | Accepted |

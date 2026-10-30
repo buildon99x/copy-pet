@@ -13,6 +13,7 @@ use crate::render::{self, Accessory, Badge, BubbleData, FishView, Particle, Part
 use crate::sound;
 use crate::state::{level_progress, Persist, ACCESSORIES};
 use std::collections::VecDeque;
+use std::hash::{Hash, Hasher};
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 use tiny_skia::Pixmap;
 
@@ -38,10 +39,10 @@ pub struct ClipPick {
     pub image: Option<ClipImage>,
 }
 
-/// Flight time of one fish, in seconds.
+/// Lifetime of a complete notice/hunt/satisfaction cycle, in seconds.
 const FISH_SECS: f32 = 0.9;
 /// At most this many fish queue up during copy bursts.
-const FISH_QUEUE_MAX: usize = 3;
+const FISH_QUEUE_MAX: usize = 1;
 
 /// Logical window size in physical pixels for a given scale (cat only).
 pub fn window_size(scale: f32) -> (i32, i32) {
@@ -109,7 +110,6 @@ pub struct Pet {
     breath_phase: f32,
     last_event: Instant,
     particles: Vec<Particle>,
-    zzz_next: f32,
     toast: Option<(String, f32)>, // text, expires_at (seconds since start)
     bubble_alpha: f32,
     // copy-event fish
@@ -122,7 +122,7 @@ pub struct Pet {
     accessibility_hinted: bool,       // macOS Accessibility hint shown once
     hotkey_fallback_hinted: bool,     // hotkey-fallback toast shown once
     // bookkeeping
-    frame: u64,
+    last_visual: Option<u64>,
     rng: u32,
     level: u32,
     last_min_bucket: u64,
@@ -179,7 +179,6 @@ impl Pet {
             breath_phase: 0.0,
             last_event: now,
             particles: Vec::new(),
-            zzz_next: 0.0,
             toast: None,
             bubble_alpha: 0.0,
             fish: None,
@@ -189,7 +188,7 @@ impl Pet {
             update_available: None,
             accessibility_hinted: false,
             hotkey_fallback_hinted: false,
-            frame: 0,
+            last_visual: None,
             rng: seed(),
             level,
             last_min_bucket: 0,
@@ -442,6 +441,9 @@ impl Pet {
         }
         if level == 2 {
             self.prev_level = self.st.window_level; // a visible level (not 2)
+            self.fish = None;
+            self.fish_queue.clear();
+            self.happy = 0.0;
         }
         self.st.window_level = level;
         self.dirty = true;
@@ -496,10 +498,12 @@ impl Pet {
     }
 
     fn copy_feedback(&mut self, badge: Badge) {
-        if self.fish_queue.len() >= FISH_QUEUE_MAX {
-            self.fish_queue.pop_front();
+        if self.st.window_level != 2 {
+            if self.fish_queue.len() >= FISH_QUEUE_MAX {
+                self.fish_queue.pop_front();
+            }
+            self.fish_queue.push_back(badge);
         }
-        self.fish_queue.push_back(badge);
         self.st.copies_today += 1;
         self.st.total_copies += 1;
         self.st.total_xp += XP_PER_COPY;
@@ -836,6 +840,11 @@ impl Pet {
             }
             PanelAction::ToggleCapture => {
                 self.st.clip_capture = !self.st.clip_capture;
+                if !self.st.clip_capture {
+                    self.fish = None;
+                    self.fish_queue.clear();
+                    self.happy = 0.0;
+                }
                 self.toggle_bool_toast(self.st.clip_capture, Msg::ToastCaptureOn, Msg::ToastCapturePaused);
             }
             PanelAction::ToggleLang => {
@@ -1111,29 +1120,19 @@ impl Pet {
                 self.fish = Some((badge, 0.0));
             }
         }
+        let mut nom_now = false;
         if let Some((_, ft)) = &mut self.fish {
+            let before = *ft;
             *ft += dt / FISH_SECS;
+            // The seventh illustrated pose opens the mouth. Eat here, then
+            // finish the remaining satisfaction/recovery frames in the same
+            // short cycle, rather than replaying a slow recovery afterwards.
+            nom_now = before < 0.55 && *ft >= 0.55;
             if *ft >= 1.0 {
                 self.fish = None;
-                self.nom();
             }
         }
-
-        // zzz particles while asleep
-        if self.sleep > 0.7 && t > self.zzz_next {
-            self.zzz_next = t + 1.4;
-            let r = rand_f(&mut self.rng);
-            self.particles.push(Particle {
-                x: 150.0 + r * 10.0,
-                y: 92.0,
-                vx: 7.0 + r * 6.0,
-                vy: -15.0,
-                life: 1.0,
-                kind: ParticleKind::Zzz,
-                size: 2.0,
-                spin: 0.0,
-            });
-        }
+        if nom_now { self.nom(); }
 
         // particle physics
         for p in self.particles.iter_mut() {
@@ -1176,24 +1175,82 @@ impl Pet {
             self.dirty = true;
         }
 
-        // redraw hint: skip every other frame only when fully asleep & still
-        self.frame += 1;
-        let resting = self.sleep > 0.9
-            && self.particles.is_empty()
-            && self.fish.is_none()
-            && !self.panel.open;
-        !(resting && self.frame.is_multiple_of(2))
+        let visual = self.visual_stamp(t);
+        let changed = self.last_visual.replace(visual) != Some(visual);
+        changed && (self.st.window_level != 2 || self.flyout)
+    }
+
+    fn blink(&self, t: f32) -> f32 {
+        let elapsed = t - self.blink_start;
+        if (0.0..0.14).contains(&elapsed) {
+            1.0 - ((elapsed / 0.07) - 1.0).abs()
+        } else { 0.0 }
+    }
+
+    fn hunter_frame(&self, t: f32) -> usize {
+        let frame = crate::hunter_motion::frame(
+            self.fish.as_ref().map(|(_, progress)| *progress),
+            self.happy, self.sleep, self.blink(t),
+        );
+        // Input activity is a small attentive glance, never a whole-body loop.
+        if frame == 0 && self.paw_l.max(self.paw_r) > 0.25 { 1 } else { frame }
+    }
+
+    /// Hash only visible state. No rasterization, serialization or clipboard
+    /// scanning is needed on stable ticks; a change invalidates both presenters.
+    fn visual_stamp(&self, t: f32) -> u64 {
+        let mut h = std::collections::hash_map::DefaultHasher::new();
+        (self.hunter_frame(t), self.st.clip_capture, self.st.accessory,
+            self.st.scale_idx, self.st.window_level, self.st.onboarded,
+            &self.st.lang, &self.st.hotkey, self.panel.open, self.flyout).hash(&mut h);
+        ((self.squash * 100.0).round() as u32).hash(&mut h);
+        ((self.bubble_alpha * 20.0).round() as u32).hash(&mut h);
+        if self.bubble_alpha > 0.01 {
+            (self.st.total_xp, self.st.keys_today, self.st.clicks_today,
+                self.st.copies_today, self.st.active_min_today).hash(&mut h);
+        }
+        if let Some((text, until)) = &self.toast {
+            text.hash(&mut h);
+            (((until - t) / 0.4).clamp(0.0, 1.0) * 20.0).round().to_bits().hash(&mut h);
+        }
+        if let Some((badge, progress)) = &self.fish {
+            badge.letter.hash(&mut h);
+            badge.color.hash(&mut h);
+            if *progress <= 0.58 {
+                ((progress * 30.0).round() as u32).hash(&mut h);
+            }
+        }
+        for p in &self.particles {
+            std::mem::discriminant(&p.kind).hash(&mut h);
+            ((p.x * 2.0).round() as i32, (p.y * 2.0).round() as i32,
+                (p.life * 20.0).round() as i32, (p.spin * 8.0).round() as i32).hash(&mut h);
+        }
+        if self.panel.open {
+            let p = &self.panel;
+            (&p.query, &p.source, &p.tag_edit, p.scroll, p.sel, p.clear_armed,
+                p.expanded, p.view, p.ai_adding, self.clips.version()).hash(&mut h);
+            p.tag_select_all.hash(&mut h);
+            (p.w.to_bits(), p.h.to_bits(), p.off.0.to_bits(), p.off.1.to_bits()).hash(&mut h);
+            p.cursor.map(|(x, y)| (x.to_bits(), y.to_bits())).hash(&mut h);
+            self.panel_hint.hash(&mut h);
+            ((t * 1.6).fract() < 0.65).hash(&mut h);
+            if let Some(v) = &p.ai_view {
+                (v.editing, v.follow_tail, &v.title, &v.input, &v.hint,
+                    &v.rows, v.selected, v.scroll).hash(&mut h);
+            }
+        }
+        h.finish()
     }
 
     /// The fish reached the mouth: crunch, sparkles, a happy bump.
     fn nom(&mut self) {
         self.happy = (self.happy + 0.5).min(1.0);
         self.squash = 0.6;
-        self.spawn_sparkles(4, 120.0, 130.0);
+        self.spawn_sparkles(4, 175.0, 196.0);
         let r = rand_f(&mut self.rng);
         self.particles.push(Particle {
-            x: 120.0,
-            y: 118.0,
+            x: 175.0,
+            y: 184.0,
             vx: (r - 0.5) * 18.0,
             vy: -32.0,
             life: 1.0,
@@ -1208,10 +1265,11 @@ impl Pet {
 
     /// Fish position along its arc into the mouth (cat-local coords).
     fn fish_view<'a>(badge: &'a Badge, ft: f32) -> FishView<'a> {
-        // quadratic bezier: top-right, dipping in toward the mouth
-        let (sx, sy) = (236.0f32, 44.0f32);
-        let (cx, cy) = (186.0f32, -6.0f32);
-        let (mx, my) = (122.0f32, 134.0f32);
+        // A short arc from the front paws into the illustrated open mouth;
+        // keeping it below the face avoids covering the blue eyes.
+        let (sx, sy) = (212.0f32, 219.0f32);
+        let (cx, cy) = (210.0f32, 219.0f32);
+        let (mx, my) = (175.0f32, 196.0f32);
         let u = 1.0 - ft;
         let x = u * u * sx + 2.0 * u * ft * cx + ft * ft * mx;
         let y = u * u * sy + 2.0 * u * ft * cy + ft * ft * my;
@@ -1248,12 +1306,7 @@ impl Pet {
     /// Builds the scene and rasterizes it with the chosen background.
     fn draw(&self, pm: &mut Pixmap, card: bool) {
         let t = self.now_t();
-        let bt = t - self.blink_start;
-        let blink = if bt < 0.14 {
-            1.0 - ((bt / 0.07) - 1.0).abs()
-        } else {
-            0.0
-        };
+        let blink = self.blink(t);
         let excite = self.excite();
         let breath = self.breath_phase.sin();
 
@@ -1276,7 +1329,9 @@ impl Pet {
             None
         };
 
-        let fish = self.fish.as_ref().map(|(b, ft)| Self::fish_view(b, *ft));
+        let fish = self.fish.as_ref()
+            .filter(|(_, progress)| *progress <= 0.58)
+            .map(|(badge, progress)| Self::fish_view(badge, (progress / 0.55).min(1.0)));
         // mouth opens as the fish closes in
         let mouth_open = match &self.fish {
             Some((_, ft)) => ((ft - 0.45) / 0.4).clamp(0.0, 1.0),
@@ -1290,6 +1345,8 @@ impl Pet {
         });
 
         let scene = Scene {
+            hunter_frame: self.hunter_frame(t),
+            capture_paused: !self.st.clip_capture,
             paw_l: ease_press(self.paw_l),
             paw_r: ease_press(self.paw_r),
             blink,

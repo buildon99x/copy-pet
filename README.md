@@ -3,11 +3,11 @@
 *[한국어는 아래에 ↓](#-clipcat--클립보드를-먹는-데스크탑-고양이)*
 
 A clipboard manager with a heartbeat. A small cat sits at the bottom of your
-screen and types along with you (à la Bongo Cat) — and **every time you copy
+screen and quietly keeps you company — and **every time you copy
 something, anywhere, it eats a fish badged with the app you copied from** and
 files the clip into its history. Pick a clip to paste it back **with its
 original formatting** (or as plain text). Pin, search, delete — all inside one
-tiny (~1 MB) native binary.
+small native binary.
 
 **Windows · macOS · Linux** — fully transparent click-through native build on
 Windows; a portable build sharing the same core on macOS/Linux.
@@ -15,6 +15,12 @@ Windows; a portable build sharing the same core on macOS/Linux.
 ![ClipCat](assets/screenshot.png)
 
 ## Features
+
+- **Cottonball Hunter** — a fluffy blue-eyed ragdoll that quietly watches your
+  work, then gets unusually serious about a clipboard fish. Its illustrated
+  notice/hunt/satisfaction cycle uses cached frames; stable resting and sleeping
+  poses stop repainting. Capture pause stays visible as a separate pause badge.
+  [Animation behavior and performance](docs/specs/cottonball-hunter.md).
 
 - **AI request workbench** — collect and order clips into request/code/error/constraint
   sections, reuse named templates with variables, switch project trays explicitly,
@@ -70,14 +76,14 @@ Windows; a portable build sharing the same core on macOS/Linux.
 - **English + Korean** — full UI in both, switchable at runtime. All text
   renders in your **system font** (Segoe UI / Malgun Gothic on Windows —
   read from the OS, never bundled).
-- **Bongo-cat core loop** — global input *counts* drive paw taps, XP and
+- **Activity and growth** — global input *counts* drive small attentive reactions, XP and
   levels: 2 XP/key, 1 XP/click & scroll, 5 XP/copy. Level-ups unlock
   accessories (scarf, glasses, beanie, headphones, crown, wizard hat).
 - **Today's stats bubble** — hover the cat: keys, clicks, copies, active time.
-- **Alive** — breathing, blinking, tail, sweat when you type fast, sleep
-  after 75 s idle, hearts when petted.
+- **Alive** — blinking, a short hunting reaction when a clip arrives, sleep
+  after 75 s idle, and an affectionate pose when petted.
 - **Unobtrusive & light** — always-on-top without stealing focus, transparent
-  pixels click through (Windows), single exe, no installer, ~12-16 MB RAM.
+  pixels click through (Windows), single exe, no installer, bounded cached art.
 
 ## Controls
 
@@ -171,7 +177,7 @@ automatically" / `auto_update` in `state.json`). There is no other network code.
 ## Tech notes
 
 - No GUI framework — [tiny-skia](https://github.com/linebender/tiny-skia)
-  vector rendering + direct OS APIs per backend.
+  cached illustrated pet frames, vector UI and direct OS APIs per backend.
 - One platform-agnostic core (`pet`, `clipboard`, `panel`, `render`, `state`,
   `i18n`, `menu`, `update`) + two backends: native Win32 (layered window, tray,
   clipboard listener, caret-anchored flyout) and portable (`winit` +
@@ -186,13 +192,17 @@ automatically" / `auto_update` in `state.json`). There is no other network code.
 
 # 🐱 ClipCat — 클립보드를 먹는 데스크탑 고양이
 
-살아있는 클립보드 매니저. 화면 아래에 앉은 고양이가 봉고캣처럼 타이핑을 따라
-치고 — **어디서든 복사(Ctrl+C)할 때마다 복사한 앱의 뱃지가 붙은 생선을 냠**
+살아있는 클립보드 매니저. 화면 아래의 느긋한 랙돌이 작업을 지켜보다가 —
+**어디서든 복사(Ctrl+C)할 때마다 복사한 앱의 뱃지가 붙은 생선을 냠**
 하고 먹으며 클립을 히스토리에 저장합니다. 클립을 고르면 **원래 서식 그대로**
-(또는 일반 텍스트로) 다시 붙여넣어지고, 고정·검색·삭제까지 — 전부 ~1MB짜리
-네이티브 바이너리 하나로.
+(또는 일반 텍스트로) 다시 붙여넣어지고, 고정·검색·삭제까지 — 전부 하나의
+네이티브 바이너리로.
 
 ## 특징
+
+- **솜뭉치 사냥꾼** — 파란 눈의 랙돌이 클립을 발견하고 사냥한 뒤 만족하는
+  연속 프레임을 보여줍니다. 대기·수면 상태는 불필요하게 다시 그리지 않고,
+  수집 정지는 별도의 Ⅱ 표시로 구분합니다.
 
 - **태그** — 클립의 **... → #** 또는 `Ctrl/Cmd+T`로 태그를 편집하고
   일반 검색어로 내용·앱·태그 일부를 찾거나 `#태그`로 정확히 일치하는 태그를
@@ -238,13 +248,13 @@ automatically" / `auto_update` in `state.json`). There is no other network code.
 - **영어 + 한국어** — 런타임에 전환 가능한 완전한 양국어 UI. 통계 말풍선을
   포함한 모든 텍스트가 **시스템 폰트**(Windows: 맑은 고딕/Segoe UI — OS에서
   읽어 오며 번들하지 않음)로 렌더링됩니다.
-- **봉고캣 코어 루프** — 키 1회 = 2 XP, 클릭/스크롤 = 1 XP, 복사 = 5 XP.
+- **활동과 성장** — 키 1회 = 2 XP, 클릭/스크롤 = 1 XP, 복사 = 5 XP.
   레벨업하면 액세서리가 잠금해제됩니다 (목도리·안경·비니·헤드폰·왕관·마법사 모자).
 - **오늘의 통계** — 마우스를 올리면 키 입력 / 클릭 / 복사 / 활동 시간 표시.
-- **살아있는 애니메이션** — 호흡, 깜박임, 꼬리, 빠른 타이핑 시 땀방울, 75초
-  방치 시 잠들기, 더블클릭 쓰다듬기.
+- **살아있는 애니메이션** — 깜박임, 짧은 생선 사냥 반응, 75초 유휴 후 잠들기,
+  더블클릭 쓰다듬기.
 - **가벼움** — 포커스를 훔치지 않는 항상 위 창, 투명 부분 클릭 통과(Windows),
-  단일 exe, 설치 불필요, 메모리 ~12-16MB.
+  단일 exe, 설치 불필요, 크기가 제한된 캐릭터 이미지 캐시.
 
 ## 조작법
 
@@ -317,7 +327,7 @@ automatically" / `auto_update` in `state.json`). There is no other network code.
 ## 기술 노트
 
 - GUI 프레임워크 없음 — [tiny-skia](https://github.com/linebender/tiny-skia)
-  벡터 렌더링 + 백엔드별 직접 OS API.
+  캐시한 캐릭터 이미지·벡터 UI + 백엔드별 직접 OS API.
 - 하나의 플랫폼 독립 코어 (`pet`, `clipboard`, `panel`, `render`, `state`,
   `i18n`, `menu`, `update`) + 두 백엔드: 네이티브 Win32(레이어드 창, 트레이,
   클립보드 리스너, 커서 플라이아웃)와 portable(`winit` + `softbuffer` +

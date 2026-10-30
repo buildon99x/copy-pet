@@ -30,6 +30,28 @@ fn pet_at_xp(xp: u64) -> Pet {
     p
 }
 
+#[test]
+fn hunter_glasses_surround_the_visible_blue_eyes_in_idle_frame() {
+    let mut p = pet();
+    p.st.onboarded = true;
+    p.st.accessory = 2; // glasses, canonical persisted accessory id
+    let mut plain = Pixmap::new(240, 256).unwrap();
+    p.render(&mut plain);
+    p.st.accessory = 0;
+    let mut without_glasses = Pixmap::new(240, 256).unwrap();
+    p.render(&mut without_glasses);
+    // The top of each ring sits above the corresponding eye in the chosen
+    // illustrated idle pose. Locations were read from the rendered PNG.
+    for (x, y) in [(132, 139), (175, 139)] {
+        let dark_outline = (x-3..=x+3).any(|px| (y-3..=y+3).any(|py| {
+            let c = plain.pixel(px, py).unwrap();
+            c != without_glasses.pixel(px, py).unwrap()
+                && c.alpha() > 240 && c.red() < 90 && c.green() < 90 && c.blue() < 90
+        }));
+        assert!(dark_outline, "glasses must sit around eye at x={x}");
+    }
+}
+
 /// First menu item (recursing into submenus) carrying `action`.
 fn menu_find(entries: &[MenuEntry], action: MenuAction) -> Option<&MenuItem> {
     for e in entries {
@@ -563,6 +585,8 @@ fn held_key_counts_once_through_the_input_gate() {
 #[test]
 fn stats_bubble_renders_with_system_font() {
     let base = Scene {
+        hunter_frame: 0,
+        capture_paused: false,
         paw_l: 0.0,
         paw_r: 0.0,
         blink: 0.0,

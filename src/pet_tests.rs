@@ -11,6 +11,146 @@ fn pet() -> Pet {
 }
 
 #[test]
+fn illustrated_ragdoll_has_blue_eyes_and_floats_without_the_old_desk() {
+    let mut p = pet();
+    p.st.onboarded = true;
+    let mut image = Pixmap::new(240, 256).unwrap();
+    p.render(&mut image);
+    let blue_eyes = (80..185).flat_map(|y| (70..185).map(move |x| (x, y)))
+        .filter(|&(x, y)| {
+            let pixel = image.pixel(x, y).unwrap();
+            pixel.alpha() > 200 && pixel.blue() > pixel.red().saturating_add(45)
+                && pixel.green() > pixel.red().saturating_add(15)
+        }).count();
+    assert!(blue_eyes >= 40, "the selected ragdoll needs readable blue eyes; got {blue_eyes} pixels");
+    assert_eq!(image.pixel(120, 239).unwrap().alpha(), 0, "pet floats without the old desk");
+}
+
+#[test]
+fn hunter_idle_stops_redrawing_but_panel_and_copy_changes_still_render() {
+    let mut p = pet();
+    p.st.onboarded = true;
+    assert!(p.advance(0, 0, 0), "initial state must draw");
+    for _ in 0..10 {
+        p.last_tick -= std::time::Duration::from_millis(33);
+        assert!(!p.advance(0, 0, 0), "a stable illustrated loaf must not repaint");
+    }
+    p.open_panel();
+    assert!(p.advance(0, 0, 0), "opening the history must invalidate the frame");
+    p.panel_char('x');
+    assert!(p.advance(0, 0, 0), "search changes must render immediately");
+    p.dismiss_panel();
+    p.on_copy("new synthetic clip".into(), None, None);
+    assert!(p.advance(0, 0, 0), "a real copy starts its reaction");
+}
+
+#[test]
+fn hunter_pause_cancels_copy_feedback_without_removing_collected_clips() {
+    let mut p = pet();
+    p.on_copy("accepted synthetic clip".into(), None, None);
+    p.advance(0, 0, 0);
+    assert!(p.fish.is_some());
+    p.run_action(PanelAction::ToggleCapture);
+    assert!(p.fish.is_none(), "pause stops a running copy reaction");
+    assert!(p.fish_queue.is_empty());
+    assert_eq!(p.clips.len(), 1);
+    assert_eq!(p.st.total_copies, 1);
+}
+
+#[test]
+fn hunter_burst_collects_every_clip_but_keeps_only_one_pending_reaction() {
+    let mut p = pet();
+    p.on_copy("first".into(), None, None);
+    p.advance(0, 0, 0);
+    for i in 0..20 { p.on_copy(format!("burst {i}"), None, None); }
+    assert_eq!(p.clips.len(), 21);
+    assert_eq!(p.st.total_copies, 21);
+    assert!(p.fish_queue.len() <= 1, "visual work is coalesced independently of captured clips");
+}
+
+#[test]
+fn hunter_fish_reaches_the_illustrated_open_mouth_and_crunch_uses_that_location() {
+    let badge = Badge::from_source(None);
+    let fish = Pet::fish_view(&badge, 1.0);
+    // Hand-checked mouth position in the rendered frame 6, not the old cat.
+    assert!((fish.x - 175.0).abs() < 6.0 && (fish.y - 196.0).abs() < 6.0);
+    let mut p = pet();
+    p.nom();
+    let heart = p.particles.iter().find(|p| matches!(p.kind, ParticleKind::Heart)).unwrap();
+    assert!((heart.x - 175.0).abs() < 6.0 && heart.y > 175.0);
+}
+
+#[test]
+fn hunter_fish_approaches_from_the_paws_without_covering_the_blue_eyes() {
+    let badge = Badge::from_source(None);
+    for progress in [0.0, 0.25, 0.5, 0.75, 1.0] {
+        assert!(Pet::fish_view(&badge, progress).y >= 196.0,
+            "the fish should approach below the face, not cross the eyes");
+    }
+}
+
+#[test]
+fn hunter_hidden_captures_keep_history_without_replaying_visual_backlog() {
+    let mut p = pet();
+    p.on_copy("before hiding".into(), None, None);
+    p.advance(0, 0, 0);
+    p.set_window_level(2);
+    p.on_copy("while hidden".into(), None, None);
+    assert_eq!(p.clips.len(), 2);
+    assert_eq!(p.st.total_copies, 2);
+    assert!(p.fish.is_none() && p.fish_queue.is_empty());
+    assert!(!p.advance(0, 0, 0));
+    assert!(p.show_window());
+    assert!(p.advance(0, 0, 0));
+    assert!(p.fish.is_none());
+}
+
+#[test]
+fn hunter_deep_sleep_has_no_continuous_particles_or_repaints() {
+    let mut p = pet();
+    p.st.onboarded = true;
+    p.last_event -= std::time::Duration::from_secs(90);
+    p.sleep = 1.0;
+    p.advance(0, 0, 0);
+    for _ in 0..100 {
+        p.last_tick -= std::time::Duration::from_millis(33);
+        assert!(!p.advance(0, 0, 0));
+    }
+    assert_eq!(p.hunter_frame(p.now_t()), 15);
+    assert!(p.particles.is_empty());
+}
+
+#[test]
+fn hunter_plays_the_whole_twelve_frame_cycle_in_under_one_second() {
+    let mut p = pet();
+    p.st.onboarded = true;
+    p.on_copy("synthetic short cycle".into(), None, None);
+    let mut visited = std::collections::BTreeSet::new();
+    for _ in 0..28 {
+        p.last_tick -= std::time::Duration::from_millis(33);
+        p.advance(0, 0, 0);
+        visited.insert(p.hunter_frame(p.now_t()));
+    }
+    assert!((0..12).all(|frame| visited.contains(&frame)), "all poses belong to the short cycle: {visited:?}");
+    assert!(p.fish.is_none());
+    assert_eq!(p.hunter_frame(p.now_t()), 0, "finish in the stable resting pose");
+}
+
+#[test]
+fn hunter_tag_selection_invalidates_immediately_without_waiting_for_caret_blink() {
+    let mut p = pet();
+    p.st.onboarded = true;
+    p.clips.add_copy("synthetic tagged clip".into(), None);
+    p.open_panel();
+    p.panel_nav(NavKey::Tags);
+    p.panel.tag_select_all = false;
+    p.advance(0, 0, 0);
+    p.panel_nav(NavKey::SelectAll);
+    assert!(p.panel.tag_select_all);
+    assert!(p.advance(0, 0, 0), "Ctrl+A highlight is visible on the next tick");
+}
+
+#[test]
 fn copy_event_stores_clip_grants_xp_and_queues_fish() {
     let mut p = pet();
     let xp0 = p.st.total_xp;
@@ -254,13 +394,15 @@ fn fish_flies_and_gets_eaten() {
     let mut p = pet();
     p.on_copy("fish food".into(), None, None);
     // simulate ~1.5s of ticks
+    let mut enjoyed = false;
     for _ in 0..50 {
         p.last_tick -= std::time::Duration::from_millis(33);
         p.advance(0, 0, 0);
+        enjoyed |= p.happy > 0.0;
     }
     assert!(p.fish.is_none());
     assert!(p.fish_queue.is_empty());
-    assert!(p.happy > 0.0, "nom should make the cat happy");
+    assert!(enjoyed, "nom should make the cat happy during the short reaction");
 }
 
 #[test]

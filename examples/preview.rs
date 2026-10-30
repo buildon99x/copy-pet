@@ -12,6 +12,8 @@ use tiny_skia::Pixmap;
 
 fn base_scene(lang: Lang) -> Scene<'static> {
     Scene {
+        hunter_frame: 0,
+        capture_paused: false,
         paw_l: 0.0,
         paw_r: 0.6,
         blink: 0.0,
@@ -492,6 +494,33 @@ fn main() {
             save(&pm, &dir, &format!("9-ai-{mode}-{}", lang.code()));
         }
     }
+    // Illustrated ragdoll: every motion frame, all pet sizes, and the persistent
+    // pause marker. These are renderer previews, distinct from live captures.
+    for frame in 0..16 {
+        let mut sc = base_scene(Lang::Ko);
+        sc.hunter_frame = frame;
+        sc.accessory = Accessory::None;
+        let mut pm = Pixmap::new(240, 256).unwrap();
+        render::render_card(&mut pm, &sc, 1.0);
+        save(&pm, &dir, &format!("10-hunter-{frame:02}"));
+    }
+    for (i, scale) in clipcat::pet::SCALES.iter().enumerate() {
+        let mut sc = base_scene(Lang::Ko);
+        sc.accessory = Accessory::None;
+        sc.capture_paused = true;
+        let mut pm = Pixmap::new((240.0 * scale).round() as u32, (256.0 * scale).round() as u32).unwrap();
+        render::render(&mut pm, &sc, *scale);
+        save(&pm, &dir, &format!("10-hunter-scale-{i}"));
+        for frame in [0, 6, 15] {
+            let mut sc = base_scene(Lang::Ko);
+            sc.accessory = Accessory::Glasses;
+            sc.hunter_frame = frame;
+            let mut pm = Pixmap::new((240.0 * scale).round() as u32, (256.0 * scale).round() as u32).unwrap();
+            render::render_card(&mut pm, &sc, *scale);
+            save(&pm, &dir, &format!("10-hunter-glasses-{frame:02}-scale-{i}"));
+        }
+    }
+
     // 7. shipped collection: every unlockable accessory, rendered via from_id
     // (canonical check that the ids line up with state::ACCESSORIES)
     {

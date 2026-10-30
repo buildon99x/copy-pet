@@ -1,7 +1,7 @@
 //! All drawing: the cat, desk, keyboard, paws, accessories, particles,
 //! stats bubble, toasts, the copy-event fish and the clipboard panel.
-//! Pure vector art via tiny-skia on a 240x256 logical cat canvas (the panel
-//! canvas in `crate::panel` is larger), multiplied by a global scale.
+//! Cached illustrated pet frames and vector UI via tiny-skia on a 240x256
+//! logical pet canvas (the panel canvas is larger), with a global pet scale.
 
 use crate::clipboard::ClipStore;
 use crate::i18n::{self, t, Lang, Msg};
@@ -19,12 +19,6 @@ pub const CANVAS_H: f32 = 256.0;
 // palette
 const OUTLINE: (u8, u8, u8, u8) = (84, 72, 58, 255);
 const FUR: (u8, u8, u8, u8) = (250, 247, 242, 255);
-const EAR_PINK: (u8, u8, u8, u8) = (247, 200, 207, 255);
-const BLUSH: (u8, u8, u8, u8) = (245, 168, 176, 255);
-const DESK_TOP: (u8, u8, u8, u8) = (207, 159, 110, 255);
-const DESK_FRONT: (u8, u8, u8, u8) = (179, 133, 79, 255);
-const KEY_BASE: (u8, u8, u8, u8) = (78, 85, 102, 255);
-const KEY_CAP: (u8, u8, u8, u8) = (153, 161, 181, 255);
 const TEXT: (u8, u8, u8, u8) = (84, 72, 58, 255);
 const TEXT_DIM: (u8, u8, u8, u8) = (149, 138, 124, 255);
 const FISH_BLUE: (u8, u8, u8) = (108, 160, 220);
@@ -176,6 +170,9 @@ pub struct FishView<'a> {
 }
 
 pub struct Scene<'a> {
+    /// Cached illustrated ragdoll frame, selected by the event timeline.
+    pub hunter_frame: usize,
+    pub capture_paused: bool,
     pub paw_l: f32,
     pub paw_r: f32,
     pub blink: f32,
@@ -304,10 +301,6 @@ impl<'a> Cv<'a> {
     }
 }
 
-fn lerp(a: f32, b: f32, t: f32) -> f32 {
-    a + (b - a) * t
-}
-
 // ---- main render ----------------------------------------------------------
 
 /// Soft background colour for the portable backend's opaque "card".
@@ -349,110 +342,23 @@ fn draw_scene(pm: &mut Pixmap, sc: &Scene, scale: f32) {
         ts: Transform::from_scale(scale, scale).post_translate(sc.origin.0, sc.origin.1),
     };
 
-    let breath_dy = -sc.breath * 1.6;
-    // sleeping head droop
-    let tilt = -7.0 * sc.sleep;
-    let head_t = Transform::from_rotate_at(tilt, 120.0, 166.0).post_translate(0.0, breath_dy);
-    // click squash: compress vertically around desk line
-    let squash_t = if sc.squash > 0.0 {
-        let s = 1.0 - 0.06 * sc.squash;
-        Transform::from_translate(0.0, 212.0)
-            .pre_scale(1.0, s)
-            .pre_translate(0.0, -212.0)
-    } else {
-        Transform::identity()
-    };
-    let body_t = squash_t.pre_translate(0.0, breath_dy * 0.5);
-    let head_t = head_t.post_concat(squash_t);
-
-    // ground shadow
-    cv.fill(&oval(120.0, 244.0, 102.0, 8.0), (0, 0, 0, 26));
-
-    // tail (behind everything)
-    {
-        let sway = (sc.tail_phase).sin() * 7.0;
-        let sway2 = (sc.tail_phase * 0.7 + 1.2).sin() * 5.0;
-        let mut pb = PathBuilder::new();
-        pb.move_to(64.0, 196.0);
-        pb.quad_to(28.0 + sway2, 188.0, 30.0 + sway, 156.0);
-        let p = pb.finish();
-        cv.stroke_t(&p, OUTLINE, 14.0, body_t);
-        cv.stroke_t(&p, FUR, 9.0, body_t);
+    // A single cached illustrated frame replaces the old procedural cat,
+    // desk and keyboard. Short click compression preserves tactile feedback.
+    let squash = 1.0 - 0.035 * sc.squash;
+    let pose = Transform::from_translate(0.0, 232.0)
+        .pre_scale(1.0, squash).pre_translate(0.0, -232.0);
+    crate::hunter_art::draw(cv.pm, sc.hunter_frame, pose.post_concat(cv.ts));
+    let (nose_x, nose_y) = crate::hunter_art::face_anchor(sc.hunter_frame);
+    let head = Transform::from_scale(0.8, 0.8)
+        .post_translate(nose_x - 96.0, nose_y - 107.6);
+    draw_accessory(&mut cv, sc.accessory, head.post_concat(pose));
+    if sc.capture_paused {
+        let badge = round_rect(204.0, 230.0, 24.0, 20.0, 7.0);
+        cv.fill(&badge, (250, 247, 242, 255));
+        cv.stroke(&badge, OUTLINE, 1.5);
+        cv.fill(&round_rect(211.0, 235.0, 3.0, 10.0, 1.0), OUTLINE);
+        cv.fill(&round_rect(218.0, 235.0, 3.0, 10.0, 1.0), OUTLINE);
     }
-
-    // body
-    let body = oval(120.0, 182.0, 64.0, 44.0);
-    cv.filled(&body, FUR, OUTLINE, 3.0, body_t);
-
-    // ears (under head outline)
-    {
-        let mut le = PathBuilder::new();
-        le.move_to(72.0, 98.0);
-        le.line_to(78.0, 56.0);
-        le.line_to(108.0, 76.0);
-        le.close();
-        let le = le.finish();
-        let mut re = PathBuilder::new();
-        re.move_to(168.0, 98.0);
-        re.line_to(162.0, 56.0);
-        re.line_to(132.0, 76.0);
-        re.close();
-        let re = re.finish();
-        cv.filled(&le, FUR, OUTLINE, 3.0, head_t);
-        cv.filled(&re, FUR, OUTLINE, 3.0, head_t);
-        // inner pink
-        let mut li = PathBuilder::new();
-        li.move_to(80.0, 90.0);
-        li.line_to(83.0, 66.0);
-        li.line_to(100.0, 78.0);
-        li.close();
-        cv.fill_t(&li.finish(), EAR_PINK, head_t);
-        let mut ri = PathBuilder::new();
-        ri.move_to(160.0, 90.0);
-        ri.line_to(157.0, 66.0);
-        ri.line_to(140.0, 78.0);
-        ri.close();
-        cv.fill_t(&ri.finish(), EAR_PINK, head_t);
-    }
-
-    // head
-    let head = oval(120.0, 128.0, 66.0, 52.0);
-    cv.filled(&head, FUR, OUTLINE, 3.0, head_t);
-
-    // face
-    draw_face(&mut cv, sc, head_t);
-
-    // accessory (on head, over ears)
-    draw_accessory(&mut cv, sc.accessory, head_t);
-
-    // desk
-    cv.fill(&round_rect(16.0, 222.0, 208.0, 20.0, 6.0), DESK_FRONT);
-    let top = round_rect(12.0, 212.0, 216.0, 14.0, 7.0);
-    cv.fill(&top, DESK_TOP);
-    cv.stroke(&top, fade(OUTLINE, 0.55), 2.0);
-
-    // keyboard
-    {
-        let base = round_rect(74.0, 200.0, 92.0, 18.0, 5.0);
-        cv.fill(&base, KEY_BASE);
-        cv.stroke(&base, fade(OUTLINE, 0.7), 2.0);
-        for row in 0..2 {
-            let y = 203.5 + row as f32 * 7.0;
-            let n = 7 - row; // 7 keys then 6
-            let total = n as f32 * 12.0;
-            let x0 = 120.0 - total / 2.0 + 1.0;
-            for i in 0..n {
-                cv.fill(
-                    &round_rect(x0 + i as f32 * 12.0, y, 10.0, 5.0, 1.5),
-                    KEY_CAP,
-                );
-            }
-        }
-    }
-
-    // paws
-    draw_paw(&mut cv, 96.0, sc.paw_l, false, breath_dy);
-    draw_paw(&mut cv, 144.0, sc.paw_r, true, breath_dy);
 
     // in-flight fish (over the cat, under particles/toast)
     if let Some(f) = &sc.fish {
@@ -473,10 +379,10 @@ fn draw_scene(pm: &mut Pixmap, sc: &Scene, scale: f32) {
             let w = (sysfont::measure(text, 2.0) + 20.0).min(CANVAS_W - 8.0);
             let x = (CANVAS_W - w) / 2.0;
             let label = sysfont::truncate_to_width(text, 2.0, w - 20.0);
-            let pill = round_rect(x, 80.0, w, 20.0, 9.0);
+            let pill = round_rect(x, 30.0, w, 20.0, 9.0);
             cv.fill(&pill, fade((255, 233, 168, 255), a));
             cv.stroke(&pill, fade(OUTLINE, a), 2.0);
-            cv.ui_text(&label, x + 10.0, 83.0, 2.0, fade(TEXT, a));
+            cv.ui_text(&label, x + 10.0, 33.0, 2.0, fade(TEXT, a));
         }
     }
 
@@ -501,84 +407,6 @@ fn draw_scene(pm: &mut Pixmap, sc: &Scene, scale: f32) {
     }
 }
 
-fn draw_face(cv: &mut Cv, sc: &Scene, t: Transform) {
-    let closed = sc.blink.max(sc.sleep);
-    let happy = sc.happy > 0.35 && sc.sleep < 0.5;
-    let chase = sc.mouth_open > 0.05 && sc.sleep < 0.5; // eyeing the fish
-
-    for ex in [92.0f32, 148.0] {
-        if happy && !chase {
-            // ∩ shaped happy eyes
-            let mut pb = PathBuilder::new();
-            pb.move_to(ex - 7.0, 124.0);
-            pb.quad_to(ex, 115.0, ex + 7.0, 124.0);
-            cv.stroke_t(&pb.finish(), OUTLINE, 3.0, t);
-        } else if closed > 0.8 {
-            // gently closed
-            let mut pb = PathBuilder::new();
-            pb.move_to(ex - 6.5, 121.0);
-            pb.quad_to(ex, 125.0, ex + 6.5, 121.0);
-            cv.stroke_t(&pb.finish(), OUTLINE, 2.6, t);
-        } else {
-            let ry = 5.2 * (1.0 - closed * 0.85);
-            // big sparkly eyes while a fish is incoming
-            let r = if chase { 6.2 } else { 5.2 };
-            cv.fill_t(&oval(ex, 122.0, r, (ry * r / 5.2).max(0.8)), OUTLINE, t);
-            if ry > 2.0 {
-                cv.fill_t(&oval(ex - 1.6, 120.2, 1.7, 1.7 * (ry / 5.2)), (255, 255, 255, 230), t);
-            }
-        }
-    }
-
-    if sc.mouth_open > 0.05 {
-        // open mouth, ready to nom
-        let o = sc.mouth_open.clamp(0.0, 1.0);
-        let mouth = oval(120.0, 138.0, 4.5 + 3.5 * o, 3.0 + 5.5 * o);
-        cv.filled(&mouth, (164, 88, 92, 255), OUTLINE, 2.2, t);
-    } else {
-        // ω mouth
-        let mut pb = PathBuilder::new();
-        pb.move_to(112.0, 136.0);
-        pb.quad_to(116.0, 141.0, 120.0, 136.5);
-        pb.quad_to(124.0, 141.0, 128.0, 136.0);
-        cv.stroke_t(&pb.finish(), OUTLINE, 2.4, t);
-    }
-
-    // blush
-    let blush_a = 0.45 + sc.happy * 0.5;
-    cv.fill_t(&oval(78.0, 134.0, 9.0, 4.5), fade(BLUSH, blush_a), t);
-    cv.fill_t(&oval(162.0, 134.0, 9.0, 4.5), fade(BLUSH, blush_a), t);
-
-    // sweat drop when very excited
-    if sc.excite > 0.65 && sc.sleep < 0.3 {
-        let a = ((sc.excite - 0.65) / 0.35).clamp(0.0, 1.0);
-        let mut pb = PathBuilder::new();
-        pb.move_to(183.0, 94.0);
-        pb.quad_to(190.0, 104.0, 183.0, 108.0);
-        pb.quad_to(176.0, 104.0, 183.0, 94.0);
-        pb.close();
-        cv.fill_t(&pb.finish(), fade((154, 200, 240, 235), a), t);
-    }
-}
-
-fn draw_paw(cv: &mut Cv, cx: f32, press: f32, right: bool, breath_dy: f32) {
-    let y = lerp(184.0, 198.0, press) + breath_dy * 0.3;
-    let rot = if right { 6.0 } else { -6.0 };
-    let t = Transform::from_rotate_at(rot, cx, y);
-    let paw = oval(cx, y, 15.0, 11.0);
-    cv.filled(&paw, FUR, OUTLINE, 3.0, t);
-    // toe separators, more visible when pressed
-    let a = 0.35 + press * 0.45;
-    for dx in [-5.0f32, 5.0] {
-        let mut pb = PathBuilder::new();
-        pb.move_to(cx + dx, y + 3.0);
-        pb.line_to(cx + dx, y + 9.0);
-        cv.stroke_t(&pb.finish(), fade(OUTLINE, a), 2.0, t);
-    }
-}
-
-// ---- fish -------------------------------------------------------------------
-
 fn lighten(c: (u8, u8, u8), f: f32) -> (u8, u8, u8, u8) {
     let l = |v: u8| (v as f32 + (255.0 - v as f32) * f) as u8;
     (l(c.0), l(c.1), l(c.2), 255)
@@ -589,7 +417,6 @@ fn darken(c: (u8, u8, u8), f: f32) -> (u8, u8, u8, u8) {
     (d(c.0), d(c.1), d(c.2), 255)
 }
 
-/// Draws the fish at `f.x/f.y` (cat-local), facing left toward the cat.
 fn draw_fish(cv: &mut Cv, f: &FishView) {
     let s_at = Transform::from_translate(f.x, f.y)
         .pre_scale(f.scale, f.scale)

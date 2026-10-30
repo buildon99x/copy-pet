@@ -17,6 +17,9 @@ versions follow [SemVer](https://semver.org/). Maintenance rules:
 ## [Unreleased]
 
 ### Added
+- **Cottonball Hunter ragdoll** — an illustrated blue-eyed companion with a
+  twelve-stage notice, hunt and satisfaction reaction, plus blinking, petting
+  and sleep poses. Paused collection has a persistent pause badge.
 - **AI request workbench** — assemble multiple clips into ordered request/code/error/constraint
   sections, save named templates with fillable variables, and keep separate project
   trays with unfinished drafts and default tags. Open it from the panel footer,
@@ -32,6 +35,9 @@ versions follow [SemVer](https://semver.org/). Maintenance rules:
   Images support pins, tags, deletion and undo alongside text clips.
 
 ### Fixed
+- Stable pet and panel states no longer repaint continuously. Copy bursts keep
+  a single pending visual reaction while retaining every accepted clip; pausing
+  capture or hiding the pet cancels pending copy animation.
 - AI workbench drafts can now be read from start to finish with the wheel,
   PageUp/PageDown and Home/End; new edits return to the end. A scrollbar and
   visible-row range show your position.

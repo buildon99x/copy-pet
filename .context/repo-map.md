@@ -16,10 +16,13 @@ src/
   clip_image.rs        bounded PNG storage, Windows DIB conversion and thumbnails
   panel.rs             clipboard panel UI state, dynamic Layout geometry
                        (user-movable/resizable card), hit testing, drag zones
-  render.rs            all vector art (cat, fish, panel, accessories, bubble, icon)
+  render.rs            illustrated cat composition, vector fish/panel/accessories/bubble/icon
   sysfont.rs           system-font text for everything drawn (ab_glyph,
                        ADR-0007/0011); hollow tofu box for uncovered glyphs
   hotkey.rs            panel-hotkey spec parsing ("win+shift+v") + display label
+  hunter_art.rs        decode/normalize the embedded illustrated ragdoll atlas once;
+                       bounded cached frames and per-frame accessory anchors
+  hunter_motion.rs     pure notice/hunt/recovery, blink, affection and sleep frame selection
   i18n.rs              every user-visible string, English + Korean
   sound.rs             synthesized SFX; winmm on Windows, no-op elsewhere
   state.rs             Persist (JSON) + XP/level progression + accessory table
@@ -70,6 +73,7 @@ scripts/release.sh     the release path: gates, bump, CHANGELOG rotation, tag,
                        push (scripts/release.cmd = Windows wrapper)
 CHANGELOG.md           user-facing changes only — see policy in its header
 assets/clipcat.ico     the embedded app icon — generated, not hand-edited
+assets/cottonball-hunter.png  selected illustrated ragdoll atlas (ADR-0017)
 assets/screenshot.png  README screenshot (the only committed image asset)
 docs/specs/            product & technical specs
 .claude/skills/release/  project skill that drives scripts/release.sh
