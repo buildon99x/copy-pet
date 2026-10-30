@@ -16,6 +16,8 @@ versions follow [SemVer](https://semver.org/). Maintenance rules:
 
 ## [Unreleased]
 
+## [2.4.0] - 2026-10-30
+
 ### Added
 - **Cottonball Hunter ragdoll** — an illustrated blue-eyed companion with a
   twelve-stage notice, hunt and satisfaction reaction, plus blinking, petting
