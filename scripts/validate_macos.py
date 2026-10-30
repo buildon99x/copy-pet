@@ -27,9 +27,10 @@ def main():
         "total_xp": 12345, "total_copies": 0,
     }))
     tokens = [f"ClipCat macOS CI synthetic capture {os.getpid()} {n}" for n in range(3)]
-    result = {"platform": platform.platform(), "architecture": platform.machine()}
+    binary = Path(sys.argv[1] if len(sys.argv) > 1 else "target/release/clipcat").resolve()
+    result = {"platform": platform.platform(), "architecture": platform.machine(), "binary": str(binary)}
     with (output / "app.log").open("w") as log:
-        app = subprocess.Popen(["target/release/clipcat"], stdout=log, stderr=log)
+        app = subprocess.Popen([str(binary)], stdout=log, stderr=log)
         try:
             time.sleep(3)
             if app.poll() is not None:

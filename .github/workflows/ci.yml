@@ -98,9 +98,35 @@ jobs:
           cargo test --locked --release --example prepare_cat_atlas
           cargo run --locked --release --example preview -- "$RUNNER_TEMP/clipcat-macos-validation/previews"
 
+      - name: Package universal macOS test app
+        if: runner.os == 'macOS'
+        env:
+          MACOSX_DEPLOYMENT_TARGET: "11.0"
+        run: |
+          if [ "$(uname -m)" = "arm64" ]; then
+            cross_target=x86_64-apple-darwin
+          else
+            cross_target=aarch64-apple-darwin
+          fi
+          rustup target add "$cross_target"
+          cargo build --locked --release --target "$cross_target"
+          python3 scripts/package_macos_test.py target/release/clipcat "target/$cross_target/release/clipcat"
+
       - name: Smoke test macOS app and clipboard
         if: runner.os == 'macOS'
-        run: python3 scripts/validate_macos.py
+        run: python3 scripts/validate_macos.py dist/macos-test/ClipCat.app/Contents/MacOS/clipcat
+
+      - name: Upload universal macOS test build
+        if: success() && runner.os == 'macOS'
+        uses: actions/upload-artifact@v4
+        with:
+          name: clipcat-macos-universal-test
+          path: |
+            dist/macos-test/ClipCat-macos-universal-test.zip
+            dist/macos-test/README.txt
+            dist/macos-test/build-info.json
+          if-no-files-found: error
+          retention-days: 30
 
       - name: Upload macOS validation evidence
         if: always() && runner.os == 'macOS'
