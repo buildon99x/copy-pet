@@ -67,6 +67,16 @@ impl CatKind {
             1.06, 1.02, 0.83, 0.91, 1.13, 1.19, 0.96, 1.01, 0.88, 1.15, 1.07, 0.94,
         ][self as usize]
     }
+    /// Dedicated eye contact → breed gesture → contentment → settle timeline.
+    pub fn affection_duration(self) -> f32 {
+        [0.96, 1.02, 0.78, 0.86, 1.08, 1.16, 0.90, 0.98, 0.82, 1.12, 1.04, 0.92][self as usize]
+    }
+    pub fn affection_frame(self, elapsed: f32) -> usize {
+        let progress = elapsed / self.affection_duration();
+        let notice = 0.16 + (self as usize % 3) as f32 * 0.02;
+        if progress < notice { 16 } else if progress < 0.48 { 17 }
+        else if progress < 0.78 { 18 } else { 19 }
+    }
     /// Midpoint of the open-mouth pose, leaving a full tick around capture.
     /// Midpoint of the open-mouth pose, leaving a full tick around capture.
     pub fn catch_progress(self) -> f32 {

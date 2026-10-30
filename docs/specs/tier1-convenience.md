@@ -1,3 +1,6 @@
+> Historical design reference. Current input, growth and controls behavior is
+> defined by[the active product spec](./clipcat-spec.md); global counting/hooks and growth proposals are superseded.
+
 # ClipCat Tier 1 — 편의성 파리티 구현 스펙
 
 Status: spec · Owner: ClipCat · 작성일: 2026-06-13 · 평가축: ① e2e 완결성 ② 간편 사용성 ③ UX 무훼손

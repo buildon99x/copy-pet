@@ -8,7 +8,7 @@
 
 **Tech Stack:** Rust, existing tiny-skia/winit/Win32 backends, native Carbon/Win32/X11 hotkey APIs.
 
-**Spec:** `/workspace/artifacts/clipcat-privacy-companionship-plan/plan.md` (approved by user on 2026-10-30; levels/XP hidden confirmed).
+**Spec:** [approved design](../specs/2026-10-30-private-companionship-design.md) (approved by user on 2026-10-30; levels/XP hidden confirmed).
 
 ## Global Constraints
 

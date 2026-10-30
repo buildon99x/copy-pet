@@ -1,5 +1,8 @@
 # ADR-0017: Cached illustrated Cottonball Hunter frames
 
+> Input, growth, body-click behavior and frame/cache counts are superseded by
+> [ADR-0021](0021-local-affection-and-private-companionship.md).
+
 - Status: Accepted
 - Date: 2026-10-30
 

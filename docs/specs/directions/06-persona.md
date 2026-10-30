@@ -1,3 +1,6 @@
+> Historical proposal; input counts, growth and global-listener ideas are superseded
+> by[the active product spec](../clipcat-spec.md). This is not the current implementation contract.
+
 # 방향 6 — 부캐(페르소나) 시스템 "한 고양이, 여러 컨셉"
 
 > ClipCat 고양이 캐릭터 업그레이드 7개 방향 중 #6.

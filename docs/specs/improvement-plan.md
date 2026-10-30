@@ -1,3 +1,6 @@
+> Historical design reference. Current input, growth and controls behavior is
+> defined by[the active product spec](./clipcat-spec.md); global counting/hooks and growth proposals are superseded.
+
 # ClipCat 개선 계획 — 편의성 앱으로서의 경쟁력 강화
 
 Status: proposal · Owner: ClipCat · 작성일: 2026-06-13 · 평가축: ① 사용 니즈 충분성 ② 실현 가능성

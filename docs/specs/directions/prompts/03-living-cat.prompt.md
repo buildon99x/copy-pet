@@ -1,3 +1,6 @@
+> Historical proposal; input counts, growth and global-listener ideas are superseded
+> by[the active product spec](../../clipcat-spec.md). This is not the current implementation contract.
+
 # 구현 작업 요청 — 방향 3: "살아있는 고양이" 아이들 미세행동 & 매력 ★최우선
 
 ## 역할

@@ -1,3 +1,6 @@
+> Historical proposal; input counts, growth and global-listener ideas are superseded
+> by[the active product spec](../../clipcat-spec.md). This is not the current implementation contract.
+
 # 구현 작업 요청 — 방향 2: 감정·표정 설계 (엉뚱 + 익살 + 볼매) ★최우선
 
 ## 역할

@@ -110,6 +110,9 @@ pub struct Pet {
     // copy-event fish
     fish: Option<(Badge, f32)>, // badge, flight progress 0..1
     fish_queue: VecDeque<Badge>,
+    affection: Option<f32>,
+    affection_pending: bool,
+    cat_press: Option<(f32, f32)>,
     // inputs from the platform
     panel_hint: String,
     update_available: Option<String>, // newer release found (crate::update)
@@ -173,6 +176,9 @@ impl Pet {
             toast: None,
             fish: None,
             fish_queue: VecDeque::new(),
+            affection: None,
+            affection_pending: false,
+            cat_press: None,
             panel_hint: String::new(),
             update_available: None,
             last_visual: None,
@@ -401,6 +407,9 @@ impl Pet {
             return;
         }
         if level == 2 {
+            self.affection = None;
+            self.affection_pending = false;
+            self.cat_press = None;
             self.prev_level = self.st.window_level; // a visible level (not 2)
             self.fish = None;
             self.fish_queue.clear();
@@ -808,6 +817,9 @@ impl Pet {
             PanelAction::ToggleCapture => {
                 self.st.clip_capture = !self.st.clip_capture;
                 if !self.st.clip_capture {
+                    self.affection = None;
+                    self.affection_pending = false;
+                    self.cat_press = None;
                     self.fish = None;
                     self.fish_queue.clear();
                     self.happy = 0.0;
@@ -1074,9 +1086,19 @@ impl Pet {
         // across the transition while still slowing the breath while asleep.
         self.breath_phase += dt * (2.2 - self.sleep * 1.2);
 
+        // Affection starts at the end of an in-flight copy and precedes its queue.
+        if let Some(elapsed) = &mut self.affection {
+            *elapsed += dt;
+            if *elapsed >= self.cat_kind().affection_duration() { self.affection = None; }
+        }
+        if self.fish.is_none() && self.affection.is_none() && self.affection_pending {
+            self.affection_pending = false;
+            self.affection = Some(0.);
+        }
+
         // fish flight
         let mut fish_started = false;
-        if self.fish.is_none() {
+        if self.fish.is_none() && self.affection.is_none() && !self.affection_pending {
             if let Some(badge) = self.fish_queue.pop_front() {
                 self.fish = Some((badge, 0.0));
                 fish_started = true;
@@ -1133,6 +1155,7 @@ impl Pet {
     }
 
     fn hunter_frame(&self, t: f32) -> usize {
+        if let Some(elapsed) = self.affection { return self.cat_kind().affection_frame(elapsed); }
         self.cat_kind().frame(
             self.fish.as_ref().map(|(_, progress)| *progress),
             self.happy, self.sleep, self.blink(t),
@@ -1342,10 +1365,48 @@ impl Pet {
 
     // ---- interactions ------------------------------------------------------
 
-    /// Kept for platform event compatibility; body clicks have no character feedback.
-    pub fn pet(&mut self) {}
+    /// Explicit local silhouette click, never called by global input observation.
+    pub fn pet(&mut self) {
+        if self.st.window_level == 2 { return; }
+        self.sleep = 0.;
+        self.last_event = Instant::now();
+        if self.affection.is_none() && self.fish.is_none() {
+            self.affection = Some(0.);
+        } else {
+            self.affection_pending = true;
+        }
+    }
 
-    pub fn click_bounce(&mut self, _cx: f32, _cy: f32) {}
+    /// Tests the rendered character alpha, excluding panel and transparent space.
+    pub fn cat_hit(&self, cx: f32, cy: f32) -> bool {
+        if self.st.window_level == 2 || self.panel_hit(cx, cy) { return false; }
+        let (x, mut y) = self.cat_point(cx, cy);
+        let squash = 1. - 0.035 * self.squash;
+        y = 232. + (y - 232.) / squash;
+        self.cat_art.hit(self.hunter_frame(self.now_t()), x, y)
+    }
+    pub fn cat_press(&mut self, x: f32, y: f32) -> bool {
+        self.cat_press = self.cat_hit(x,y).then_some((x,y));
+        self.cat_press.is_some()
+    }
+    /// Input is logical window points, independent of cat scale and Retina density.
+    pub fn cat_motion(&mut self, x: f32, y: f32) {
+        if self.cat_press.is_some_and(|(px,py)| (x-px).powi(2)+(y-py).powi(2)>9.) {
+            self.cancel_cat_press();
+        }
+    }
+    pub fn cancel_cat_press(&mut self) { self.cat_press = None; }
+    pub fn cat_release(&mut self, x: f32, y: f32) -> bool {
+        self.cat_motion(x,y);
+        let clicked = self.cat_press.take().is_some() && self.cat_hit(x,y);
+        if clicked { self.pet(); }
+        clicked
+    }
+
+    pub fn click_bounce(&mut self, cx: f32, cy: f32) {
+        let (ox,oy) = self.origin();
+        self.cat_release(ox + cx*self.scale(), oy + cy*self.scale());
+    }
 
     pub fn cat_kind(&self) -> crate::cat::CatKind {
         crate::cat::CatKind::from_id(&self.st.cat_kind)
@@ -1354,6 +1415,9 @@ impl Pet {
     pub fn select_cat(&mut self, kind: crate::cat::CatKind) -> Result<(), String> {
         let art = crate::hunter_art::CatArt::load(kind)?;
         self.cat_art = art;
+        self.affection = None;
+        self.affection_pending = false;
+        self.cat_press = None;
         self.st.cat_kind = kind.id().into();
         self.fish = None;
         self.fish_queue.clear();

@@ -2,7 +2,7 @@
 //! Production owners retain only the active character, and drop it on replacement.
 use crate::cat::CatKind;
 use tiny_skia::{FilterQuality, IntRect, Pixmap, PixmapPaint, Transform};
-pub const FRAME_COUNT: usize = 16;
+pub const FRAME_COUNT: usize = 20;
 pub const FRAME_W: u32 = 240;
 pub const FRAME_H: u32 = 180;
 pub struct CatArt {
@@ -10,6 +10,16 @@ pub struct CatArt {
 }
 impl CatArt {
     pub fn load(kind: CatKind) -> Result<Self, String> {
+        Self::load_subset(kind, usize::MAX)
+    }
+    /// Sequential picker decode retains only the requested compact source frames.
+    pub fn load_thumbnail(kind: CatKind) -> Result<Self, String> {
+        Self::load_subset(kind, 1)
+    }
+    pub fn load_preview(kind: CatKind) -> Result<Self, String> {
+        Self::load_subset(kind, 16)
+    }
+    fn load_subset(kind: CatKind, limit: usize) -> Result<Self, String> {
         let bytes: &[u8] = match kind {
             CatKind::Ragdoll => include_bytes!("../assets/cats/ragdoll.png"),
             CatKind::Birman => include_bytes!("../assets/cats/birman.png"),
@@ -25,10 +35,12 @@ impl CatArt {
             CatKind::Tuxedo => include_bytes!("../assets/cats/tuxedo.png"),
         };
         let atlas = Pixmap::decode_png(bytes).map_err(|error| error.to_string())?;
-        if (atlas.width(), atlas.height()) != (960, 720) {
-            return Err("cat atlas must be 960×720".into());
+        let count = (atlas.height() / FRAME_H * 4) as usize;
+        if atlas.width() != 960 || !atlas.height().is_multiple_of(FRAME_H)
+            || !(20..=24).contains(&count) {
+            return Err("cat atlas must have 20–24 complete 240×180 frames".into());
         }
-        let frames = (0..FRAME_COUNT)
+        let frames = (0..count.min(limit))
             .map(|i| {
                 atlas
                     .clone_rect(
@@ -40,6 +52,12 @@ impl CatArt {
             .collect::<Result<Vec<_>, _>>()?;
         Ok(Self { frames })
     }
+    pub fn hit(&self, frame: usize, x: f32, y: f32) -> bool {
+        let y = y - 56.;
+        x >= 0. && y >= 0. && x < FRAME_W as f32 && y < FRAME_H as f32
+            && self.frames[frame.min(self.frames.len()-1)].pixel(x as u32,y as u32)
+                .is_some_and(|pixel| pixel.alpha() > 32)
+    }
     pub fn cache_bytes(&self) -> usize {
         self.frames.iter().map(|p| p.data().len()).sum()
     }
@@ -47,7 +65,7 @@ impl CatArt {
         target.draw_pixmap(
             0,
             56,
-            self.frames[frame.min(FRAME_COUNT - 1)].as_ref(),
+            self.frames[frame.min(self.frames.len() - 1)].as_ref(),
             &PixmapPaint {
                 quality: FilterQuality::Bilinear,
                 ..Default::default()
@@ -65,7 +83,7 @@ mod selected_tests {
         for kind in crate::cat::CatKind::ALL {
             let art = CatArt::load(kind).unwrap();
             assert!(art.cache_bytes() < 4 * 1024 * 1024);
-            assert_eq!(art.frames.len(), 16);
+            assert_eq!(art.frames.len(), 20);
             for (i, frame) in art.frames.iter().enumerate() {
                 assert_eq!((frame.width(), frame.height()), (240, 180));
                 let occupied: Vec<_> = (0..180)

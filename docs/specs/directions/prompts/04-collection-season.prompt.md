@@ -1,3 +1,6 @@
+> Historical proposal; input counts, growth and global-listener ideas are superseded
+> by[the active product spec](../../clipcat-spec.md). This is not the current implementation contract.
+
 # 구현 작업 요청 — 방향 4: 컬렉션 & 시즌 운영 (덕질·완성욕, 결제 없이)
 
 ## 역할

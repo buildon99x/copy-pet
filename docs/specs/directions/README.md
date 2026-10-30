@@ -1,3 +1,6 @@
+> Historical design reference. Current input, growth and controls behavior is
+> defined by[the active product spec](../clipcat-spec.md); global counting/hooks and growth proposals are superseded.
+
 # 고양이 캐릭터 업그레이드 — 7개 방향 (개별 기획·구현 문서)
 
 ClipCat 고양이 캐릭터를 업그레이드하기 위한 7개 방향을 **방향성별 개별 MD 문서**로

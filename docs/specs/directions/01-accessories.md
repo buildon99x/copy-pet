@@ -1,3 +1,6 @@
+> Historical proposal; input counts, growth and global-listener ideas are superseded
+> by[the active product spec](../clipcat-spec.md). This is not the current implementation contract.
+
 # 방향 1 — 악세사리 확장
 
 > ClipCat 고양이 캐릭터 업그레이드 7개 방향 중 #1. 본캐("생선 본위제 먹보 고양이의

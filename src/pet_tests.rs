@@ -642,13 +642,12 @@ fn switching_preserves_selected_cat_and_clears_old_motion() {
 }
 
 #[test]
-fn global_input_and_body_clicks_leave_sleeping_character_quiet() {
+fn hover_and_unpaired_release_leave_sleeping_character_quiet() {
     let mut p = pet();
     p.st.onboarded = true;
     p.sleep = 1.0;
     p.last_event -= std::time::Duration::from_secs(90);
     p.advance();
-    p.pet();
     p.click_bounce(120.0, 180.0);
     p.set_hover(true);
     p.advance();
@@ -829,4 +828,72 @@ fn legacy_input_and_copy_preserve_settings_without_growth_effects() {
     assert_eq!(serde_json::to_value(&p.st).unwrap(), before, "copy history has no growth state");
     assert!(p.toast.is_none() && p.particles.is_empty(), "no level-up effects on copy");
     assert_eq!(p.st.cat_kind, "british-shorthair");
+}
+
+fn body_point(p: &Pet) -> (f32, f32) {
+    (0..256).flat_map(|y| (0..240).map(move |x| (x as f32, y as f32)))
+        .find(|&(x,y)| p.cat_hit(x,y)).unwrap()
+}
+
+#[test]
+fn local_affection_requires_silhouette_press_release_and_no_logical_drag() {
+    let mut p = pet();
+    let (x,y) = body_point(&p);
+    assert!(!p.cat_press(0., 0.));
+    assert!(!p.cat_release(x,y));
+    assert!(p.cat_press(x,y));
+    assert!(!p.cat_release(0.,0.));
+    p.st.locked = true;
+    assert!(p.cat_press(x,y));
+    p.cat_motion(x+4., y);
+    assert!(!p.cat_release(x,y), "returning after a drag is not a click, even locked");
+    assert!(p.cat_press(x,y));
+    assert!(p.cat_release(x,y));
+    assert!(p.affection.is_some());
+    p.open_panel();
+    let layout = p.panel.layout();
+    assert!(!p.cat_press(layout.card_x + 20., layout.card_y + 20.));
+}
+
+#[test]
+fn affection_is_bounded_yields_at_copy_boundary_and_clears_on_hide() {
+    let mut p = pet();
+    p.sleep = 1.;
+    p.on_copy("synthetic affection concurrency".into(),None,None);
+    p.advance();
+    p.pet();
+    for _ in 0..100 { p.pet(); }
+    assert_eq!(p.clips.len(), 1);
+    assert!(p.affection_pending);
+    assert!(p.affection.is_none(), "running copy reaches a safe end first");
+    assert_eq!(p.sleep, 0.);
+    for _ in 0..14 { p.last_tick -= std::time::Duration::from_millis(100); p.advance(); }
+    assert!(p.affection.is_some());
+    assert!(!p.affection_pending);
+    p.run_action(PanelAction::ToggleCapture);
+    p.pet();
+    assert!(p.affection.is_some(), "pause still permits intentional affection");
+    p.set_window_level(2);
+    assert!(p.affection.is_none());
+    assert!(!p.affection_pending);
+    p.show_window();
+    p.blink_next = f32::MAX;
+    p.advance();
+    assert!(!p.advance(), "settled hidden effects do not repaint");
+}
+
+#[test]
+fn affection_finishes_one_pending_response_and_copy_saves_during_it() {
+    let mut p = pet();
+    p.blink_next = f32::MAX;
+    p.pet();
+    for _ in 0..100 { p.pet(); }
+    p.on_copy("saved during affection".into(), None, None);
+    assert_eq!(p.clips.len(),1);
+    assert!(p.fish.is_none());
+    for _ in 0..30 { p.last_tick -= std::time::Duration::from_millis(100); p.advance(); }
+    assert!(p.affection.is_none() && !p.affection_pending);
+    assert!(p.fish.is_some(), "deferred copy decorates after bounded affection");
+    for _ in 0..40 { p.last_tick -= std::time::Duration::from_millis(100); p.advance(); }
+    assert!(!p.advance(), "completed affection and copy settle without repaint");
 }

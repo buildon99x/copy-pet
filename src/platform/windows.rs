@@ -1933,7 +1933,7 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
             }
             0
         }
-        WM_LBUTTONDOWN => {
+        WM_LBUTTONDOWN | WM_LBUTTONDBLCLK => {
             with_app(|a| {
                 let (cx, cy) = a.client_xy(lp);
                 // header strip / resize grip start a card drag (the grip
@@ -1949,6 +1949,7 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
                     }
                     return;
                 }
+                if !a.pet.cat_press(cx, cy) { return; }
                 a.mouse_down = true;
                 a.drag_moved = false;
                 a.drag_cursor = cursor_pos();
@@ -1961,6 +1962,7 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
             with_app(|a| {
                 let (cx, cy) = a.client_xy(lp);
                 a.pet.set_cursor(cx, cy);
+                a.pet.cat_motion(cx, cy);
                 if !a.hover_tracking {
                     a.hover_tracking = true;
                     a.pet.set_hover(true);
@@ -1981,6 +1983,7 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
                     let dx = pt.x - a.drag_cursor.x;
                     let dy = pt.y - a.drag_cursor.y;
                     if a.drag_moved || dx.abs() > 3 || dy.abs() > 3 {
+                        a.pet.cancel_cat_press();
                         a.drag_moved = true;
                         if a.pet.panel_open() {
                             // cat-body drag with the panel open: slide the cat,
@@ -2023,7 +2026,6 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
                 }
                 if a.mouse_down {
                     a.mouse_down = false;
-                    ReleaseCapture();
                     if a.drag_moved {
                         // a panel-open cat drag lives in the card offset (already
                         // persisted by drag_pet); only a plain window move needs
@@ -2034,30 +2036,18 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
                         }
                     } else {
                         let (cx, cy) = a.client_xy(lp);
-                        let (lx, ly) = a.pet.cat_point(cx, cy);
-                        a.pet.click_bounce(lx, ly);
+                        a.pet.cat_release(cx, cy);
                     }
+                    ReleaseCapture();
                 }
             });
             0
         }
-        WM_LBUTTONDBLCLK => {
+        WM_CAPTURECHANGED => {
             with_app(|a| {
+                a.pet.cancel_cat_press();
                 a.mouse_down = false;
-                let (cx, cy) = a.client_xy(lp);
-                // a fast second header/grip drag arrives as a double-click
-                if a.pet.panel_drag_start(cx, cy) {
-                    a.begin_panel_drag(hwnd);
-                    return;
-                }
-                if a.pet.panel_hit(cx, cy) {
-                    // fast row clicks arrive as double-clicks; treat as click
-                    if let Some(pick) = a.pet.panel_click(cx, cy) {
-                        a.copy_back(pick);
-                    }
-                } else {
-                    a.pet.pet();
-                }
+                if a.panel_drag { a.panel_drag = false; a.pet.panel_drag_end(); }
             });
             0
         }

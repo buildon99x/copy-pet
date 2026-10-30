@@ -9,7 +9,8 @@
 
 ClipCat은 Rust로 만든 가벼운 데스크톱 고양이 겸 클립보드 관리자다.
 복사한 내용을 로컬 히스토리에 저장하고, 복사 이벤트로 고양이 모션을 구동한다.
-입력 횟수는 저장하지 않으며 키·마우스 입력으로 외형·소리·기상을 유발하지 않는다.
+입력 횟수는 저장하지 않으며 전역 키·마우스 입력으로 외형·소리·기상을 유발하지 않는다.
+고양이 실루엣의 로컬 누름/놓기만 쓰다듬기로 처리하고 드래그·패널·투명 영역은 제외한다.
 영어와 한국어를 지원하며, 주 대상은 Windows 네이티브 앱이다.
 macOS와 Linux는 같은 코어를 사용하는 portable 백엔드로 동작한다.
 
@@ -33,7 +34,7 @@ macOS와 Linux는 같은 코어를 사용하는 portable 백엔드로 동작한�
 - 공통 코어는 `src/*.rs`, OS 연동은 `src/platform/`에 둔다. 코어에 OS API를 도입하지 않는다. 기존 날짜·언어 감지와 업데이트의 작은 `cfg` 분기는 유지한다.
 - `src/platform/mod.rs`가 백엔드 하나만 선택한다. Windows 기본은 Win32, macOS·Linux 및 Windows의 `--features portable`은 portable이다.
 - `Pet`이 시뮬레이션·클립보드·패널을 조율하고 렌더링 장면을 만든다. 백엔드는 공개 `Pet` API로 이벤트를 전달하고 창·입력·클립보드를 처리한다.
-- `cat.rs`는 12종의 고정 ID·개별 모션·입 위치를 정의한다. `Pet`이 선택한 한 마리의 `CatArt`를 소유하며 종류별 전역 상세 캐시를 만들지 않는다. 액세서리와 레벨 해금은 사용하지 않는다. 배포 아틀라스 제작·메모리 기준은 ADR-0018을 따른다.
+- `cat.rs`는 12종의 고정 ID·개별 모션·입 위치를 정의한다. `Pet`이 선택한 한 마리의 `CatArt`를 소유하며 종류별 전역 상세 캐시를 만들지 않는다. 액세서리와 레벨 해금은 사용하지 않는다. 배포 아틀라스 제작·메모리 기준은 ADR-0018 및 ADR-0021을 따른다. 상세20프레임은3,456,000바이트이며 최대24프레임을 지원한다.
 - `ClipPick`은 텍스트, 서식, 붙여넣기 의도, 일반 텍스트 여부를 백엔드에 전달한다. Windows·macOS는 HTML/RTF를 보존하고 Linux는 일반 텍스트로 동작한다. Windows 네이티브는 PNG·DIB 이미지도 캡처하고 다시 복사한다. 검색·미리보기·중복 판정은 일반 텍스트를 기준으로 한다.
 - Windows 네이티브와 macOS의 핫키 패널은 별도 커서 기반 플라이아웃 창이다. 가운데 클릭은 고양이 창의 내장 패널을 사용한다. Linux·Windows portable은 내장 패널을 사용한다.
 - 전역 단축키는 Windows `RegisterHotKey`, macOS `mac_hotkey.rs`의 Carbon `RegisterEventHotKey`, Linux X11 `XGrabKey`로 등록한다 (ADR-0020). Wayland에서는 등록 실패를 알리고 가운데 클릭·로컬 C·메뉴를 유지한다. macOS 기본값은 Control+Shift+V이며 입력 모니터링 권한을 요구하지 않는다. macOS 투명 표시는 CALayer, Linux·Windows portable 표시는 불투명 softbuffer 카드다.

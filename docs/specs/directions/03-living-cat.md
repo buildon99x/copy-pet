@@ -1,3 +1,6 @@
+> Historical proposal; input counts, growth and global-listener ideas are superseded
+> by[the active product spec](../clipcat-spec.md). This is not the current implementation contract.
+
 # 방향 3 — "살아있는 고양이": 아이들 미세행동 & 매력 ★우선
 
 > ClipCat 고양이 캐릭터 업그레이드 7개 방향 중 #3. 사용자 지정 최우선 방향.

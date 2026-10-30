@@ -1,5 +1,8 @@
 # ADR-0018: Twelve cats, one detailed animation cache
 
+> Input, growth, body-click behavior and frame/cache counts are superseded by
+> [ADR-0021](0021-local-affection-and-private-companionship.md).
+
 - Status: Accepted
 - Date: 2026-10-30
 - Supersedes the single-cat restriction in ADR-0017.

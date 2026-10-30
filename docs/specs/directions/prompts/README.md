@@ -1,3 +1,6 @@
+> Historical proposal; input counts, growth and global-listener ideas are superseded
+> by[the active product spec](../../clipcat-spec.md). This is not the current implementation contract.
+
 # 구현 작업 요청 프롬프트 (방향별 개별)
 
 7개 방향을 각각 바로 구현에 착수할 수 있도록, 방향별로 분리한 **구현 작업 요청 프롬프트**다.

@@ -1,3 +1,6 @@
+> Historical design reference. Current input, growth and controls behavior is
+> defined by[the active product spec](./clipcat-spec.md); global counting/hooks and growth proposals are superseded.
+
 # Cottonball Hunter / 솜뭉치 사냥꾼
 
 The current implementation extends this original character to twelve companions.

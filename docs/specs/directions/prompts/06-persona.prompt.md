@@ -1,3 +1,6 @@
+> Historical proposal; input counts, growth and global-listener ideas are superseded
+> by[the active product spec](../../clipcat-spec.md). This is not the current implementation contract.
+
 # 구현 작업 요청 — 방향 6: 부캐(페르소나) 시스템 "한 고양이, 여러 컨셉"
 
 ## 역할

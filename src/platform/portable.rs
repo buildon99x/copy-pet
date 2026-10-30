@@ -45,7 +45,6 @@ fn window_density(window: &Window) -> Density {
     { let _ = window; Density::new(1.0) }
 }
 const TICK: Duration = Duration::from_millis(33);
-const DBLCLICK: Duration = Duration::from_millis(350);
 /// Clipboard poll cadence (arboard has no change notifications).
 const CLIP_POLL: Duration = Duration::from_millis(400);
 
@@ -92,7 +91,6 @@ struct PortableApp {
     cat_drag: bool,
     drag_screen: (f64, f64),
     press_pos: PhysicalPosition<f64>,
-    last_click: Option<Instant>,
     /// Live keyboard modifiers (for Ctrl+P / Ctrl+Z / Ctrl+digits in the panel).
     mods: ModifiersState,
     /// The caret-anchored clipboard flyout's own window (macOS only — Win+V
@@ -196,7 +194,6 @@ impl PortableApp {
             cat_drag: false,
             drag_screen: (0.0, 0.0),
             press_pos: PhysicalPosition::new(0.0, 0.0),
-            last_click: None,
             mods: ModifiersState::default(),
             #[cfg(target_os = "macos")]
             flyout: None,
@@ -323,7 +320,7 @@ impl PortableApp {
     /// is consumed by something other than the click/petting gesture.
     fn reset_click_state(&mut self) {
         self.mouse_down = false;
-        self.last_click = None;
+        self.pet.cancel_cat_press();
     }
 
     fn save_position(&mut self) {
@@ -947,15 +944,18 @@ impl ApplicationHandler<HotkeyEvent> for PortableApp {
                     }
                 }
             }
+            WindowEvent::Focused(false) => self.reset_click_state(),
             WindowEvent::CursorEntered { .. } => self.pet.set_hover(true),
             WindowEvent::CursorLeft { .. } => {
                 self.pet.set_hover(false);
+                self.pet.cancel_cat_press();
                 self.pet.clear_cursor();
             }
             WindowEvent::CursorMoved { position, .. } => {
                 self.cursor = position;
                 let (cx, cy) = self.client_xy();
                 self.pet.set_cursor(cx, cy);
+                self.pet.cat_motion(cx, cy);
                 if self.panel_dragging || self.cat_drag {
                     // card drag / cat-body drag (mirror images of each other):
                     // Keep screen deltas raw until crossing into logical core units.
@@ -974,6 +974,7 @@ impl ApplicationHandler<HotkeyEvent> for PortableApp {
                     let (dx, dy) = self.density.logical((position.x - self.press_pos.x,
                         position.y - self.press_pos.y));
                     if dx * dx + dy * dy > 9.0 {
+                        self.pet.cancel_cat_press();
                         self.dragging = true;
                         self.mouse_down = false;
                         if self.pet.panel_open() {
@@ -991,6 +992,7 @@ impl ApplicationHandler<HotkeyEvent> for PortableApp {
             WindowEvent::MouseInput { state, button, .. } => match button {
                 MouseButton::Left => match state {
                     ElementState::Pressed => {
+                        self.pet.cancel_cat_press();
                         let (cx, cy) = self.client_xy();
                         // header strip / resize grip start a card drag (the
                         // grip pokes slightly past the card edge)
@@ -1008,20 +1010,9 @@ impl ApplicationHandler<HotkeyEvent> for PortableApp {
                             self.reset_click_state();
                             return;
                         }
-                        let now = Instant::now();
-                        let is_double = self
-                            .last_click
-                            .map(|t| now.duration_since(t) < DBLCLICK)
-                            .unwrap_or(false);
-                        if is_double {
-                            self.pet.pet();
-                            self.reset_click_state();
-                        } else {
-                            self.last_click = Some(now);
-                            self.mouse_down = true;
-                            self.dragging = false;
-                            self.press_pos = self.cursor;
-                        }
+                        self.mouse_down = self.pet.cat_press(cx, cy);
+                        self.dragging = false;
+                        self.press_pos = self.cursor;
                     }
                     ElementState::Released => {
                         if self.panel_dragging {
@@ -1031,8 +1022,7 @@ impl ApplicationHandler<HotkeyEvent> for PortableApp {
                             self.cat_drag = false;
                         } else if self.mouse_down && !self.dragging {
                             let (cx, cy) = self.client_xy();
-                            let (lx, ly) = self.pet.cat_point(cx, cy);
-                            self.pet.click_bounce(lx, ly);
+                            self.pet.cat_release(cx, cy);
                         }
                         self.mouse_down = false;
                         self.dragging = false;

@@ -1,0 +1,482 @@
+[
+  {
+    "affection_frames": 4,
+    "baseline": 175,
+    "cat": "ragdoll",
+    "cells": [
+      [
+        0,
+        0,
+        362,
+        264
+      ],
+      [
+        362,
+        0,
+        362,
+        264
+      ],
+      [
+        724,
+        0,
+        362,
+        264
+      ],
+      [
+        1086,
+        0,
+        362,
+        264
+      ]
+    ],
+    "original_frames": 16,
+    "roles": [
+      "eye-contact",
+      "gesture",
+      "contentment",
+      "settle"
+    ],
+    "scale": 0.6682027578353882,
+    "source": "affection-01.png"
+  },
+  {
+    "affection_frames": 4,
+    "baseline": 175,
+    "cat": "siamese",
+    "cells": [
+      [
+        0,
+        264,
+        362,
+        286
+      ],
+      [
+        362,
+        264,
+        362,
+        286
+      ],
+      [
+        724,
+        264,
+        362,
+        286
+      ],
+      [
+        1086,
+        264,
+        362,
+        286
+      ]
+    ],
+    "original_frames": 16,
+    "roles": [
+      "eye-contact",
+      "gesture",
+      "contentment",
+      "settle"
+    ],
+    "scale": 0.5481481552124023,
+    "source": "affection-01.png"
+  },
+  {
+    "affection_frames": 4,
+    "baseline": 175,
+    "cat": "bombay",
+    "cells": [
+      [
+        0,
+        550,
+        362,
+        263
+      ],
+      [
+        362,
+        550,
+        362,
+        263
+      ],
+      [
+        724,
+        550,
+        362,
+        263
+      ],
+      [
+        1086,
+        550,
+        362,
+        263
+      ]
+    ],
+    "original_frames": 16,
+    "roles": [
+      "eye-contact",
+      "gesture",
+      "contentment",
+      "settle"
+    ],
+    "scale": 0.561475396156311,
+    "source": "affection-01.png"
+  },
+  {
+    "affection_frames": 4,
+    "baseline": 175,
+    "cat": "british-shorthair",
+    "cells": [
+      [
+        0,
+        813,
+        362,
+        273
+      ],
+      [
+        362,
+        813,
+        362,
+        273
+      ],
+      [
+        724,
+        813,
+        362,
+        273
+      ],
+      [
+        1086,
+        813,
+        362,
+        273
+      ]
+    ],
+    "original_frames": 16,
+    "roles": [
+      "eye-contact",
+      "gesture",
+      "contentment",
+      "settle"
+    ],
+    "scale": 0.567460298538208,
+    "source": "affection-01.png"
+  },
+  {
+    "affection_frames": 4,
+    "baseline": 175,
+    "cat": "birman",
+    "cells": [
+      [
+        0,
+        0,
+        362,
+        285
+      ],
+      [
+        362,
+        0,
+        362,
+        285
+      ],
+      [
+        724,
+        0,
+        362,
+        285
+      ],
+      [
+        1086,
+        0,
+        362,
+        285
+      ]
+    ],
+    "original_frames": 16,
+    "roles": [
+      "eye-contact",
+      "gesture",
+      "contentment",
+      "settle"
+    ],
+    "scale": 0.5517241358757019,
+    "source": "affection-02.png"
+  },
+  {
+    "affection_frames": 4,
+    "baseline": 175,
+    "cat": "ragamuffin",
+    "cells": [
+      [
+        0,
+        285,
+        362,
+        275
+      ],
+      [
+        362,
+        285,
+        362,
+        275
+      ],
+      [
+        724,
+        285,
+        362,
+        275
+      ],
+      [
+        1086,
+        285,
+        362,
+        275
+      ]
+    ],
+    "original_frames": 16,
+    "roles": [
+      "eye-contact",
+      "gesture",
+      "contentment",
+      "settle"
+    ],
+    "scale": 0.5335820913314819,
+    "source": "affection-02.png"
+  },
+  {
+    "affection_frames": 4,
+    "baseline": 175,
+    "cat": "persian",
+    "cells": [
+      [
+        0,
+        560,
+        362,
+        239
+      ],
+      [
+        362,
+        560,
+        362,
+        239
+      ],
+      [
+        724,
+        560,
+        362,
+        239
+      ],
+      [
+        1086,
+        560,
+        362,
+        239
+      ]
+    ],
+    "original_frames": 16,
+    "roles": [
+      "eye-contact",
+      "gesture",
+      "contentment",
+      "settle"
+    ],
+    "scale": 0.610837459564209,
+    "source": "affection-02.png"
+  },
+  {
+    "affection_frames": 4,
+    "baseline": 175,
+    "cat": "turkish-angora",
+    "cells": [
+      [
+        0,
+        799,
+        362,
+        287
+      ],
+      [
+        362,
+        799,
+        362,
+        287
+      ],
+      [
+        724,
+        799,
+        362,
+        287
+      ],
+      [
+        1086,
+        799,
+        362,
+        287
+      ]
+    ],
+    "original_frames": 16,
+    "roles": [
+      "eye-contact",
+      "gesture",
+      "contentment",
+      "settle"
+    ],
+    "scale": 0.5985401272773743,
+    "source": "affection-02.png"
+  },
+  {
+    "affection_frames": 4,
+    "baseline": 175,
+    "cat": "american-curl",
+    "cells": [
+      [
+        0,
+        0,
+        362,
+        274
+      ],
+      [
+        362,
+        0,
+        362,
+        274
+      ],
+      [
+        724,
+        0,
+        362,
+        274
+      ],
+      [
+        1086,
+        0,
+        362,
+        274
+      ]
+    ],
+    "original_frames": 16,
+    "roles": [
+      "eye-contact",
+      "gesture",
+      "contentment",
+      "settle"
+    ],
+    "scale": 0.5953307151794434,
+    "source": "affection-03.png"
+  },
+  {
+    "affection_frames": 4,
+    "baseline": 175,
+    "cat": "munchkin",
+    "cells": [
+      [
+        0,
+        274,
+        362,
+        255
+      ],
+      [
+        362,
+        274,
+        362,
+        255
+      ],
+      [
+        724,
+        274,
+        362,
+        255
+      ],
+      [
+        1086,
+        274,
+        362,
+        255
+      ]
+    ],
+    "original_frames": 16,
+    "roles": [
+      "eye-contact",
+      "gesture",
+      "contentment",
+      "settle"
+    ],
+    "scale": 0.6440678238868713,
+    "source": "affection-03.png"
+  },
+  {
+    "affection_frames": 4,
+    "baseline": 175,
+    "cat": "russian-blue",
+    "cells": [
+      [
+        0,
+        529,
+        362,
+        281
+      ],
+      [
+        362,
+        529,
+        362,
+        281
+      ],
+      [
+        724,
+        529,
+        362,
+        281
+      ],
+      [
+        1086,
+        529,
+        362,
+        281
+      ]
+    ],
+    "original_frames": 16,
+    "roles": [
+      "eye-contact",
+      "gesture",
+      "contentment",
+      "settle"
+    ],
+    "scale": 0.5820895433425903,
+    "source": "affection-03.png"
+  },
+  {
+    "affection_frames": 4,
+    "baseline": 175,
+    "cat": "tuxedo",
+    "cells": [
+      [
+        0,
+        810,
+        362,
+        276
+      ],
+      [
+        362,
+        810,
+        362,
+        276
+      ],
+      [
+        724,
+        810,
+        362,
+        276
+      ],
+      [
+        1086,
+        810,
+        362,
+        276
+      ]
+    ],
+    "original_frames": 16,
+    "roles": [
+      "eye-contact",
+      "gesture",
+      "contentment",
+      "settle"
+    ],
+    "scale": 0.6511628031730652,
+    "source": "affection-03.png"
+  }
+]

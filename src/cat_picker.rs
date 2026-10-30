@@ -31,7 +31,7 @@ impl CatPicker {
             .into_iter()
             .map(|kind| {
                 let mut pm = Pixmap::new(108, 81).unwrap();
-                if let Ok(art) = CatArt::load(kind) {
+                if let Ok(art) = CatArt::load_thumbnail(kind) {
                     art.draw(
                         &mut pm,
                         0,
@@ -56,7 +56,7 @@ impl CatPicker {
         self.selected = kind;
         self.mode = 0;
         self.preview.clear();
-        if let Ok(art) = CatArt::load(kind) {
+        if let Ok(art) = CatArt::load_preview(kind) {
             for frame in 0..16 {
                 let mut pm = Pixmap::new(120, 90).unwrap();
                 art.draw(

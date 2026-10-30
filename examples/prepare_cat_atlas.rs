@@ -6,7 +6,7 @@ use tiny_skia::{FilterQuality, IntRect, Pixmap, PixmapPaint, Transform};
 /// Keep the character and its connected AA/whiskers, discarding neighboring
 /// sprite fragments. Connectivity uses alpha > 0 and eight neighbors: an
 /// opaque-only mask would split fine whiskers and antialiased diagonal edges.
-fn retain_largest_component(tile: &mut Pixmap) {
+pub(crate) fn retain_largest_component(tile: &mut Pixmap) {
     let (width, height) = (tile.width() as usize, tile.height() as usize);
     let mut seen = vec![false; width * height];
     let mut largest = Vec::new();

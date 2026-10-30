@@ -18,7 +18,7 @@ Windows; a portable build sharing the same core on macOS/Linux.
 
 - **Twelve cat companions** — choose a breed with its own silhouette, copy
   reaction, expression and sleeping pose. Every cat is available from the start;
-  changing cats keeps your history, projects, level and statistics. Open the cat
+  changing cats keeps your history and projects. Open the cat
   gallery from the settings menu (`A` on portable), preview, then apply.
   [Characters, quiet behavior and performance](docs/specs/cat-companions.md).
 
@@ -41,9 +41,9 @@ Windows; a portable build sharing the same core on macOS/Linux.
   its original formatting (bold, colors, links) on Windows and macOS.
 - **The fish** 🐟 — each copy sends a fish flying into the cat's mouth, tinted
   and badged with the source app (its real icon on Windows, an initial
-  elsewhere). Copying feeds the cat: +5 XP per clip.
+  elsewhere). Clips save immediately while decorative reactions stay bounded.
 - **Panel** — `Win+Shift+V` on Windows (configurable; auto-falls back to
-  `Ctrl+Shift+V` if taken), `Cmd+Shift+V` on macOS, `Super+Shift+V` on
+  `Ctrl+Shift+V` if taken), `Control+Shift+V` on macOS, `Super+Shift+V` on
   Linux — or middle-click / the tray / `C`. The hotkey pops the list up **at
   your text caret** in the app you're typing in (Win+V parity); middle-click
   shows it by the cat. Type to search (Korean included), pick a clip to paste
@@ -76,13 +76,10 @@ Windows; a portable build sharing the same core on macOS/Linux.
 - **English + Korean** — full UI in both, switchable at runtime. All text
   renders in your **system font** (Segoe UI / Malgun Gothic on Windows —
   read from the OS, never bundled).
-- **Activity and growth** — global input *counts* contribute to statistics and
-  levels: 2 XP/key, 1 XP/click & scroll, 5 XP/copy. Typing and mouse activity do
-  not animate, wake or play sounds. Cat choices are independent of levels.
-- **Today's stats bubble** — enable Show stats (`B` on portable) for keys,
-  clicks, copies and active time.
-- **Alive** — blinking, a short hunting reaction when a clip arrives, sleep
-  after 75 s without a copy. Body clicks and hovering remain quiet.
+- **Local affection** — click and release on the cat's silhouette without dragging
+  for a quiet breed-specific response (0.6–1.2 seconds), even while position-locked
+  or collection is paused. Typing, other apps' mouse activity and hovering stay quiet.
+  The cat sleeps after75 seconds without a copy or intentional affection.
 - **Unobtrusive & light** — always-on-top without stealing focus, transparent
   pixels click through (Windows), single exe, no installer, bounded cached art.
 
@@ -91,7 +88,7 @@ Windows; a portable build sharing the same core on macOS/Linux.
 | Gesture | Effect |
 |---------|--------|
 | Copy anywhere (Ctrl+C) | Cat eats a fish; clip saved to history (formatting kept) |
-| `Win+Shift+V` (`Cmd+Shift+V` on macOS) | Open the panel at your text caret |
+| `Win+Shift+V` (`Control+Shift+V` on macOS) | Open the panel at your text caret |
 | Middle-click | Open the panel by the cat |
 | Pick a clip (click / Enter) | Paste it back (keeps formatting; or auto-paste if enabled) |
 | `Ctrl/Cmd+Enter` (panel open) | Paste the selected clip as plain text |
@@ -104,22 +101,22 @@ Windows; a portable build sharing the same core on macOS/Linux.
 | Drag the panel header / corner grip | Move / resize the panel (cat stays put) |
 | Drag | Move the pet (unless position-locked) |
 | Cat gallery / `A` (portable) | Preview and choose a cat |
-| Show stats / `B` (portable) | Toggle today's stats bubble |
+| Click the cat without dragging | Brief affectionate gesture; wakes the cat |
 | Right-click (Windows tray / macOS) | Settings menu (see below) |
 | Tray icon click (Windows) | Hide/show the cat |
 
 The settings menu (Windows tray, macOS right-click) holds: clipboard panel,
 pause capture, close-after-copy, paste-on-select, panel hotkey (cycles through
-safe presets), show-stats, cat gallery, Size / Sound / Window submenus, lock
-position, language, run at login, automatic updates, reset stats, About,
+safe presets), cat gallery, Size / Sound / Window submenus, lock
+position, language, run at login, automatic updates, About,
 GitHub, quit.
 
 ### Portable build (macOS / Linux) keyboard shortcuts
 
-Global (works everywhere): `Cmd+Shift+V` (macOS) / `Super+Shift+V` (Linux)
+Global (works everywhere): `Control+Shift+V` (macOS) / `Super+Shift+V` (Linux)
 opens the clipboard panel. With the window focused (and the panel closed):
 `C` clipboard panel · `V` list/card view · `O` close-after-copy · `K` panel
-hotkey preset · `S` size · `A` cat gallery · `M` sound · `B` stats bubble ·
+hotkey preset · `S` size · `A` cat gallery · `M` sound ·
 `L` lock · `G` language · `U` update page (when one is found) · `Q`/`Esc` quit.
 (macOS also has the full right-click menu.)
 
@@ -127,14 +124,14 @@ hotkey preset · `S` size · `A` cat gallery · `M` sound · `B` stats bubble ·
 
 | | Windows (native) | macOS / Linux (portable) |
 |---|---|---|
-| Window | fully transparent, click-through | opaque "card" (softbuffer has no per-pixel alpha) |
+| Window | fully transparent, click-through | transparent CALayer (macOS) · opaque softbuffer card (Linux) |
 | Clipboard watch | `WM_CLIPBOARDUPDATE` listener | `arboard` polling (~0.4 s) |
 | Fish badge | real app icon | colored initial |
 | Paste-back format | rich formats kept | kept on macOS · plain text on Linux |
-| Panel hotkey | global `Win+Shift+V`, opens at caret (configurable, `Ctrl+Shift+V` fallback) | global `Cmd/Super+Shift+V`; caret flyout on macOS, embedded panel on Linux |
+| Panel hotkey | global `Win+Shift+V`, opens at caret (configurable, `Ctrl+Shift+V` fallback) | registered `Control+Shift+V` / `Super+Shift+V`; caret flyout on macOS, embedded panel on Linux |
 | Settings UI | tray menu | right-click NSMenu (macOS) · keyboard shortcuts (Linux) |
 | Sound | winmm synth | silent |
-| Global input | `WH_*_LL` hooks | `rdev` (Linux, X11 only) · CoreGraphics event tap (macOS) |
+| Shortcuts | OS `RegisterHotKey` | Carbon registered hotkey (macOS) · X11 `XGrabKey` (Linux); Wayland reports unavailable |
 
 Design history lives in [`.context/kb/adr/`](.context/kb/adr/), the spec in
 [`docs/specs/clipcat-spec.md`](docs/specs/clipcat-spec.md).
@@ -165,11 +162,14 @@ one**: a once-a-day update check to github.com releases (ADR-0009), which sends
 nothing beyond the request and can be turned off ("Check for updates
 automatically" / `auto_update` in `state.json`). There is no other network code.
 
-- Input hooks count keystrokes/clicks only; **which** key is pressed is never
-  read, stored or transmitted (`src/input.rs` atomic counters).
+- No broad keyboard/mouse hooks, event taps, activity statistics, XP or levels.
+  Shortcuts use OS registration; no Input Monitoring permission is requested.
+  Optional automatic paste may need output permission on macOS. On shortcut
+  registration failure a visible explanation preserves middle-click/menu access.
+  The old macOS default migrates once to Control+Shift+V; other custom chords stay.
 - Clipboard history is stored locally in `clips.json`; capture can be paused
   any time (⏸ in the panel / tray menu), clips > 256 KB are ignored, and
-  stats/settings live in `state.json` next to it:
+  settings live in `state.json` next to it:
   Windows `%APPDATA%\ClipCat`, macOS `~/Library/Application Support/ClipCat`,
   Linux `$XDG_CONFIG_HOME/ClipCat`. A pre-2.0 `DeskCat` config dir is
   migrated automatically.
@@ -181,7 +181,7 @@ automatically" / `auto_update` in `state.json`). There is no other network code.
 - One platform-agnostic core (`pet`, `clipboard`, `panel`, `render`, `state`,
   `i18n`, `menu`, `update`) + two backends: native Win32 (layered window, tray,
   clipboard listener, caret-anchored flyout) and portable (`winit` +
-  `softbuffer` + `rdev`/CoreGraphics + `arboard`).
+  `softbuffer` + OS 단축키 등록 + `arboard`; `rdev`는 선택적 붙여넣기 출력 전용).
 - Icon and sounds are generated from code — no bundled assets, single
   binary. All text renders in the OS's own fonts (loaded at runtime via
   `ab_glyph`, ADR-0007/0011).
@@ -201,7 +201,7 @@ automatically" / `auto_update` in `state.json`). There is no other network code.
 ## 특징
 
 - **12종의 고양이 동료** — 종류마다 체형·자세·복사 반응·표정·수면 모습이
-  다릅니다. 처음부터 모두 자유롭게 선택하고 기록·프로젝트·레벨·통계는 함께
+  다릅니다. 처음부터 모두 자유롭게 선택하고 기록·프로젝트는 함께
   유지합니다. 메뉴의 고양이 선택(portable: `A`)에서 미리 본 뒤 함께하기를 누르세요.
   [종류별 특징과 조용한 동작](docs/specs/cat-companions.md).
 
@@ -217,9 +217,9 @@ automatically" / `auto_update` in `state.json`). There is no other network code.
   (히스토리 100개 + 만료되지 않는 고정 클립). Windows·macOS에서는 리치
   텍스트의 서식(굵게·색·링크)이 그대로 보존됩니다.
 - **생선** 🐟 — 복사할 때마다 출처 앱의 아이콘(Windows) 또는 이니셜 뱃지가
-  붙은 생선이 고양이 입으로 날아갑니다. 복사 1회 = +5 XP.
+  붙은 생선이 고양이 입으로 날아갑니다. 클립은 연출 대기와 관계없이 즉시 저장합니다.
 - **패널** — `Win+Shift+V`(Windows 기본, 변경 가능 — 다른 앱이 선점하면
-  `Ctrl+Shift+V`로 자동 대체), macOS `Cmd+Shift+V`, Linux `Super+Shift+V`,
+  `Ctrl+Shift+V`로 자동 대체), macOS `Control+Shift+V`, Linux `Super+Shift+V`,
   또는 휠클릭·트레이 메뉴·`C` 키로 열기. 핫키를 누르면 **입력 중인 텍스트
   커서 위치**에 목록이 뜨고(Win+V와 동일), 휠클릭은 고양이 옆에 띄웁니다.
   타이핑으로 검색(한글 지원), 클릭으로 재붙여넣기, ★ 고정, **...** 행별
@@ -246,15 +246,14 @@ automatically" / `auto_update` in `state.json`). There is no other network code.
   토스트로 알립니다. Windows는 "vX.Y.Z로 업데이트 후 재시작", macOS·Linux는
   `U` 키로 다운로드 페이지를 엽니다. 기본 켜짐이며 끌 수 있고("자동 업데이트
   확인" / `auto_update`), 요청 외에는 아무것도 전송하지 않습니다.
-- **영어 + 한국어** — 런타임에 전환 가능한 완전한 양국어 UI. 통계 말풍선을
-  포함한 모든 텍스트가 **시스템 폰트**(Windows: 맑은 고딕/Segoe UI — OS에서
+- **영어 + 한국어** — 런타임에 전환 가능한 완전한 양국어 UI.
+  모든 텍스트가 **시스템 폰트**(Windows: 맑은 고딕/Segoe UI — OS에서
   읽어 오며 번들하지 않음)로 렌더링됩니다.
-- **활동과 성장** — 키 1회 = 2 XP, 클릭/스크롤 = 1 XP, 복사 = 5 XP.
-  입력은 통계·성장만 갱신하며 고양이 반응·기상·탭 소리를 만들지 않습니다.
-- **오늘의 통계** — 메뉴의 통계 고정(portable: `B`)으로 키 입력 / 클릭 /
-  복사 / 활동 시간을 표시합니다.
-- **살아있는 애니메이션** — 깜박임, 짧은 생선 사냥 반응, 75초 유휴 후 잠들기,
-  몸통 클릭·호버는 외형에 영향을 주지 않습니다.
+- **직접 쓰다듬기** — 고양이 몸을 누른 뒤 드래그 없이 놓으면 품종별로
+  짧게 반응합니다. 위치 잠금·수집 일시정지 중에도 동작하며 패널·투명 영역은
+  제외합니다. 다른 앱 입력·호버는 반응이나 기상을 유발하지 않습니다.
+- **프라이버시** — 입력 통계·XP·레벨·활동 시간과 전역 입력 관찰을 제거했습니다.
+  복사나 직접 쓰다듬기 없이75초가 지나면 잠듭니다.
 - **가벼움** — 포커스를 훔치지 않는 항상 위 창, 투명 부분 클릭 통과(Windows),
   단일 exe, 설치 불필요, 크기가 제한된 캐릭터 이미지 캐시.
 
@@ -263,7 +262,7 @@ automatically" / `auto_update` in `state.json`). There is no other network code.
 | 동작 | 효과 |
 |------|------|
 | 어디서든 복사 (Ctrl+C) | 고양이가 생선을 먹고 클립 저장 (서식 유지) |
-| `Win+Shift+V` (macOS `Cmd+Shift+V`) | 텍스트 커서 위치에 패널 열기 |
+| `Win+Shift+V` (macOS `Control+Shift+V`) | 텍스트 커서 위치에 패널 열기 |
 | 휠클릭 | 고양이 옆에 패널 열기 |
 | 클립 선택 (클릭 / Enter) | 재붙여넣기 (서식 유지, 자동 붙여넣기 켜면 바로 붙여넣기) |
 | `Ctrl/Cmd+Enter` (패널 열림) | 선택한 클립을 일반 텍스트로 붙여넣기 |
@@ -276,21 +275,21 @@ automatically" / `auto_update` in `state.json`). There is no other network code.
 | 패널 헤더 / 모서리 그립 드래그 | 패널만 이동 / 크기 조절 (고양이는 제자리) |
 | 드래그 | 위치 이동 (잠금 시 제외) |
 | 고양이 선택 / `A` (portable) | 고양이별 미리보기와 선택 |
-| 통계 고정 / `B` (portable) | 오늘의 통계 표시 전환 |
+| 고양이 몸을 클릭 (드래그 없이) | 짧은 교감과 기상 |
 | 우클릭 (Windows 트레이 / macOS) | 설정 메뉴 (아래 참조) |
 | 트레이 아이콘 클릭 (Windows) | 고양이 숨기기/보이기 |
 
 설정 메뉴(Windows 트레이, macOS 우클릭)에는 다음이 들어 있습니다: 클립보드
 패널, 수집 일시정지, 복사 후 자동 닫기, 선택 시 붙여넣기, 패널 핫키(안전한
-프리셋 순환), 통계 고정, 고양이 선택, 크기 / 소리 / 창 모드 하위 메뉴, 위치
-잠금, 언어, 자동 실행, 자동 업데이트, 통계 초기화, 정보, GitHub, 종료.
+프리셋 순환), 고양이 선택, 크기 / 소리 / 창 모드 하위 메뉴, 위치
+잠금, 언어, 자동 실행, 자동 업데이트, 정보, GitHub, 종료.
 
 ### portable 빌드 (macOS / Linux) 단축키
 
-전역(어디서나): macOS `Cmd+Shift+V` / Linux `Super+Shift+V`로 패널 열기.
+전역(어디서나): macOS `Control+Shift+V` / Linux `Super+Shift+V`로 패널 열기.
 창에 포커스를 준 뒤 (패널이 닫힌 상태에서):
 `C` 클립보드 패널 · `V` 리스트/카드 보기 · `O` 복사 후 자동 닫기 ·
-`K` 패널 핫키 프리셋 · `S` 크기 · `A` 고양이 선택 · `M` 소리 · `B` 통계 고정 ·
+`K` 패널 핫키 프리셋 · `S` 크기 · `A` 고양이 선택 · `M` 소리 ·
 `L` 위치 잠금 · `G` 언어 · `U` 업데이트 페이지(새 버전이 있을 때) ·
 `Q`/`Esc` 종료. (macOS는 우클릭 메뉴도 제공합니다.)
 
@@ -298,14 +297,14 @@ automatically" / `auto_update` in `state.json`). There is no other network code.
 
 | | Windows (네이티브) | macOS / Linux (portable) |
 |---|---|---|
-| 창 | 완전 투명, 클릭 통과 | 불투명 "카드" (softbuffer는 픽셀별 알파 불가) |
+| 창 | 완전 투명, 클릭 통과 | macOS CALayer 투명 · Linux softbuffer 불투명 카드 |
 | 클립보드 감지 | `WM_CLIPBOARDUPDATE` 리스너 | `arboard` 폴링 (~0.4초) |
 | 생선 뱃지 | 실제 앱 아이콘 | 색상 이니셜 |
 | 재붙여넣기 서식 | 서식 유지 | macOS 유지 · Linux 일반 텍스트 |
-| 패널 핫키 | 전역 `Win+Shift+V`, 커서 위치에 열림 (변경 가능, `Ctrl+Shift+V` 대체) | 전역 `Cmd/Super+Shift+V`; macOS는 커서 플라이아웃, Linux는 내장 패널 |
+| 패널 핫키 | 전역 `Win+Shift+V`, 커서 위치에 열림 (변경 가능, `Ctrl+Shift+V` 대체) | OS 등록 `Control+Shift+V` / `Super+Shift+V`; macOS는 커서 플라이아웃, Linux는 내장 패널 |
 | 설정 UI | 트레이 메뉴 | 우클릭 NSMenu (macOS) · 키보드 단축키 (Linux) |
 | 소리 | winmm 합성 | 무음 |
-| 전역 입력 | `WH_*_LL` 훅 | `rdev` (Linux, X11 전용) · CoreGraphics 이벤트 탭 (macOS) |
+| 단축키 | OS `RegisterHotKey` | macOS Carbon 등록 · Linux X11 `XGrabKey`; Wayland 등록 불가 안내 |
 
 설계 기록은 [`.context/kb/adr/`](.context/kb/adr/)에, 스펙은
 [`docs/specs/clipcat-spec.md`](docs/specs/clipcat-spec.md)에 있습니다.
@@ -317,8 +316,10 @@ automatically" / `auto_update` in `state.json`). There is no other network code.
 확인(ADR-0009)으로, 요청 외에는 아무것도 전송하지 않으며 끌 수 있습니다("자동
 업데이트 확인" / `state.json`의 `auto_update`). 그 외 네트워크 코드는 없습니다.
 
-- 입력 훅은 횟수만 셉니다. 어떤 키인지는 절대 읽지/저장하지/전송하지
-  않습니다 (`src/input.rs`의 원자 카운터).
+- 전역 입력 훅·이벤트 탭·통계 카운터를 사용하지 않습니다. 단축키는 OS 등록으로
+  처리하며 입력 모니터링 권한이 필요하지 않습니다. macOS 자동 붙여넣기 출력은
+  별도 권한이 필요할 수 있습니다. 등록 실패 시 안내와 대체 조작을 제공합니다.
+  이전 macOS 기본값만 한 번 이관하고 사용자 지정 조합은 유지합니다.
 - 클립 히스토리는 로컬 `clips.json`에 저장되며 언제든 수집을 일시정지할 수
   있습니다 (패널 ⏸ / 트레이 메뉴). 256KB 초과 텍스트는 무시됩니다.
   저장 위치: Windows `%APPDATA%\ClipCat`, macOS
@@ -332,7 +333,7 @@ automatically" / `auto_update` in `state.json`). There is no other network code.
 - 하나의 플랫폼 독립 코어 (`pet`, `clipboard`, `panel`, `render`, `state`,
   `i18n`, `menu`, `update`) + 두 백엔드: 네이티브 Win32(레이어드 창, 트레이,
   클립보드 리스너, 커서 플라이아웃)와 portable(`winit` + `softbuffer` +
-  `rdev`/CoreGraphics + `arboard`).
+  OS 단축키 등록 + `arboard`; `rdev`는 선택적 붙여넣기 출력 전용).
 - 아이콘과 소리는 코드로 생성 — 번들 에셋 없는 단일 바이너리. 모든 텍스트는
   OS의 폰트를 런타임에 읽어 렌더링합니다 (`ab_glyph`, ADR-0007/0011).
 - 사용자 대상 변경은 [CHANGELOG.md](CHANGELOG.md)에 기록되며, 릴리스는

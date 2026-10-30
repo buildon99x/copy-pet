@@ -17,6 +17,8 @@ versions follow [SemVer](https://semver.org/). Maintenance rules:
 ## [Unreleased]
 
 ### Added
+- **Local affection** — click the cat without dragging for a brief breed-specific
+  eye-contact, gesture and contented settle, including while locked or paused.
 - **Twelve cat companions** — freely choose Ragdoll, Birman, Siamese, Bombay,
   RagaMuffin, Persian, Turkish Angora, American Curl, Munchkin, British Shorthair,
   Russian Blue or a tuxedo-pattern cat. Each has its own illustrated silhouette,
@@ -24,7 +26,10 @@ versions follow [SemVer](https://semver.org/). Maintenance rules:
   gallery; history, tags and projects stay together.
 
 ### Changed
-- **Quiet input behavior** — typing, clicking, scrolling and hovering no longer
+- macOS now uses Control+Shift+V by default, with a one-time migration from the
+  old default. Shortcuts use OS registration without global input monitoring;
+  registration failures explain alternate panel controls.
+- **Quiet input behavior** — typing, other apps’ clicking, scrolling and hovering no longer
   animate, wake or make the cat play tap sounds. Clipboard collection remains
   expressive; shortcuts and dragging continue to work.
 
