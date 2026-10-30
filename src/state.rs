@@ -1,4 +1,4 @@
-//! Persistent state: lifetime stats, daily stats, settings.
+//! Persistent state: local settings.
 //! Saved as JSON under %APPDATA%\ClipCat\state.json (clip history lives in
 //! clips.json beside it — see [`crate::clipboard`]). A pre-2.0 DeskCat
 //! config dir is migrated on first launch.
@@ -20,7 +20,6 @@ pub struct Persist {
     #[serde(deserialize_with = "deserialize_cat_kind")]
     pub cat_kind: String, // stable character ID; old accessory fields are ignored
     pub sound_mode: u8,   // 0 off, 1 events only
-    pub bubble_pinned: bool,
     pub locked: bool,
     /// Window stacking: 0 = always on top (default), 1 = normal (can go behind
     /// other windows), 2 = hidden (restored from the tray or the panel hotkey).
@@ -54,20 +53,11 @@ pub struct Persist {
     /// Panel list style: 0 = compact list, 1 = roomier rounded-box
     /// "thumbnail" cards that show more of each clip (default).
     pub panel_view: u8,
-    // lifetime
-    pub total_keys: u64,
-    pub total_clicks: u64,
-    pub total_copies: u64,
-    pub total_xp: u64,
-    // daily
-    pub today: String,
-    pub keys_today: u64,
-    pub clicks_today: u64,
-    pub copies_today: u64,
-    pub active_min_today: u32,
+    // Legacy statistics/growth fields are intentionally accepted as unknown
+    // serde fields and omitted on the next normal save.
 }
 
-// A malformed new preference must not invalidate legacy statistics/settings.
+// A malformed new preference must not invalidate legacy settings.
 fn deserialize_cat_kind<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<String, D::Error> {
     let value = serde_json::Value::deserialize(deserializer)?;
     Ok(crate::cat::CatKind::from_id(value.as_str().unwrap_or("ragdoll")).id().into())
@@ -82,7 +72,6 @@ impl Default for Persist {
             scale_idx: 1,
             cat_kind: "ragdoll".into(),
             sound_mode: 1,
-            bubble_pinned: false,
             locked: false,
             window_level: 0,
             lang: String::new(),
@@ -97,15 +86,6 @@ impl Default for Persist {
             onboarded: false,
             paste_on_select: false,
             panel_view: 1,
-            total_keys: 0,
-            total_clicks: 0,
-            total_copies: 0,
-            total_xp: 0,
-            today: String::new(),
-            keys_today: 0,
-            clicks_today: 0,
-            copies_today: 0,
-            active_min_today: 0,
         }
     }
 }
@@ -187,10 +167,6 @@ impl Persist {
             .and_then(|p| std::fs::read_to_string(p).ok())
             .and_then(|s| serde_json::from_str(&s).ok())
             .unwrap_or_default();
-        let today = today_string();
-        if st.today != today {
-            st.reset_daily(today);
-        }
         if Lang::from_code(&st.lang).is_none() {
             st.lang = detect_lang().code().to_string();
         }
@@ -244,28 +220,10 @@ impl Persist {
         self.lang = lang.code().to_string();
     }
 
-    fn reset_daily(&mut self, today: String) {
-        self.today = today;
-        self.keys_today = 0;
-        self.clicks_today = 0;
-        self.copies_today = 0;
-        self.active_min_today = 0;
-    }
-
-    /// Resets daily counters if the local date rolled over.
-    pub fn roll_day(&mut self) -> bool {
-        let today = today_string();
-        if self.today != today {
-            self.reset_daily(today);
-            true
-        } else {
-            false
-        }
-    }
 }
 
 /// Default UI language from the OS (Korean locale -> Korean, else English).
-/// Like `today_string`, this is a tiny per-OS leaf the core may call.
+/// This is a tiny per-OS leaf the core may call.
 #[cfg(windows)]
 pub fn detect_lang() -> Lang {
     use windows_sys::Win32::Globalization::GetUserDefaultUILanguage;
@@ -290,87 +248,23 @@ pub fn detect_lang() -> Lang {
     Lang::En
 }
 
-/// Local date as "YYYY-MM-DD". `std` has no local-time support, so each
-/// platform uses its native call (Win32 `GetLocalTime`, libc `localtime_r`).
-#[cfg(windows)]
-pub fn today_string() -> String {
-    use windows_sys::Win32::System::SystemInformation::GetLocalTime;
-    let mut st = unsafe { std::mem::zeroed::<windows_sys::Win32::Foundation::SYSTEMTIME>() };
-    unsafe { GetLocalTime(&mut st) };
-    format!("{:04}-{:02}-{:02}", st.wYear, st.wMonth, st.wDay)
-}
-
-#[cfg(unix)]
-pub fn today_string() -> String {
-    // SAFETY: localtime_r writes into our stack `tm`; time() takes a null arg.
-    unsafe {
-        let now = libc::time(std::ptr::null_mut());
-        let mut tm: libc::tm = std::mem::zeroed();
-        if libc::localtime_r(&now, &mut tm).is_null() {
-            return "1970-01-01".to_string();
-        }
-        format!(
-            "{:04}-{:02}-{:02}",
-            tm.tm_year + 1900,
-            tm.tm_mon + 1,
-            tm.tm_mday
-        )
-    }
-}
-
-// ---- progression ----------------------------------------------------------
-
-/// XP needed to go from `level` to `level + 1`.
-pub fn xp_to_next(level: u32) -> u64 {
-    200 + 80 * (level as u64) * (level as u64)
-}
-
-/// (current level, xp into level, xp needed for next level)
-pub fn level_progress(total_xp: u64) -> (u32, u64, u64) {
-    let mut level = 1u32;
-    let mut rem = total_xp;
-    loop {
-        let need = xp_to_next(level);
-        if rem < need || level >= 99 {
-            return (level, rem.min(need), need);
-        }
-        rem -= need;
-        level += 1;
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    fn levels_advance_monotonically() {
-        // each unlock threshold should produce exactly its level
-        let mut xp = 0u64;
-        let mut prev = 1;
-        for lv in 1..60u32 {
-            let (got, into, need) = level_progress(xp);
-            assert!(got >= prev, "level must not decrease");
-            assert!(into <= need);
-            prev = got;
-            xp += xp_to_next(lv);
-            let (after, _, _) = level_progress(xp);
-            assert_eq!(after, lv + 1, "crossing a threshold advances one level");
+    fn legacy_statistics_are_discarded_on_normal_serialization() {
+        let legacy = r#"{"total_keys":42,"total_clicks":12,"total_copies":9,"total_xp":279,"today":"2026-01-01","keys_today":3,"clicks_today":2,"copies_today":1,"active_min_today":5,"bubble_pinned":true,"cat_kind":"british-shorthair","locked":true,"clip_capture":false,"hotkey":"ctrl+shift+b","panel_w":420}"#;
+        let state: Persist = serde_json::from_str(legacy).unwrap();
+        let saved = serde_json::to_value(&state).unwrap();
+        for key in ["total_keys", "total_clicks", "total_copies", "total_xp", "today", "keys_today", "clicks_today", "copies_today", "active_min_today", "bubble_pinned"] {
+            assert!(saved.get(key).is_none(), "legacy field {key} must not be saved");
         }
-    }
-
-    #[test]
-    fn level_is_clamped() {
-        let (lv, _, _) = level_progress(u64::MAX);
-        assert!(lv <= 99);
-    }
-
-    #[test]
-    fn today_string_is_well_formed() {
-        let s = today_string();
-        assert_eq!(s.len(), 10, "YYYY-MM-DD");
-        assert_eq!(s.as_bytes()[4], b'-');
-        assert_eq!(s.as_bytes()[7], b'-');
+        assert_eq!(saved["cat_kind"], "british-shorthair");
+        assert_eq!(saved["locked"], true);
+        assert_eq!(saved["clip_capture"], false);
+        assert_eq!(saved["hotkey"], "ctrl+shift+b");
+        assert_eq!(saved["panel_w"], 420.0);
     }
 
     #[test]
@@ -382,9 +276,7 @@ mod tests {
             "today":"2025-01-01","keys_today":1,"clicks_today":2,
             "active_min_today":3}"#;
         let st: Persist = serde_json::from_str(old).unwrap();
-        assert_eq!(st.total_keys, 5000);
         assert!(st.clip_capture, "clip capture defaults on");
-        assert_eq!(st.total_copies, 0);
         assert!(st.lang.is_empty());
         assert_eq!(st.hotkey, crate::hotkey::DEFAULT, "hotkey defaults in");
         assert!(st.auto_update, "update check defaults on");
@@ -399,25 +291,24 @@ mod tests {
     }
 
     #[test]
-    fn legacy_accessory_and_unknown_cat_keep_existing_stats() {
+    fn legacy_accessory_and_unknown_cat_keep_existing_settings() {
         let st: Persist =
             serde_json::from_str(r#"{"accessory":8,"total_xp":12345,"total_keys":42}"#).unwrap();
         assert_eq!(st.cat_kind, "ragdoll");
-        assert_eq!((st.total_xp, st.total_keys), (12345, 42));
         let mut st: Persist =
             serde_json::from_str(r#"{"cat_kind":"future-cat","total_xp":12345,"sound_mode":2}"#)
                 .unwrap();
         st.clamp_settings();
         assert_eq!(st.cat_kind, "ragdoll");
-        assert_eq!(st.total_xp, 12345);
         assert_eq!(st.sound_mode, 1);
     }
 
     #[test]
-    fn malformed_cat_setting_does_not_discard_existing_stats() {
-        let st: Persist=serde_json::from_str(r#"{"cat_kind":42,"total_xp":9001,"total_keys":123}"#).expect("only the invalid character preference falls back");
+    fn malformed_cat_setting_does_not_discard_existing_settings() {
+        let st: Persist=serde_json::from_str(r#"{"cat_kind":42,"total_xp":9001,"total_keys":123,"locked":true,"lang":"ko"}"#).expect("only the invalid character preference falls back");
         assert_eq!(st.cat_kind,"ragdoll");
-        assert_eq!((st.total_xp,st.total_keys),(9001,123));
+        assert!(st.locked);
+        assert_eq!(st.lang, "ko");
     }
 
     #[test]

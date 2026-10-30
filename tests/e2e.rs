@@ -13,7 +13,6 @@ use clipcat::i18n::Lang;
 use clipcat::menu::{MenuAction, MenuEntry, MenuItem, MenuOutcome};
 use clipcat::panel::{self, NavKey};
 use clipcat::pet::Pet;
-use clipcat::render::{self, BubbleData, Scene};
 use clipcat::state::Persist;
 use tiny_skia::Pixmap;
 
@@ -23,19 +22,11 @@ fn pet() -> Pet {
     p
 }
 
-fn pet_at_xp(xp: u64) -> Pet {
-    let st = Persist { total_xp: xp, ..Persist::default() };
-    let mut p = Pet::new(st);
-    p.clips = ClipStore::default();
-    p
-}
-
 #[test]
-fn legacy_accessory_is_ignored_without_changing_the_selected_cat_or_stats() {
+fn legacy_accessory_is_ignored_without_changing_the_selected_cat() {
     let state: Persist=serde_json::from_str(r#"{"accessory":2,"total_xp":7890,"total_keys":42}"#).unwrap();
     let p=Pet::new(state);
     assert_eq!(p.cat_kind(),clipcat::cat::CatKind::Ragdoll);
-    assert_eq!((p.st.total_xp,p.st.total_keys),(7890,42));
     assert!(!serde_json::to_string(&p.st).unwrap().contains("accessory"));
 }
 
@@ -368,12 +359,11 @@ fn context_menu_drives_settings_end_to_end() {
     assert!(menu_find(&p.build_menu("HK", false), MenuAction::SetSound(1)).unwrap().checked);
     assert!(!menu_find(&p.build_menu("HK", false), MenuAction::SetSound(0)).unwrap().checked);
 
-    // lock / stats / auto-update toggles flip the persisted flags
-    let (lock0, bub0, au0) = (p.st.locked, p.st.bubble_pinned, p.st.auto_update);
+    // lock / auto-update toggles flip the persisted flags
+    let (lock0, au0) = (p.st.locked, p.st.auto_update);
     p.apply_menu_action(MenuAction::ToggleLock);
-    p.apply_menu_action(MenuAction::ToggleStats);
     p.apply_menu_action(MenuAction::ToggleAutoUpdate);
-    assert_eq!((p.st.locked, p.st.bubble_pinned, p.st.auto_update), (!lock0, !bub0, !au0));
+    assert_eq!((p.st.locked, p.st.auto_update), (!lock0, !au0));
 
     // language submenu switches the language
     let lang0 = p.lang();
@@ -386,10 +376,7 @@ fn context_menu_drives_settings_end_to_end() {
     p.apply_menu_action(MenuAction::TogglePanel);
     assert!(p.panel_open());
 
-    // reset defers to a confirmation; about/quit are backend outcomes
-    p.st.total_keys = 42;
-    assert_eq!(p.apply_menu_action(MenuAction::ResetStats), MenuOutcome::ConfirmReset);
-    assert_eq!(p.st.total_keys, 42);
+    // about/quit are backend outcomes
     assert_eq!(p.apply_menu_action(MenuAction::About), MenuOutcome::ShowAbout);
     assert_eq!(p.apply_menu_action(MenuAction::Quit), MenuOutcome::Quit);
 }
@@ -566,67 +553,10 @@ fn held_key_counts_once_through_the_input_gate() {
     input::key_up(0x42);
 }
 
-/// The stats bubble renders through the system-font path (the built-in
-/// pixel font no longer exists): labels and values rasterize real pixels
-/// in the bubble area.
-#[test]
-fn stats_bubble_renders_with_system_font() {
-    let art=clipcat::hunter_art::CatArt::load(clipcat::cat::CatKind::Ragdoll).unwrap();
-    let base = Scene {
-        cat_art: &art,
-        hunter_frame: 0,
-        capture_paused: false,
-        paw_l: 0.0,
-        paw_r: 0.0,
-        blink: 0.0,
-        happy: 0.0,
-        sleep: 0.0,
-        excite: 0.0,
-        squash: 0.0,
-        breath: 0.0,
-        tail_phase: 0.0,
-        mouth_open: 0.0,
-        particles: &[],
-        fish: None,
-        bubble: None,
-        bubble_alpha: 0.0,
-        toast: None,
-        hotkey_hint: None,
-        lang: Lang::Ko,
-        origin: (0.0, 0.0),
-    };
-    let mut plain = Pixmap::new(240, 256).unwrap();
-    render::render_card(&mut plain, &base, 1.0);
-
-    let with_bubble = Scene {
-        bubble: Some(BubbleData {
-            level: 7,
-            pct: 0.5,
-            keys: 12345,
-            clicks: 987,
-            copies: 42,
-            minutes: 95,
-        }),
-        bubble_alpha: 1.0,
-        ..base
-    };
-    let mut bubbled = Pixmap::new(240, 256).unwrap();
-    render::render_card(&mut bubbled, &with_bubble, 1.0);
-
-    let diff = plain
-        .data()
-        .iter()
-        .zip(bubbled.data().iter())
-        .filter(|(a, b)| a != b)
-        .count();
-    assert!(diff > 4000, "bubble box + text must rasterize ({diff} bytes differ)");
-}
-
 /// Every gallery card is free, previews do not apply, and Apply persists stable IDs.
 #[test]
-fn context_menu_gallery_applies_all_twelve_cats_without_changing_statistics() {
-    let mut p=pet_at_xp(12345);
-    p.st.total_keys=42;
+fn context_menu_gallery_applies_all_twelve_cats() {
+    let mut p=pet();
     for (i,kind) in clipcat::cat::CatKind::ALL.into_iter().enumerate() {
         let previous=p.cat_kind();
         assert!(menu_find(&p.build_menu("HK",false),MenuAction::OpenCatPicker).unwrap().enabled);
@@ -637,7 +567,6 @@ fn context_menu_gallery_applies_all_twelve_cats_without_changing_statistics() {
         for key in ['1','2','3'] { p.panel_char(key); }
         p.panel_click(l.card_x+380.0,l.card_y+540.0);
         assert_eq!(p.cat_kind(),kind);
-        assert_eq!((p.st.total_xp,p.st.total_keys),(12345,42));
         let restored: Persist=serde_json::from_str(&serde_json::to_string(&p.st).unwrap()).unwrap();
         assert_eq!(Pet::new(restored).cat_kind(),kind);
     }
@@ -695,7 +624,6 @@ fn ctrl_enter_pastes_selected_clip_as_text() {
     assert!(pick.formats.is_none());
 }
 
-
 #[test]
 fn edit_tags_by_mouse_and_keyboard_then_filter() {
     let mut p = pet();
@@ -742,8 +670,6 @@ fn image_pick_preserves_pixels_and_flyout_paste_intent() {
         pm.fill(tiny_skia::Color::from_rgba8(30,60,90,255));
         let image = ClipImage::from_pixmap(&pm).unwrap();
         p.on_copy_image(image.clone(), Some("Paint".into()), None);
-        assert_eq!(p.st.total_copies, 1);
-        assert_eq!(p.st.total_xp, clipcat::pet::XP_PER_COPY);
         if flyout { p.open_flyout(); } else { p.toggle_panel(); }
         assert!(p.panel_nav(NavKey::PasteText).is_none(), "images never paste an empty text label");
         assert!(p.panel_open());
@@ -760,13 +686,12 @@ fn image_pick_preserves_pixels_and_flyout_paste_intent() {
 }
 
 #[test]
-fn paused_capture_does_not_store_images_or_award_xp() {
+fn paused_capture_does_not_store_images() {
     let mut p = pet();
     p.st.clip_capture = false;
     let image = clipcat::clip_image::ClipImage::from_pixmap(&Pixmap::new(1,1).unwrap()).unwrap();
     p.on_copy_image(image, None, None);
     assert!(p.clips.is_empty());
-    assert_eq!(p.st.total_copies, 0);
 }
 
 /// Saving while a tag filter is active must refresh cached rows immediately,

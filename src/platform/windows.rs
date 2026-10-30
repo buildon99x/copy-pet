@@ -64,10 +64,8 @@ const TICK_MS: u32 = 33;
 const HOTKEY_ID: i32 = 1;
 
 // menu command ids
-const CMD_BUBBLE: usize = 10;
 const CMD_LOCK: usize = 11;
 const CMD_AUTOSTART: usize = 12;
-const CMD_RESET: usize = 13;
 const CMD_ABOUT: usize = 14;
 const CMD_EXIT: usize = 15;
 const CMD_PANEL: usize = 16;
@@ -308,9 +306,6 @@ impl App {
             _ => {}
         }
 
-        if self.pet.take_level_changed() {
-            self.update_tray_tip();
-        }
         if self.pet.take_size_changed() {
             unsafe { self.apply_size() };
         }
@@ -1443,7 +1438,6 @@ unsafe fn migrate_autostart() {
 // ---- context menu -----------------------------------------------------------------
 
 struct MenuSnapshot {
-    bubble: bool,
     locked: bool,
     scale_idx: usize,
     sound: u8,
@@ -1517,13 +1511,6 @@ unsafe fn show_menu(hwnd: HWND, ms: &MenuSnapshot) -> usize {
         wz(&i18n::menu_hotkey(lang, &ms.hotkey_label)).as_ptr(),
     );
     AppendMenuW(menu, MF_SEPARATOR, 0, null());
-
-    AppendMenuW(
-        menu,
-        MF_STRING | chk(ms.bubble),
-        CMD_BUBBLE,
-        wz(t(lang, Msg::MenuShowStats)).as_ptr(),
-    );
 
     // size submenu
     radio_submenu(
@@ -1602,12 +1589,6 @@ unsafe fn show_menu(hwnd: HWND, ms: &MenuSnapshot) -> usize {
     AppendMenuW(
         menu,
         MF_STRING,
-        CMD_RESET,
-        wz(t(lang, Msg::MenuReset)).as_ptr(),
-    );
-    AppendMenuW(
-        menu,
-        MF_STRING,
         CMD_ABOUT,
         wz(t(lang, Msg::MenuAbout)).as_ptr(),
     );
@@ -1643,7 +1624,6 @@ unsafe fn show_menu(hwnd: HWND, ms: &MenuSnapshot) -> usize {
 
 fn menu_snapshot() -> Option<MenuSnapshot> {
     with_app(|a| MenuSnapshot {
-        bubble: a.pet.st.bubble_pinned,
         locked: a.pet.st.locked,
         scale_idx: a.pet.st.scale_idx,
         sound: a.pet.st.sound_mode,
@@ -1668,15 +1648,11 @@ unsafe fn open_menu(hwnd: HWND) {
                 DestroyWindow(hwnd);
             }
             CMD_ABOUT => {
-                let (lv, keys, clips) =
-                    with_app(|a| (a.pet.level(), a.pet.st.total_keys, a.pet.clips.len()))
-                        .unwrap_or((1, 0, 0));
+                let clips = with_app(|a| a.pet.clips.len()).unwrap_or(0);
                 let text = i18n::about_text(
                     ms.lang,
                     env!("CARGO_PKG_VERSION"),
                     &ms.hotkey_label,
-                    lv,
-                    keys,
                     clips,
                 );
                 MessageBoxW(
@@ -1687,20 +1663,6 @@ unsafe fn open_menu(hwnd: HWND) {
                 );
             }
             CMD_GITHUB => crate::update::open_github(),
-            CMD_RESET => {
-                let answer = MessageBoxW(
-                    hwnd,
-                    wz(t(ms.lang, Msg::ResetConfirm)).as_ptr(),
-                    wz(t(ms.lang, Msg::ResetTitle)).as_ptr(),
-                    MB_YESNO | MB_ICONWARNING,
-                );
-                if answer == IDYES {
-                    with_app(|a| {
-                        a.pet.reset_stats();
-                        a.update_tray_tip();
-                    });
-                }
-            }
             CMD_AUTOSTART => {
                 set_autostart(!ms.autostart);
             }
@@ -1755,12 +1717,6 @@ unsafe fn open_menu(hwnd: HWND) {
                     if let HotkeyReg::Fallback { wanted, used } = &reg {
                         a.pet.notify_hotkey_fallback(wanted, used);
                     }
-                });
-            }
-            CMD_BUBBLE => {
-                with_app(|a| {
-                    a.pet.st.bubble_pinned = !a.pet.st.bubble_pinned;
-                    a.pet.dirty = true;
                 });
             }
             CMD_LOCK => {

@@ -48,23 +48,6 @@ fn tap(freq: f32) -> Vec<u8> {
     wav(&s)
 }
 
-/// Three ascending notes for level-up.
-fn chime() -> Vec<u8> {
-    let notes = [523.25f32, 659.25, 783.99]; // C5 E5 G5
-    let per = (RATE as f32 * 0.11) as usize;
-    let mut s = Vec::with_capacity(per * notes.len());
-    for (ni, f) in notes.iter().enumerate() {
-        for i in 0..per {
-            let t = i as f32 / RATE as f32;
-            let env = (-t * 14.0).exp() * (1.0 - (i as f32 / per as f32).powi(4));
-            let v = (t * f * std::f32::consts::TAU).sin();
-            let tail = if ni == notes.len() - 1 { 1.4 } else { 1.0 };
-            s.push((v * env * 0.30 * tail * i16::MAX as f32) as i16);
-        }
-    }
-    wav(&s)
-}
-
 /// Quick upward "boop" for petting.
 fn pop() -> Vec<u8> {
     let n = (RATE as f32 * 0.09) as usize;
@@ -100,7 +83,6 @@ fn nom() -> Vec<u8> {
 
 static TAP_L: OnceLock<Vec<u8>> = OnceLock::new();
 static TAP_R: OnceLock<Vec<u8>> = OnceLock::new();
-static CHIME: OnceLock<Vec<u8>> = OnceLock::new();
 static POP: OnceLock<Vec<u8>> = OnceLock::new();
 static NOM: OnceLock<Vec<u8>> = OnceLock::new();
 
@@ -117,7 +99,6 @@ pub fn set_player(f: fn(&'static [u8])) {
 pub fn init() {
     TAP_L.get_or_init(|| tap(880.0));
     TAP_R.get_or_init(|| tap(660.0));
-    CHIME.get_or_init(chime);
     POP.get_or_init(pop);
     NOM.get_or_init(nom);
 }
@@ -131,12 +112,6 @@ fn play(data: &'static [u8]) {
 pub fn play_tap(left: bool) {
     let s: Option<&'static Vec<u8>> = if left { TAP_L.get() } else { TAP_R.get() };
     if let Some(s) = s {
-        play(s);
-    }
-}
-
-pub fn play_chime() {
-    if let Some(s) = CHIME.get() {
         play(s);
     }
 }

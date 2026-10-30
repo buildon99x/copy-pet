@@ -1,5 +1,5 @@
 //! Drawing the selected illustrated cat, particles,
-//! stats bubble, toasts, the copy-event fish and the clipboard panel.
+//! toasts, the copy-event fish and the clipboard panel.
 //! Cached illustrated pet frames and vector UI via tiny-skia on a 240x256
 //! logical pet canvas (the panel canvas is larger), with a global pet scale.
 
@@ -27,11 +27,9 @@ const ROW_SEL: (u8, u8, u8, u8) = (208, 228, 248, 200);
 const ROW_HOVER: (u8, u8, u8, u8) = (226, 238, 250, 150);
 const PIN_GOLD: (u8, u8, u8, u8) = (242, 201, 76, 255);
 
-
 #[derive(Clone, Copy)]
 pub enum ParticleKind {
     Heart,
-    Star,
     Zzz,
     Sparkle,
 }
@@ -46,15 +44,6 @@ pub struct Particle {
     pub kind: ParticleKind,
     pub size: f32,
     pub spin: f32,
-}
-
-pub struct BubbleData {
-    pub level: u32,
-    pub pct: f32,
-    pub keys: u64,
-    pub clicks: u64,
-    pub copies: u64,
-    pub minutes: u32,
 }
 
 // ---- copy-event fish ---------------------------------------------------------
@@ -157,8 +146,6 @@ pub struct Scene<'a> {
     pub mouth_open: f32,
     pub particles: &'a [Particle],
     pub fish: Option<FishView<'a>>,
-    pub bubble: Option<BubbleData>,
-    pub bubble_alpha: f32,
     pub toast: Option<(&'a str, f32)>,
     /// First-run guidance banner (the panel hotkey) shown above the cat until
     /// the user opens the panel for the first time; `None` afterwards.
@@ -360,13 +347,6 @@ fn draw_scene(pm: &mut Pixmap, sc: &Scene, scale: f32, density: f32) {
         }
     }
 
-    // stats bubble
-    if sc.bubble_alpha > 0.01 {
-        if let Some(b) = &sc.bubble {
-            draw_bubble(&mut cv, b, sc.bubble_alpha, sc.lang);
-        }
-    }
-
     // first-run hotkey hint: a pill in the clear space above the cat's ears.
     // Only shown while the panel is closed, so `cv` here is scale-only (origin
     // is (0,0)) and these are window coordinates.
@@ -457,7 +437,6 @@ fn draw_fish(cv: &mut Cv, f: &FishView) {
     }
 }
 
-
 fn star_path(cx: f32, cy: f32, r: f32, rot: f32) -> Option<Path> {
     let mut pb = PathBuilder::new();
     for i in 0..10 {
@@ -474,7 +453,6 @@ fn star_path(cx: f32, cy: f32, r: f32, rot: f32) -> Option<Path> {
     pb.finish()
 }
 
-
 fn heart_path(cx: f32, cy: f32, s: f32) -> Option<Path> {
     let mut pb = PathBuilder::new();
     pb.move_to(cx, cy + s * 1.05);
@@ -489,10 +467,6 @@ fn draw_particle(cv: &mut Cv, p: &Particle) {
     match p.kind {
         ParticleKind::Heart => {
             cv.fill(&heart_path(p.x, p.y, p.size), fade((240, 98, 146, 255), a));
-        }
-        ParticleKind::Star => {
-            let t = Transform::from_rotate_at(p.spin * 57.3, p.x, p.y);
-            cv.fill_t(&star_path(p.x, p.y, p.size, 0.0), fade((245, 197, 66, 255), a), t);
         }
         ParticleKind::Sparkle => {
             let mut pb = PathBuilder::new();
@@ -517,72 +491,6 @@ fn draw_particle(cv: &mut Cv, p: &Particle) {
                 cv.ts,
             );
         }
-    }
-}
-
-fn fmt_thousands(n: u64) -> String {
-    let s = n.to_string();
-    let mut out = String::new();
-    for (i, c) in s.chars().enumerate() {
-        if i > 0 && (s.len() - i).is_multiple_of(3) {
-            out.push(',');
-        }
-        out.push(c);
-    }
-    out
-}
-
-fn draw_bubble(cv: &mut Cv, b: &BubbleData, alpha: f32, lang: Lang) {
-    let a = alpha;
-    let rect = round_rect(14.0, 2.0, 212.0, 84.0, 11.0);
-    cv.fill(&rect, fade((255, 255, 255, 242), a));
-    cv.stroke(&rect, fade(OUTLINE, a), 2.5);
-    // tail pointing to the cat
-    {
-        let mut pb = PathBuilder::new();
-        pb.move_to(112.0, 85.0);
-        pb.line_to(128.0, 85.0);
-        pb.line_to(121.0, 97.0);
-        pb.close();
-        let tail = pb.finish();
-        cv.fill(&tail, fade((255, 255, 255, 242), a));
-        cv.stroke(&tail, fade(OUTLINE, a), 2.0);
-        // cover the seam
-        if let Some(r) = Rect::from_xywh(113.5, 82.5, 13.0, 4.0) {
-            cv.pm.fill_rect(
-                r,
-                &paint(fade((255, 255, 255, 242), a)),
-                cv.ts,
-                None,
-            );
-        }
-    }
-
-    let tc = fade(TEXT, a);
-    // row 1: level + xp bar
-    cv.ui_text(&format!("{} {}", t(lang, Msg::BubbleLv), b.level), 24.0, 8.0, 2.0, tc);
-    let bar_bg = round_rect(82.0, 8.5, 134.0, 12.0, 6.0);
-    cv.fill(&bar_bg, fade((231, 224, 214, 255), a));
-    let w = (134.0 * b.pct.clamp(0.0, 1.0)).max(10.0);
-    let bar_fg = round_rect(82.0, 8.5, w, 12.0, 6.0);
-    cv.fill(&bar_fg, fade((126, 201, 110, 255), a));
-    cv.stroke(&bar_bg, fade(OUTLINE, 0.8 * a), 2.0);
-
-    // rows 2-5: today's keys / clicks / copies / active time
-    let px = 1.7;
-    let rows: [(Msg, String); 4] = [
-        (Msg::BubbleKeys, fmt_thousands(b.keys)),
-        (Msg::BubbleClicks, fmt_thousands(b.clicks)),
-        (Msg::BubbleClips, fmt_thousands(b.copies)),
-        (Msg::BubbleActive, {
-            let (h, m) = (b.minutes / 60, b.minutes % 60);
-            i18n::fmt_active(lang, h, m)
-        }),
-    ];
-    for (i, (label, value)) in rows.iter().enumerate() {
-        let y = 27.0 + i as f32 * 14.0;
-        cv.ui_text(t(lang, *label), 24.0, y, px, fade(TEXT_DIM, a));
-        cv.ui_text(value, 96.0, y, px, tc);
     }
 }
 

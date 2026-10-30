@@ -1,5 +1,5 @@
 //! UI strings in English and Korean. Every user-visible string lives here so
-//! both backends (tray menu, panel, toasts, bubble) stay in sync across
+//! both backends (tray menu, panel, toasts) stay in sync across
 //! languages. The language is persisted in [`crate::state::Persist::lang`];
 //! the first run picks a default from the OS locale (`state::detect_lang`).
 
@@ -46,7 +46,6 @@ impl Lang {
 #[derive(Clone, Copy)]
 pub enum Msg {
     // tray menu (native backend)
-    MenuShowStats,
     MenuCapturePause,
     MenuSize,
     SizeSmall,
@@ -75,13 +74,10 @@ pub enum Msg {
     MenuLanguage,
     MenuAutostart,
     MenuLoginStart,
-    MenuReset,
     Cancel,
     MenuAbout,
     MenuGithub,
     MenuExit,
-    ResetTitle,
-    ResetConfirm,
     // clipboard panel
     PanelTitle,
     SearchHint,
@@ -124,20 +120,12 @@ pub enum Msg {
     ToastUpdateFailed,
     // macOS Accessibility permission (global input tap)
     ToastAccessibility,
-    // stats bubble
-    BubbleLv,
-    BubbleKeys,
-    BubbleClicks,
-    BubbleClips,
-    BubbleActive,
 }
 
 /// Looks up a fixed string for the language.
 pub fn t(lang: Lang, msg: Msg) -> &'static str {
     use Msg::*;
     match (msg, lang) {
-        (MenuShowStats, Lang::En) => "Always show stats",
-        (MenuShowStats, Lang::Ko) => "통계 항상 표시",
         (MenuCapturePause, Lang::En) => "Pause clip capture",
         (MenuCapturePause, Lang::Ko) => "클립 수집 일시정지",
         (MenuSize, Lang::En) => "Size",
@@ -193,8 +181,6 @@ pub fn t(lang: Lang, msg: Msg) -> &'static str {
         (MenuAutostart, Lang::Ko) => "Windows 시작 시 자동 실행",
         (MenuLoginStart, Lang::En) => "Run at login",
         (MenuLoginStart, Lang::Ko) => "로그인 시 자동 실행",
-        (MenuReset, Lang::En) => "Reset stats...",
-        (MenuReset, Lang::Ko) => "통계 초기화...",
         (Cancel, Lang::En) => "Cancel",
         (Cancel, Lang::Ko) => "취소",
         (MenuAbout, Lang::En) => "About ClipCat",
@@ -202,14 +188,6 @@ pub fn t(lang: Lang, msg: Msg) -> &'static str {
         (MenuGithub, _) => "GitHub",
         (MenuExit, Lang::En) => "Quit",
         (MenuExit, Lang::Ko) => "종료",
-        (ResetTitle, Lang::En) => "Reset stats",
-        (ResetTitle, Lang::Ko) => "통계 초기화",
-        (ResetConfirm, Lang::En) => {
-            "Reset all stats and the level?\n(This cannot be undone. Clips are kept.)"
-        }
-        (ResetConfirm, Lang::Ko) => {
-            "모든 통계와 레벨을 초기화할까요?\n(되돌릴 수 없습니다. 클립은 유지됩니다.)"
-        }
         (PanelTitle, Lang::En) => "CLIPBOARD",
         (PanelTitle, Lang::Ko) => "클립보드",
         (SearchHint, Lang::En) => "Search text or #tag...",
@@ -284,16 +262,6 @@ pub fn t(lang: Lang, msg: Msg) -> &'static str {
         (ToastUpdateFailed, Lang::Ko) => "업데이트 실패",
         (ToastAccessibility, Lang::En) => "ENABLE ACCESSIBILITY IN SYSTEM SETTINGS FOR THE HOTKEY",
         (ToastAccessibility, Lang::Ko) => "단축키 사용: 시스템 설정 > 손쉬운 사용에서 권한을 허용하세요",
-        (BubbleLv, Lang::En) => "LV",
-        (BubbleLv, Lang::Ko) => "LV",
-        (BubbleKeys, Lang::En) => "KEYS",
-        (BubbleKeys, Lang::Ko) => "키 입력",
-        (BubbleClicks, Lang::En) => "CLICKS",
-        (BubbleClicks, Lang::Ko) => "클릭",
-        (BubbleClips, Lang::En) => "CLIPS",
-        (BubbleClips, Lang::Ko) => "복사",
-        (BubbleActive, Lang::En) => "ACTIVE",
-        (BubbleActive, Lang::Ko) => "활동",
     }
 }
 
@@ -326,42 +294,12 @@ pub fn first_run_hint(lang: Lang, hotkey: &str) -> String {
     }
 }
 
-pub fn level_up(lang: Lang, lv: u32) -> String {
-    match lang {
-        Lang::En => format!("LEVEL UP! LV {lv}"),
-        Lang::Ko => format!("레벨 업! LV {lv}"),
-    }
-}
-
-/// The stats-bubble "active time" value (hours + minutes), localized so the
-/// time units read natively instead of a hardcoded English "H"/"M".
-pub fn fmt_active(lang: Lang, h: u32, m: u32) -> String {
-    match lang {
-        Lang::En => format!("{h}H {m:02}M"),
-        Lang::Ko => format!("{h}시간 {m:02}분"),
-    }
-}
-
 /// The panel meta-line size badge for a large clip, localized so the unit
 /// reads natively instead of a hardcoded Latin "K".
 pub fn fmt_clip_size(lang: Lang, kib: f32) -> String {
     match lang {
         Lang::En => format!("{kib:.1}K"),
         Lang::Ko => format!("{kib:.1}KB"),
-    }
-}
-
-pub fn new_accessory(lang: Lang, name: &str) -> String {
-    match lang {
-        Lang::En => format!("* NEW: {name} *"),
-        Lang::Ko => format!("* 새 아이템: {name} *"),
-    }
-}
-
-pub fn accessory_locked(lang: Lang, name: &str, level: u32) -> String {
-    match lang {
-        Lang::En => format!("{name} (unlocks at LV {level})"),
-        Lang::Ko => format!("{name} (LV {level} 달성 시)"),
     }
 }
 
@@ -436,14 +374,12 @@ pub fn about_text(
     lang: Lang,
     version: &str,
     hotkey: &str,
-    lv: u32,
-    keys: u64,
     clips: usize,
 ) -> String {
     match lang {
         Lang::En => format!(
             "ClipCat v{version}\n\nA desktop cat that manages your clipboard \
-             and grows with your typing.\n\nLevel: LV {lv}\nLifetime keys: {keys}\nStored \
+             with local history.\n\nStored \
              clips: {clips}\n\n- Copy anywhere: the cat eats a fish and saves the clip\n\
              - {hotkey} or middle-click: clipboard history\n- Click a clip: paste it \
              back with its original formatting (or use \"...\" to paste as plain text)\n\
@@ -451,8 +387,8 @@ pub fn about_text(
              optional daily GitHub check for new versions (toggle in this menu)."
         ),
         Lang::Ko => format!(
-            "ClipCat v{version}\n\n클립보드를 관리하고 타이핑과 함께 자라는 데스크탑 \
-             고양이.\n\n현재 레벨: LV {lv}\n누적 키 입력: {keys}\n저장된 클립: {clips}개\n\n\
+            "ClipCat v{version}\n\n클립보드를 로컬에서 관리하는 데스크탑 \
+             고양이.\n\n저장된 클립: {clips}개\n\n\
              - 어디서든 복사 → 고양이가 생선을 먹고 클립을 저장\n- {hotkey} 또는 \
              휠클릭 → 클립보드 히스토리\n- 클립 클릭 → 원본 서식 그대로 붙여넣기 \
              (\"...\"로 텍스트만 붙여넣기 가능)\n- 메뉴에서 고양이 선택 (portable: A)\n\n모든 데이터는 이 PC에만 \
@@ -478,7 +414,6 @@ mod tests {
     fn every_message_has_both_translations() {
         use Msg::*;
         let all = [
-            MenuShowStats,
             MenuCapturePause,
             MenuSize,
             SizeSmall,
@@ -507,13 +442,10 @@ mod tests {
             MenuLanguage,
             MenuAutostart,
             MenuLoginStart,
-            MenuReset,
             Cancel,
             MenuAbout,
             MenuGithub,
             MenuExit,
-            ResetTitle,
-            ResetConfirm,
             PanelTitle,
             SearchHint,
             TagEditHint,
@@ -551,11 +483,6 @@ mod tests {
             ToastUpdateDownloading,
             ToastUpdateFailed,
             ToastAccessibility,
-            BubbleLv,
-            BubbleKeys,
-            BubbleClicks,
-            BubbleClips,
-            BubbleActive,
         ];
         for msg in all {
             assert!(!t(Lang::En, msg).is_empty());
@@ -563,7 +490,7 @@ mod tests {
         }
         for lang in [Lang::En, Lang::Ko] {
             assert!(menu_clipboard(lang, "WIN+SHIFT+V").contains("WIN+SHIFT+V"));
-            assert!(about_text(lang, "2.1.0", "WIN+SHIFT+V", 3, 10, 4).contains("WIN+SHIFT+V"));
+            assert!(about_text(lang, "2.1.0", "WIN+SHIFT+V", 4).contains("WIN+SHIFT+V"));
             assert!(update_available(lang, "2.1.0").contains("v2.1.0"));
             assert!(menu_update(lang, "2.1.0").contains("v2.1.0"));
             let fb = hotkey_fallback(lang, "WIN+SHIFT+V", "CTRL+SHIFT+V");

@@ -1,4 +1,4 @@
-//! Dev tool: renders representative frames (cat, fish, panel, stats bubble,
+//! Dev tool: renders representative frames (cat, fish, panel,
 //! Hangul text) to PNGs so changes can be eyeballed without launching the
 //! app — useful in headless environments.
 //!
@@ -7,7 +7,7 @@
 use clipcat::clipboard::ClipStore;
 use clipcat::i18n::Lang;
 use clipcat::panel::Panel;
-use clipcat::render::{self, Badge, BubbleData, FishView, PanelView, Scene};
+use clipcat::render::{self, Badge, FishView, PanelView, Scene};
 use tiny_skia::Pixmap;
 
 fn base_scene(lang: Lang) -> Scene<'static> {
@@ -28,8 +28,6 @@ fn base_scene(lang: Lang) -> Scene<'static> {
         mouth_open: 0.0,
         particles: &[],
         fish: None,
-        bubble: None,
-        bubble_alpha: 0.0,
         toast: None,
         hotkey_hint: None,
         lang,
@@ -153,23 +151,6 @@ fn main() {
     ] {
         let mut sc = base_scene(lang);
         sc.hotkey_hint = Some(hint);
-        let mut pm = Pixmap::new(240, 256).unwrap();
-        render::render_card(&mut pm, &sc, 1.0);
-        save(&pm, &dir, name);
-    }
-
-    // 3. stats bubble in Korean and English (system font, requirement check)
-    for (lang, name) in [(Lang::Ko, "3-bubble-ko"), (Lang::En, "3-bubble-en")] {
-        let mut sc = base_scene(lang);
-        sc.bubble_alpha = 1.0;
-        sc.bubble = Some(BubbleData {
-            level: 7,
-            pct: 0.62,
-            keys: 12345,
-            clicks: 987,
-            copies: 42,
-            minutes: 95,
-        });
         let mut pm = Pixmap::new(240, 256).unwrap();
         render::render_card(&mut pm, &sc, 1.0);
         save(&pm, &dir, name);

@@ -24,7 +24,7 @@ def main():
     state_path.write_text(json.dumps({
         "cat_kind": "british-shorthair", "lang": "ko", "auto_update": False,
         "sound_mode": 0, "onboarded": True, "clip_capture": True,
-        "total_xp": 12345, "total_copies": 0,
+        "total_xp": 12345, "total_copies": 0,  # legacy fields must disappear on save
     }))
     tokens = [f"ClipCat macOS CI synthetic capture {os.getpid()} {n}" for n in range(3)]
     binary = Path(sys.argv[1] if len(sys.argv) > 1 else "target/release/clipcat").resolve()
@@ -48,14 +48,15 @@ def main():
                     raise RuntimeError(f"macOS app exited before autosave: {app.returncode}")
                 state = json.loads(state_path.read_text())
                 clips_path = profile / "clips.json"
-                clips = clips_path.read_text() if clips_path.exists() else ""
-                if state.get("total_copies", 0) >= 3 and all(t in clips for t in tokens):
+                clips = json.loads(clips_path.read_text()) if clips_path.exists() else {}
+                contents = {clip["text"] for clip in clips.get("clips", [])}
+                if "total_xp" not in state and all(t in contents for t in tokens):
                     break
                 time.sleep(1)
             else:
                 raise RuntimeError("Three native clipboard captures were not saved before timeout.")
             assert state["cat_kind"] == "british-shorthair", state
-            assert state["total_xp"] >= 12360, state
+            assert "total_xp" not in state and "total_copies" not in state, state
             # CoreGraphics reports window bounds in screen points. This catches
             # physical-pixel window requests shrinking the UI on Retina screens.
             probe = subprocess.run(["swift", "-e", r'''
@@ -77,7 +78,7 @@ print(String(data: data, encoding: .utf8)!)
                        for b in geometry["windows_points"]), geometry
             result["window_geometry"] = geometry
             result.update(app_survived=True, captured_synthetic_clips=3,
-                          saved_cat=state["cat_kind"], saved_total_xp=state["total_xp"])
+                          saved_cat=state["cat_kind"], saved_synthetic_clips=sorted(contents.intersection(tokens)))
             capture = subprocess.run(["screencapture", "-x", str(output / "desktop.png")],
                                      capture_output=True, text=True)
             result["screenshot_available"] = capture.returncode == 0

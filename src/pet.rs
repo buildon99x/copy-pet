@@ -1,7 +1,7 @@
 //! The platform-agnostic pet simulation: animation state machine, particle
-//! system, XP/level progression, the copy-event fish, the clipboard store +
+//! system, the copy-event fish, the clipboard store +
 //! panel, and scene construction. Knows nothing about windows, hooks or
-//! trays — the platform backends drive it by feeding input counts and copy
+//! trays — the platform backends drive it by feeding copy
 //! events, calling [`Pet::advance`] each tick and presenting [`Pet::render`].
 
 use crate::clip_image::ClipImage;
@@ -9,9 +9,9 @@ use crate::clipboard::{ClipStore, RichFormats};
 use crate::i18n::{self, t, Lang, Msg};
 use crate::menu::{MenuAction, MenuEntry, MenuItem, MenuOutcome};
 use crate::panel::{NavKey, Panel, PanelAction, PanelDrag};
-use crate::render::{self, Badge, BubbleData, FishView, Particle, ParticleKind, Scene};
+use crate::render::{self, Badge, FishView, Particle, ParticleKind, Scene};
 use crate::sound;
-use crate::state::{level_progress, Persist};
+use crate::state::Persist;
 use std::collections::VecDeque;
 use std::hash::{Hash, Hasher};
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
@@ -19,9 +19,6 @@ use tiny_skia::Pixmap;
 
 /// Selectable pet sizes (small / normal / large) as canvas multipliers.
 pub const SCALES: [f32; 3] = [0.78, 1.0, 1.3];
-
-/// XP granted for every captured copy event.
-pub const XP_PER_COPY: u64 = 5;
 
 /// A clip the user picked from the panel, handed to the backend to put on the
 /// OS clipboard. `paste` additionally asks the backend to paste it into the
@@ -110,7 +107,6 @@ pub struct Pet {
     last_event: Instant,
     particles: Vec<Particle>,
     toast: Option<(String, f32)>, // text, expires_at (seconds since start)
-    bubble_alpha: f32,
     // copy-event fish
     fish: Option<(Badge, f32)>, // badge, flight progress 0..1
     fish_queue: VecDeque<Badge>,
@@ -122,9 +118,6 @@ pub struct Pet {
     // bookkeeping
     last_visual: Option<u64>,
     rng: u32,
-    level: u32,
-    last_min_bucket: u64,
-    level_changed: bool,
     size_changed: bool,
     /// Set when the panel just opened; the backend drains it via
     /// [`Pet::take_fit_panel`] and nudges the card on-screen if it opened
@@ -151,7 +144,6 @@ pub struct Pet {
 impl Pet {
     pub fn new(st: Persist) -> Pet {
         let now = Instant::now();
-        let (level, _, _) = level_progress(st.total_xp);
         let mut panel = Panel::with_geometry(st.panel_w, st.panel_h, (st.panel_off_x, st.panel_off_y));
         panel.cat_scale = SCALES[st.scale_idx.min(2)];
         panel.view = st.panel_view.min(1);
@@ -181,7 +173,6 @@ impl Pet {
             last_event: now,
             particles: Vec::new(),
             toast: None,
-            bubble_alpha: 0.0,
             fish: None,
             fish_queue: VecDeque::new(),
             panel_hint: String::new(),
@@ -190,9 +181,6 @@ impl Pet {
             hotkey_fallback_hinted: false,
             last_visual: None,
             rng: seed(),
-            level,
-            last_min_bucket: 0,
-            level_changed: false,
             size_changed: false,
             fit_panel: false,
             prev_level: 0,
@@ -211,10 +199,6 @@ impl Pet {
         self.st.lang()
     }
 
-    pub fn level(&self) -> u32 {
-        self.level
-    }
-
     /// Excitement level derived from the recent input rate, used by both the
     /// tail-wag animation (`advance`) and the rendered scene (`draw`).
     fn excite(&self) -> f32 {
@@ -222,7 +206,7 @@ impl Pet {
     }
 
     pub fn tooltip(&self) -> String {
-        format!("ClipCat — {} {}", t(self.lang(), Msg::BubbleLv), self.level)
+        "ClipCat".into()
     }
 
     pub fn set_hover(&mut self, hover: bool) {
@@ -265,7 +249,7 @@ impl Pet {
     /// The macOS global-input event tap could not be installed — Accessibility
     /// permission has not been granted. Point the user at the setting, once;
     /// the pet, clipboard history and panel (C / middle-click) keep working,
-    /// only the global hotkey and activity statistics are unavailable.
+    /// only the global hotkey is unavailable.
     pub fn notify_accessibility_needed(&mut self) {
         if self.accessibility_hinted {
             return;
@@ -288,14 +272,6 @@ impl Pet {
         self.set_toast(i18n::hotkey_fallback(self.lang(), wanted, used), 5.0);
     }
 
-    /// Returns `true` once after a level-up so the platform can refresh tray UI.
-    pub fn take_level_changed(&mut self) -> bool {
-        std::mem::take(&mut self.level_changed)
-    }
-
-    /// Returns `true` once after the wanted window size changed (panel
-    /// toggled/moved/resized or scale changed); the platform then resizes
-    /// its surface and offsets the window by [`Pet::take_window_shift`].
     pub fn take_size_changed(&mut self) -> bool {
         std::mem::take(&mut self.size_changed)
     }
@@ -467,7 +443,7 @@ impl Pet {
     // ---- clipboard ----------------------------------------------------------
 
     /// A copy was observed system-wide. Stores the clip, feeds the cat a
-    /// fish and grants XP. `badge` lets the backend attach a real app icon;
+    /// fish. `badge` lets the backend attach a real app icon;
     /// when None one is derived from the source app name.
     pub fn on_copy(&mut self, text: String, source: Option<String>, badge: Option<Badge>) {
         self.on_copy_rich(text, source, badge, None);
@@ -507,12 +483,8 @@ impl Pet {
             }
             self.fish_queue.push_back(badge);
         }
-        self.st.copies_today += 1;
-        self.st.total_copies += 1;
-        self.st.total_xp += XP_PER_COPY;
         self.dirty = true;
         self.last_event = Instant::now();
-        self.maybe_level_up();
     }
 
     pub fn panel_open(&self) -> bool {
@@ -1081,42 +1053,21 @@ impl Pet {
 
     // ---- per-frame update --------------------------------------------------
 
-    /// Consumes input counts, advances the simulation one frame and returns a
+    /// Advances the simulation one frame and returns a
     /// hint of whether the visuals changed enough to be worth presenting.
-    pub fn advance(&mut self, k: u64, c: u64, wh: u64) -> bool {
+    /// Legacy activity arguments are ignored; only local actions and copies
+    /// affect the pet.
+    pub fn advance(&mut self, _k: u64, _c: u64, _wh: u64) -> bool {
         let now = Instant::now();
         let t = self.now_t();
         let dt = (now - self.last_tick).as_secs_f32().clamp(0.001, 0.1);
         self.last_tick = now;
-
-        if k + c + wh > 0 {
-            self.st.total_keys += k;
-            self.st.total_clicks += c;
-            self.st.keys_today += k;
-            self.st.clicks_today += c;
-            self.st.total_xp += 2 * k + c + wh;
-            self.dirty = true;
-
-            // active-minute tracking
-            if let Ok(d) = SystemTime::now().duration_since(UNIX_EPOCH) {
-                let bucket = d.as_secs() / 60;
-                if bucket != self.last_min_bucket {
-                    self.last_min_bucket = bucket;
-                    self.st.active_min_today += 1;
-                }
-            }
-
-            let (level, _, _) = level_progress(self.st.total_xp);
-            self.level_changed |= level != self.level;
-            self.level = level;
-        }
 
         // ease animation params toward rest
         self.paw_l = (self.paw_l - dt * 10.0).max(0.0);
         self.paw_r = (self.paw_r - dt * 10.0).max(0.0);
         self.happy = (self.happy - dt / 1.8).max(0.0);
         self.squash = (self.squash - dt * 6.0).max(0.0);
-
 
 
         let idle_secs = (now - self.last_event).as_secs_f32();
@@ -1168,11 +1119,6 @@ impl Pet {
             p.x += p.vx * dt;
             p.y += p.vy * dt;
             match p.kind {
-                ParticleKind::Star => {
-                    p.vy += 110.0 * dt;
-                    p.spin += dt * 4.0;
-                    p.life -= dt / 1.1;
-                }
                 ParticleKind::Heart => {
                     p.vy += (-26.0 - p.vy) * dt * 2.0;
                     p.life -= dt / 1.3;
@@ -1183,25 +1129,11 @@ impl Pet {
         }
         self.particles.retain(|p| p.life > 0.0);
 
-        // bubble fade (hidden while the panel is open)
-        let bubble_target = if !self.panel.open && self.st.bubble_pinned {
-            1.0
-        } else {
-            0.0
-        };
-        self.bubble_alpha += (bubble_target - self.bubble_alpha) * (dt * 9.0).min(1.0);
-
         // expire toast
         if let Some((_, until)) = &self.toast {
             if *until <= t {
                 self.toast = None;
             }
-        }
-
-        // day rollover (platform drives the throttled autosave so it can
-        // capture the live window position first — see `should_autosave`)
-        if self.st.roll_day() {
-            self.dirty = true;
         }
 
         let visual = self.visual_stamp(t);
@@ -1242,11 +1174,6 @@ impl Pet {
         )
             .hash(&mut h);
         ((self.squash * 100.0).round() as u32).hash(&mut h);
-        ((self.bubble_alpha * 20.0).round() as u32).hash(&mut h);
-        if self.bubble_alpha > 0.01 {
-            (self.st.total_xp, self.st.keys_today, self.st.clicks_today,
-                self.st.copies_today, self.st.active_min_today).hash(&mut h);
-        }
         if let Some((text, until)) = &self.toast {
             text.hash(&mut h);
             (((until - t) / 0.4).clamp(0.0, 1.0) * 20.0).round().to_bits().hash(&mut h);
@@ -1363,20 +1290,6 @@ impl Pet {
             .as_ref()
             .map(|(s, until)| (s.as_str(), ((*until - t) / 0.4).min(1.0)));
 
-        let bubble = if self.bubble_alpha > 0.01 {
-            let (lv, into, need) = level_progress(self.st.total_xp);
-            Some(BubbleData {
-                level: lv,
-                pct: into as f32 / need as f32,
-                keys: self.st.keys_today,
-                clicks: self.st.clicks_today,
-                copies: self.st.copies_today,
-                minutes: self.st.active_min_today,
-            })
-        } else {
-            None
-        };
-
         let catch = self.cat_kind().catch_progress();
         let fish = self
             .fish
@@ -1411,8 +1324,6 @@ impl Pet {
             mouth_open,
             particles: &self.particles,
             fish,
-            bubble,
-            bubble_alpha: self.bubble_alpha,
             toast: toast_view,
             hotkey_hint: hint_text.as_deref(),
             lang: self.lang(),
@@ -1544,12 +1455,6 @@ impl Pet {
         ));
         m.push(MenuEntry::Separator);
 
-        m.push(MenuItem::leaf(
-            t(lang, Msg::MenuShowStats),
-            MenuAction::ToggleStats,
-            self.st.bubble_pinned,
-        ));
-
         // Size submenu.
         let sizes = [Msg::SizeSmall, Msg::SizeNormal, Msg::SizeLarge];
         let size_items = radio_items(lang, &sizes, self.st.scale_idx, MenuAction::SetSize);
@@ -1595,7 +1500,6 @@ impl Pet {
             MenuAction::ToggleAutoUpdate,
             self.st.auto_update,
         ));
-        m.push(MenuItem::leaf(t(lang, Msg::MenuReset), MenuAction::ResetStats, false));
         m.push(MenuItem::leaf(t(lang, Msg::MenuAbout), MenuAction::About, false));
         m.push(MenuItem::leaf(t(lang, Msg::MenuGithub), MenuAction::OpenGithub, false));
         m.push(MenuEntry::Separator);
@@ -1605,7 +1509,7 @@ impl Pet {
 
     /// Applies a chosen menu action. Pure state changes happen here and return
     /// [`MenuOutcome::Handled`]; the rest hand a [`MenuOutcome`] back to the
-    /// backend (confirm/reset, about dialog, autostart, update page, quit).
+    /// backend (about dialog, autostart, update page, quit).
     pub fn apply_menu_action(&mut self, action: MenuAction) -> MenuOutcome {
         match action {
             MenuAction::TogglePanel => self.toggle_panel(),
@@ -1615,10 +1519,6 @@ impl Pet {
             }
             MenuAction::TogglePanelAutoClose => self.toggle_panel_autoclose(),
             MenuAction::TogglePasteOnSelect => self.toggle_paste_on_select(),
-            MenuAction::ToggleStats => {
-                self.st.bubble_pinned = !self.st.bubble_pinned;
-                self.dirty = true;
-            }
             MenuAction::SetSize(i) => self.set_scale_idx(i),
             MenuAction::OpenCatPicker => self.open_cat_picker(),
             MenuAction::SetSound(mode) => {
@@ -1646,7 +1546,6 @@ impl Pet {
             MenuAction::CycleHotkey => return MenuOutcome::ReregisterHotkey(self.cycle_hotkey()),
             MenuAction::ToggleAutostart => return MenuOutcome::ToggleAutostart,
             MenuAction::InstallUpdate => return MenuOutcome::InstallUpdate,
-            MenuAction::ResetStats => return MenuOutcome::ConfirmReset,
             MenuAction::About => return MenuOutcome::ShowAbout,
             MenuAction::OpenGithub => return MenuOutcome::OpenGithub,
             MenuAction::Quit => return MenuOutcome::Quit,
@@ -1654,62 +1553,9 @@ impl Pet {
         MenuOutcome::Handled
     }
 
-    pub fn reset_stats(&mut self) {
-        self.st.total_keys = 0;
-        self.st.total_clicks = 0;
-        self.st.total_copies = 0;
-        self.st.total_xp = 0;
-        self.st.keys_today = 0;
-        self.st.clicks_today = 0;
-        self.st.copies_today = 0;
-        self.st.active_min_today = 0;
-        self.level = 1;
-        self.level_changed = true;
-        self.save();
-    }
-
-    fn maybe_level_up(&mut self) {
-        let (lv, _, _) = level_progress(self.st.total_xp);
-        if lv > self.level {
-            let t = self.now_t();
-            self.level_up(lv, t);
-        }
-    }
-
-    fn level_up(&mut self, lv: u32, t: f32) {
-        self.level = lv;
-        self.level_changed = true;
-        self.happy = 1.0;
-        self.spawn_stars(12);
-        let text = i18n::level_up(self.lang(), lv);
-        self.toast = Some((text, t + 3.2));
-        if self.st.sound_mode >= 1 {
-            sound::play_chime();
-        }
-        self.dirty = true;
-    }
-
     fn set_toast(&mut self, text: String, secs: f32) {
         let t = self.now_t();
         self.toast = Some((text, t + secs));
-    }
-
-    fn spawn_stars(&mut self, n: usize) {
-        for i in 0..n {
-            let a = i as f32 / n as f32 * std::f32::consts::TAU;
-            let r = rand_f(&mut self.rng);
-            let v = 65.0 + r * 45.0;
-            self.particles.push(Particle {
-                x: 120.0,
-                y: 120.0,
-                vx: a.cos() * v,
-                vy: a.sin() * v - 35.0,
-                life: 1.0,
-                kind: ParticleKind::Star,
-                size: 5.0 + r * 3.5,
-                spin: r * 6.0,
-            });
-        }
     }
 
     fn spawn_sparkles(&mut self, n: usize, x: f32, y: f32) {

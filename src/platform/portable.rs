@@ -8,13 +8,13 @@
 //! the fully transparent, click-through look). See ADR-0001 / ADR-0003.
 //!
 //! Interactions: drag to move, middle-click to toggle the clipboard panel,
-//! explicit stats toggle (B), cat gallery (A),
+//! cat gallery (A),
 //! and the global panel hotkey (Cmd+Shift+V on macOS, Super+Shift+V on
 //! Linux by default — the configured `win` modifier maps to the OS super
 //! key). The panel card itself is movable (drag its header strip) and
 //! resizable (drag the bottom-right grip) independently of the cat.
 //! Settings have no system tray here; when the window is focused
-//! these keys apply: S size · A cat gallery · M sound · B stats bubble ·
+//! these keys apply: S size · A cat gallery · M sound ·
 //! L lock · G language · C clipboard panel · O auto-close after copy ·
 //! V list/thumbnail view · U update download page · Q/Esc quit. While the panel is open the
 //! keyboard drives it instead (type to search, arrows/Home/End + Enter,
@@ -487,7 +487,7 @@ impl PortableApp {
 
     /// macOS right-click: build the platform-agnostic menu model, render it as
     /// a native NSMenu, and apply the chosen action. State changes happen in
-    /// `Pet::apply_menu_action`; the outcomes that need OS work (confirm/reset,
+    /// `Pet::apply_menu_action`; the outcomes that need OS work (
     /// About dialog, autostart, update page, quit) are finished here.
     #[cfg(target_os = "macos")]
     fn show_context_menu(&mut self, event_loop: &ActiveEventLoop) {
@@ -509,23 +509,11 @@ impl PortableApp {
                 self.save_position();
                 event_loop.exit();
             }
-            MenuOutcome::ConfirmReset => {
-                if super::mac_dialogs::confirm(
-                    t(lang, Msg::ResetTitle),
-                    t(lang, Msg::ResetConfirm),
-                    t(lang, Msg::ResetTitle),
-                    t(lang, Msg::Cancel),
-                ) {
-                    self.pet.reset_stats();
-                }
-            }
             MenuOutcome::ShowAbout => {
                 let body = about_text(
                     lang,
                     env!("CARGO_PKG_VERSION"),
                     &self.hotkey_label,
-                    self.pet.level(),
-                    self.pet.st.total_keys,
                     self.pet.clips.len(),
                 );
                 super::mac_dialogs::info(t(lang, Msg::MenuAbout), &body);
@@ -550,10 +538,6 @@ impl PortableApp {
             KeyCode::KeyA => self.pet.open_cat_picker(),
             KeyCode::KeyM => {
                 self.pet.st.sound_mode = (self.pet.st.sound_mode + 1) % 2;
-                self.pet.dirty = true;
-            }
-            KeyCode::KeyB => {
-                self.pet.st.bubble_pinned = !self.pet.st.bubble_pinned;
                 self.pet.dirty = true;
             }
             KeyCode::KeyL => {
@@ -1191,7 +1175,6 @@ impl ApplicationHandler for PortableApp {
             }
             let (k, c, wh) = input::drain();
             let redraw = self.pet.advance(k, c, wh);
-            let _ = self.pet.take_level_changed(); // no tray to update here
             if self.pet.take_size_changed() {
                 self.apply_size();
             }

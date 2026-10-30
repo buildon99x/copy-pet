@@ -27,7 +27,7 @@ src/
   hunter_motion.rs     legacy pure ragdoll frame-selection compatibility wrapper
   i18n.rs              every user-visible string, English + Korean
   sound.rs             synthesized SFX; winmm on Windows, no-op elsewhere
-  state.rs             Persist (JSON), stable selected cat + shared XP/level progression
+  state.rs             Persist (JSON), settings and stable selected cat
   update.rs            optional self-update (ADR-0009): daily GitHub release
                        check via system curl; exe swap + relaunch on Windows
   input.rs             shared atomic activity counters (KEYS/CLICKS/WHEEL)
@@ -59,8 +59,7 @@ src/
                        the platform-agnostic menu::MenuEntry tree (submenus,
                        check marks, disabled items) and returns the chosen
                        menu::MenuAction. The portable tray-menu stand-in.
-    mac_dialogs.rs     macOS-only NSAlert dialogs (About box, Reset-stats
-                       confirmation) — the parity of the Windows MessageBoxW.
+    mac_dialogs.rs     macOS-only NSAlert dialog (About box) — the parity of the Windows MessageBoxW.
     mac_autostart.rs   macOS-only "run at login" via a ~/Library/LaunchAgents
                        plist (parity of the Windows HKCU\Run value).
     mac_caret.rs       macOS-only text-caret read for the flyout (ADR-0013):

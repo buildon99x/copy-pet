@@ -54,7 +54,6 @@ fn hunter_pause_cancels_copy_feedback_without_removing_collected_clips() {
     assert!(p.fish.is_none(), "pause stops a running copy reaction");
     assert!(p.fish_queue.is_empty());
     assert_eq!(p.clips.len(), 1);
-    assert_eq!(p.st.total_copies, 1);
 }
 
 #[test]
@@ -64,7 +63,6 @@ fn hunter_burst_collects_every_clip_but_keeps_only_one_pending_reaction() {
     p.advance(0, 0, 0);
     for i in 0..20 { p.on_copy(format!("burst {i}"), None, None); }
     assert_eq!(p.clips.len(), 21);
-    assert_eq!(p.st.total_copies, 21);
     assert!(p.fish_queue.len() <= 1, "visual work is coalesced independently of captured clips");
 }
 
@@ -96,7 +94,6 @@ fn hunter_hidden_captures_keep_history_without_replaying_visual_backlog() {
     p.set_window_level(2);
     p.on_copy("while hidden".into(), None, None);
     assert_eq!(p.clips.len(), 2);
-    assert_eq!(p.st.total_copies, 2);
     assert!(p.fish.is_none() && p.fish_queue.is_empty());
     assert!(!p.advance(0, 0, 0));
     assert!(p.show_window());
@@ -153,13 +150,10 @@ fn hunter_tag_selection_invalidates_immediately_without_waiting_for_caret_blink(
 }
 
 #[test]
-fn copy_event_stores_clip_grants_xp_and_queues_fish() {
+fn copy_event_stores_clip_and_queues_fish() {
     let mut p = pet();
-    let xp0 = p.st.total_xp;
     p.on_copy("hello".into(), Some("Code".into()), None);
     assert_eq!(p.clips.len(), 1);
-    assert_eq!(p.st.total_xp, xp0 + XP_PER_COPY);
-    assert_eq!(p.st.copies_today, 1);
     assert_eq!(p.fish_queue.len(), 1);
     assert_eq!(p.fish_queue[0].letter, 'C');
 }
@@ -171,7 +165,6 @@ fn capture_pause_ignores_copies() {
     p.on_copy("secret".into(), None, None);
     assert!(p.clips.is_empty());
     assert!(p.fish_queue.is_empty());
-    assert_eq!(p.st.total_xp, 0);
 }
 
 /// Finds the first item (recursing into submenus) carrying `action`.
@@ -318,17 +311,6 @@ fn menu_opens_free_cat_gallery() {
     p.apply_menu_action(MenuAction::OpenCatPicker);
     assert!(p.cat_picker.is_some());
     assert_eq!(crate::cat::CatKind::ALL.len(), 12);
-}
-
-#[test]
-fn menu_reset_waits_for_confirmation() {
-    let mut p = pet();
-    p.st.total_keys = 99;
-    p.st.total_xp = 500;
-    assert_eq!(p.apply_menu_action(MenuAction::ResetStats), MenuOutcome::ConfirmReset);
-    assert_eq!(p.st.total_keys, 99, "ResetStats does not reset until the backend confirms");
-    p.reset_stats();
-    assert_eq!(p.st.total_keys, 0);
 }
 
 #[test]
@@ -646,21 +628,15 @@ fn render_panel_open_smoke() {
 }
 
 #[test]
-fn switching_and_reset_preserve_selected_cat_and_statistics() {
+fn switching_preserves_selected_cat_and_clears_old_motion() {
     let mut p = pet();
-    p.st.total_keys = 42;
-    p.st.total_xp = 10_000_000;
     p.on_copy("synthetic switch".into(), None, None);
     p.advance(0, 0, 0);
     let chosen = crate::cat::CatKind::ALL[3];
     p.select_cat(chosen).unwrap();
     assert_eq!(p.st.cat_kind, chosen.id());
-    assert_eq!(p.st.total_keys, 42);
     assert!(p.fish.is_none() && p.fish_queue.is_empty() && p.particles.is_empty());
-    p.maybe_level_up();
-    assert_eq!(p.st.cat_kind, chosen.id());
-    p.reset_stats();
-    assert_eq!(p.st.cat_kind, chosen.id());
+    assert_eq!(p.clips.by_index(0).unwrap().text, "synthetic switch");
 }
 
 #[test]
@@ -670,17 +646,13 @@ fn global_input_and_body_clicks_leave_sleeping_character_quiet() {
     p.sleep = 1.0;
     p.last_event -= std::time::Duration::from_secs(90);
     p.advance(0, 0, 0);
-    let xp = p.st.total_xp;
     p.pet();
     p.click_bounce(120.0, 180.0);
-    assert_eq!(p.st.total_xp, xp, "body controls never grant affection XP");
     p.set_hover(true);
     p.advance(3, 2, 1);
     assert_eq!(p.hunter_frame(p.now_t()), 15, "input cannot wake the cat");
     assert!(p.particles.is_empty());
     assert_eq!((p.paw_l, p.paw_r, p.rate, p.squash), (0.0, 0.0, 0.0, 0.0));
-    assert_eq!(p.bubble_alpha, 0.0);
-    assert_eq!((p.st.total_keys, p.st.total_clicks), (3, 2));
 }
 
 #[test]
@@ -705,13 +677,11 @@ fn gallery_navigation_preview_apply_and_history_hotkey_are_explicit() {
 }
 
 #[test]
-fn copy_wakes_a_sleeping_cat_immediately_but_input_level_up_is_quiet() {
+fn copy_wakes_a_sleeping_cat_immediately_but_input_is_quiet() {
     let mut p = pet();
     p.sleep = 1.0;
     p.last_event -= std::time::Duration::from_secs(90);
-    p.st.total_xp = crate::state::xp_to_next(1)-1;
     p.advance(1,0,0);
-    assert_eq!(p.level(),2);
     assert_eq!(p.sleep,1.0);
     assert!(p.particles.is_empty() && p.toast.is_none());
     p.on_copy("wake synthetic".into(),None,None);
@@ -737,7 +707,7 @@ fn pause_after_catch_cancels_particles_and_compression_without_replay() {
     p.advance(0, 0, 0);
     assert!(p.fish.is_none() && p.fish_queue.is_empty() && p.particles.is_empty());
     assert_eq!((p.squash, p.happy), (0.0, 0.0));
-    assert_eq!((p.clips.len(), p.st.total_copies), (1, 1));
+    assert_eq!(p.clips.len(), 1);
 }
 
 #[test]
@@ -759,7 +729,7 @@ fn hide_after_catch_cancels_particles_and_compression_before_quick_show() {
     p.advance(0, 0, 0);
     assert!(p.fish.is_none() && p.fish_queue.is_empty() && p.particles.is_empty());
     assert_eq!((p.squash, p.happy), (0.0, 0.0));
-    assert_eq!((p.clips.len(), p.st.total_copies), (1, 1));
+    assert_eq!(p.clips.len(), 1);
 }
 
 #[test]
@@ -842,4 +812,19 @@ fn retina_pointer_hits_and_resize_preserve_logical_panel_geometry() {
     p.render_flyout(&mut normal);
     p.render_flyout_at_density(&mut explicit, 1.0);
     assert_eq!(normal.data(), explicit.data(), "1x backend pixels stay identical");
+}
+
+#[test]
+fn legacy_input_and_copy_preserve_settings_without_growth_effects() {
+    let state: Persist = serde_json::from_str(r#"{"total_xp":279,"cat_kind":"british-shorthair","sound_mode":0,"onboarded":true}"#).unwrap();
+    let mut p = Pet::new(state);
+    p.clips = ClipStore::default();
+    let before = serde_json::to_value(&p.st).unwrap();
+    p.advance(1, 0, 0);
+    assert_eq!(serde_json::to_value(&p.st).unwrap(), before, "global activity cannot change persisted state");
+    p.on_copy("synthetic private companion".into(), None, None);
+    assert_eq!(p.clips.by_index(0).unwrap().text, "synthetic private companion");
+    assert_eq!(serde_json::to_value(&p.st).unwrap(), before, "copy history has no growth state");
+    assert!(p.toast.is_none() && p.particles.is_empty(), "no level-up effects on copy");
+    assert_eq!(p.st.cat_kind, "british-shorthair");
 }

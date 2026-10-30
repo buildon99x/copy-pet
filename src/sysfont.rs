@@ -1,5 +1,5 @@
 //! System-font text for everything ClipCat draws (clipboard panel, toast,
-//! stats bubble, fish badge letters): loads the OS UI font (plus a
+//! fish badge letters): loads the OS UI font (plus a
 //! Hangul-capable fallback) from well-known font files at startup and
 //! rasterizes it with `ab_glyph`. Nothing is bundled and nothing leaves the
 //! machine — fonts are read from the local font directories only, with

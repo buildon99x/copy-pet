@@ -8,8 +8,7 @@
 //!
 //! [`Pet::build_menu`](crate::pet::Pet::build_menu) produces the tree with live
 //! state; `apply_menu_action` performs the pure state mutations and returns a
-//! [`MenuOutcome`] for the few items a backend must finish (a confirmation
-//! dialog, the About box, the autostart toggle, opening the update page, quit).
+//! [`MenuOutcome`] for the few items a backend must finish (the About box, the autostart toggle, opening the update page, quit).
 
 use crate::i18n::Lang;
 
@@ -23,7 +22,6 @@ pub enum MenuAction {
     TogglePanelAutoClose,
     /// Paste the picked clip into the previous app automatically (on/off).
     TogglePasteOnSelect,
-    ToggleStats,
     SetSize(usize),
     OpenCatPicker,
     SetSound(u8),
@@ -37,7 +35,6 @@ pub enum MenuAction {
     CycleHotkey,
     /// macOS opens the releases page (no in-app self-replace there).
     InstallUpdate,
-    ResetStats,
     About,
     /// Open the project's GitHub page in the browser.
     OpenGithub,
@@ -103,8 +100,6 @@ impl MenuItem {
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub enum MenuOutcome {
     Handled,
-    /// Confirm with the user, then call [`Pet::reset_stats`](crate::pet::Pet::reset_stats).
-    ConfirmReset,
     /// Show the About dialog (`i18n::about_text`).
     ShowAbout,
     /// Flip the platform autostart registration.
