@@ -56,6 +56,26 @@ def main():
                 raise RuntimeError("Three native clipboard captures were not saved before timeout.")
             assert state["cat_kind"] == "british-shorthair", state
             assert state["total_xp"] >= 12360, state
+            # CoreGraphics reports window bounds in screen points. This catches
+            # physical-pixel window requests shrinking the UI on Retina screens.
+            probe = subprocess.run(["swift", "-e", r'''
+import AppKit
+import CoreGraphics
+import Foundation
+let pid = Int(CommandLine.arguments.last!)!
+let all = (CGWindowListCopyWindowInfo(.optionAll, kCGNullWindowID) as? [[String: Any]]) ?? []
+let bounds = all.filter { ($0[kCGWindowOwnerPID as String] as? Int) == pid }
+    .compactMap { $0[kCGWindowBounds as String] as? [String: Any] }
+let result: [String: Any] = ["backing_scale": NSScreen.main?.backingScaleFactor ?? 1.0,
+                           "windows_points": bounds]
+let data = try! JSONSerialization.data(withJSONObject: result, options: [.sortedKeys])
+print(String(data: data, encoding: .utf8)!)
+''', str(app.pid)], capture_output=True, text=True, check=True)
+            geometry = json.loads(probe.stdout)
+            assert any(abs(b.get("Width", 0) - 240) <= 1 and
+                       abs(b.get("Height", 0) - 256) <= 1
+                       for b in geometry["windows_points"]), geometry
+            result["window_geometry"] = geometry
             result.update(app_survived=True, captured_synthetic_clips=3,
                           saved_cat=state["cat_kind"], saved_total_xp=state["total_xp"])
             capture = subprocess.run(["screencapture", "-x", str(output / "desktop.png")],

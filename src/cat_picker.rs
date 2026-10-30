@@ -123,7 +123,11 @@ impl CatPicker {
         Action::None
     }
     pub fn draw(&self, pm: &mut Pixmap, origin: (f32, f32), lang: Lang) {
-        let ts = Transform::from_translate(origin.0, origin.1);
+        self.draw_scaled(pm, origin, lang, 1.0);
+    }
+    /// Gallery text is rasterized at backing density; thumbnail caches stay bounded.
+    pub fn draw_scaled(&self, pm: &mut Pixmap, origin: (f32, f32), lang: Lang, density: f32) {
+        let ts = Transform::from_translate(origin.0, origin.1).post_scale(density, density);
         let rect = |pm: &mut Pixmap, x, y, w, h, color: (u8, u8, u8, u8)| {
             let mut paint = Paint::default();
             paint.set_color_rgba8(color.0, color.1, color.2, color.3);

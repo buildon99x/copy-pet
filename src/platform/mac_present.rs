@@ -79,8 +79,9 @@ impl Presenter {
     }
 
     /// Pushes one rendered frame to the layer. `scale` is the window's backing
-    /// scale factor so the physical-pixel image maps to the right point size on
-    /// Retina displays.
+    /// scale factor. The caller rasterizes the complete logical scene at this
+    /// density first (including glyphs); contentsScale alone cannot supply
+    /// missing Retina detail. Pixmap dimensions equal logical size × density.
     pub fn present(&mut self, pm: &Pixmap, scale: f64) {
         let w = pm.width() as usize;
         let h = pm.height() as usize;

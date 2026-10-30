@@ -23,5 +23,6 @@ pub mod sound;
 pub mod state;
 pub mod sysfont;
 pub mod update;
+pub mod viewport;
 
 pub mod cat_picker;

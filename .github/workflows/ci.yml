@@ -97,6 +97,8 @@ jobs:
           file target/release/clipcat
           cargo test --locked --release --example prepare_cat_atlas
           cargo run --locked --release --example preview -- "$RUNNER_TEMP/clipcat-macos-validation/previews"
+          cargo run --locked --release --example font_diagnostics -- "$RUNNER_TEMP/clipcat-macos-validation/fonts"
+          cargo run --locked --release --example review_at_density -- "$RUNNER_TEMP/clipcat-macos-validation/density"
 
       - name: Package universal macOS test app
         if: runner.os == 'macOS'

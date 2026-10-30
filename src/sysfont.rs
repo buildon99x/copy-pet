@@ -16,7 +16,7 @@
 //! layout grid stayed put; the system font is sized to the same optical
 //! height via [`EM_PER_PX`].
 
-use ab_glyph::{Font, FontArc, ScaleFont};
+use ab_glyph::{Font, FontArc, FontRef, FontVec, ScaleFont};
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::{Mutex, OnceLock};
@@ -35,9 +35,8 @@ const TOFU_ADV: f32 = 6.0;
 
 /// Candidate font files, tried in order. First existing+parsable file wins
 /// per slot: slot 0 is the primary UI font, slot 1 the Hangul fallback.
-/// Each candidate is a plain filesystem path loaded via `FontArc::try_from_vec`,
-/// which always uses face 0 — for a .ttc collection only the first face is read
-/// (no per-face selector is parsed), so prefer single-face .ttf candidates.
+/// Collections are inspected for an upright Regular face; collection order
+/// is not a style guarantee (face zero can be Thin or Italic).
 #[cfg(windows)]
 fn candidates() -> [Vec<String>; 2] {
     let dir = std::env::var("WINDIR").unwrap_or_else(|_| "C:\\Windows".into());
@@ -132,10 +131,127 @@ fn find_file(dir: &std::path::Path, name: &str, depth: u32) -> Option<PathBuf> {
     None
 }
 
-fn load_font(path: &str) -> Option<FontArc> {
+// Only the small SFNT metadata needed for style selection is read here.
+// ab_glyph still validates the selected face and parses/rasterizes all glyphs.
+#[derive(Debug, Clone)]
+struct FaceInfo {
+    index: u32,
+    weight: u16,
+    italic: bool,
+    name: String,
+}
+
+fn read_u16(bytes: &[u8], at: usize) -> Option<u16> {
+    Some(u16::from_be_bytes(
+        bytes.get(at..at.checked_add(2)?)?.try_into().ok()?,
+    ))
+}
+
+fn read_u32(bytes: &[u8], at: usize) -> Option<u32> {
+    Some(u32::from_be_bytes(
+        bytes.get(at..at.checked_add(4)?)?.try_into().ok()?,
+    ))
+}
+
+fn face_offset(bytes: &[u8], index: u32) -> Option<usize> {
+    if bytes.get(..4)? == b"ttcf" {
+        if index >= read_u32(bytes, 8)? {
+            return None;
+        }
+        Some(read_u32(
+            bytes,
+            12usize.checked_add((index as usize).checked_mul(4)?)?,
+        )? as usize)
+    } else {
+        (index == 0).then_some(0)
+    }
+}
+
+fn table<'a>(bytes: &'a [u8], face: usize, tag: &[u8; 4]) -> Option<&'a [u8]> {
+    let count = read_u16(bytes, face.checked_add(4)?)? as usize;
+    for i in 0..count {
+        let record = face.checked_add(12)?.checked_add(i.checked_mul(16)?)?;
+        if bytes.get(record..record.checked_add(4)?)? == tag {
+            let start = read_u32(bytes, record.checked_add(8)?)? as usize;
+            let len = read_u32(bytes, record.checked_add(12)?)? as usize;
+            return bytes.get(start..start.checked_add(len)?);
+        }
+    }
+    None
+}
+
+fn face_name(bytes: &[u8]) -> Option<String> {
+    let count = read_u16(bytes, 2)? as usize;
+    let storage = read_u16(bytes, 4)? as usize;
+    for i in 0..count {
+        let at = 6 + i * 12;
+        // Prefer a Unicode/Windows full font name (includes the style).
+        if !matches!(read_u16(bytes, at)?, 0 | 3) || read_u16(bytes, at + 6)? != 4 {
+            continue;
+        }
+        let len = read_u16(bytes, at + 8)? as usize;
+        let start = storage.checked_add(read_u16(bytes, at + 10)? as usize)?;
+        let raw = bytes.get(start..start.checked_add(len)?)?;
+        let utf16: Vec<_> = raw
+            .as_chunks::<2>()
+            .0
+            .iter()
+            .map(|c| u16::from_be_bytes([c[0], c[1]]))
+            .collect();
+        if let Ok(name) = String::from_utf16(&utf16) {
+            return Some(name);
+        }
+    }
+    None
+}
+
+fn face_info(bytes: &[u8], index: u32) -> Option<FaceInfo> {
+    let offset = face_offset(bytes, index)?;
+    let os2 = table(bytes, offset, b"OS/2");
+    let style = table(bytes, offset, b"head")
+        .and_then(|t| read_u16(t, 44))
+        .unwrap_or(0);
+    Some(FaceInfo {
+        index,
+        weight: os2
+            .and_then(|t| read_u16(t, 4))
+            .unwrap_or(if style & 1 != 0 { 700 } else { 400 }),
+        italic: style & 2 != 0 || os2.and_then(|t| read_u16(t, 62)).unwrap_or(0) & 1 != 0,
+        name: table(bytes, offset, b"name")
+            .and_then(face_name)
+            .unwrap_or_default(),
+    })
+}
+
+fn face_count(bytes: &[u8]) -> u32 {
+    if bytes.get(..4) == Some(b"ttcf") {
+        // The offset array must fit in the input; bound iteration on corrupt files.
+        read_u32(bytes, 8)
+            .unwrap_or(0)
+            .min(bytes.len().saturating_sub(12) as u32 / 4)
+    } else {
+        1
+    }
+}
+
+fn select_face(bytes: &[u8], required: &str) -> Option<FaceInfo> {
+    (0..face_count(bytes))
+        .filter_map(|index| face_info(bytes, index))
+        .filter(|face| !face.italic && (350..=500).contains(&face.weight))
+        .filter(|face| {
+            FontRef::try_from_slice_and_index(bytes, face.index)
+                .map(|f| required.chars().all(|c| f.glyph_id(c).0 != 0))
+                .unwrap_or(false)
+        })
+        .min_by_key(|face| (face.weight.abs_diff(400), face.index))
+}
+
+fn load_font(path: &str, required: &str) -> Option<FontArc> {
     let bytes = std::fs::read(PathBuf::from(path)).ok()?;
-    // .ttc collections: take the first face (index 0 is the family default).
-    FontArc::try_from_vec(bytes).ok()
+    let face = select_face(&bytes, required)?;
+    FontVec::try_from_vec_and_index(bytes, face.index)
+        .ok()
+        .map(FontArc::new)
 }
 
 /// The loaded system fonts: `[0]` primary UI font, `[1..]` fallbacks
@@ -145,8 +261,8 @@ fn fonts() -> &'static [FontArc] {
     static FONTS: OnceLock<Vec<FontArc>> = OnceLock::new();
     FONTS.get_or_init(|| {
         let mut out = Vec::new();
-        for slot in candidates() {
-            if let Some(font) = slot.iter().find_map(|p| load_font(p)) {
+        for (slot, required) in candidates().into_iter().zip(["Aa09", "가한글"]) {
+            if let Some(font) = slot.iter().find_map(|p| load_font(p, required)) {
                 out.push(font);
             }
         }
@@ -158,6 +274,52 @@ fn fonts() -> &'static [FontArc] {
 /// exotic distros may have none; text then renders as tofu boxes).
 pub fn available() -> bool {
     !fonts().is_empty()
+}
+
+/// Headless font inventory for platform CI and the `font_diagnostics` example.
+/// Includes every candidate face so collection ordering and rejected styles
+/// remain visible even when another candidate is selected.
+pub fn diagnostics() -> String {
+    use std::fmt::Write;
+    let mut report = String::new();
+    for (slot, required) in candidates().into_iter().zip(["Aa09", "가한글"]) {
+        let mut selected = false;
+        for path in slot {
+            let Ok(bytes) = std::fs::read(&path) else {
+                let _ = writeln!(report, "missing {path}");
+                continue;
+            };
+            let choice = select_face(&bytes, required);
+            for index in 0..face_count(&bytes) {
+                let Some(info) = face_info(&bytes, index) else {
+                    continue;
+                };
+                let Ok(font) = FontRef::try_from_slice_and_index(&bytes, index) else {
+                    continue;
+                };
+                let chosen = !selected && choice.as_ref().map(|f| f.index) == Some(index);
+                let scaled = font.as_scaled(1.4 * EM_PER_PX);
+                let ascii = (' '..='~').all(|c| font.glyph_id(c).0 != 0);
+                let hangul = "가나다라마바사안녕하세요클립캣한글힣"
+                    .chars()
+                    .all(|c| font.glyph_id(c).0 != 0);
+                let _ = writeln!(report,
+                    "{} path={path} face={index} name={:?} weight={} italic={} ascii={ascii} hangul={hangul} body_height={:.2} ascent={:.2} descent={:.2}",
+                    if chosen { "SELECTED" } else { "candidate" }, info.name, info.weight, info.italic,
+                    scaled.height(), scaled.ascent(), scaled.descent());
+            }
+            selected |= choice.is_some();
+        }
+    }
+    let _ = writeln!(
+        report,
+        "combined_ascii={} combined_hangul={}",
+        (' '..='~').all(|c| glyph_for(c).is_some()),
+        "가나다라마바사안녕하세요클립캣한글힣"
+            .chars()
+            .all(|c| glyph_for(c).is_some())
+    );
+    report
 }
 
 /// (font index, glyph) for `c`, preferring the primary font. `None` when no
@@ -383,6 +545,113 @@ pub fn draw(pm: &mut Pixmap, text: &str, x: f32, y: f32, px: f32, rgba: (u8, u8,
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // Build a collection around real system font tables, with Thin first and
+    // Regular second. No font assets are bundled; the outlines are parsed and
+    // rasterized by ab_glyph just as they are in production.
+    fn thin_first_collection() -> Option<Vec<u8>> {
+        let font = fonts().first()?;
+        let source = font.font_data();
+        let face = select_face(source, "Aa09")?;
+        let offset = face_offset(source, face.index)?;
+        let tables = read_u16(source, offset + 4)? as usize;
+        let directory = source.get(offset..offset + 12 + tables * 16)?;
+        let mut bytes = b"ttcf\0\x01\0\0\0\0\0\x02\0\0\0\0\0\0\0\0".to_vec();
+        let source_start = bytes.len();
+        bytes.extend_from_slice(source);
+        for (index, weight) in [100u16, 400].into_iter().enumerate() {
+            let start = bytes.len();
+            bytes[12 + index * 4..16 + index * 4].copy_from_slice(&(start as u32).to_be_bytes());
+            bytes.extend_from_slice(directory);
+            for i in 0..tables {
+                let record = start + 12 + i * 16;
+                let old_offset = read_u32(&bytes, record + 8)? as usize;
+                let mut new_offset = source_start + old_offset;
+                if &bytes[record..record + 4] == b"OS/2" {
+                    let table = table(source, offset, b"OS/2")?;
+                    new_offset = bytes.len();
+                    bytes.extend_from_slice(table);
+                    bytes[new_offset + 4..new_offset + 6].copy_from_slice(&weight.to_be_bytes());
+                }
+                bytes[record + 8..record + 12].copy_from_slice(&(new_offset as u32).to_be_bytes());
+            }
+        }
+        Some(bytes)
+    }
+
+    #[test]
+    fn collection_selects_regular_instead_of_thin_first_face() {
+        let Some(bytes) = thin_first_collection() else {
+            return;
+        };
+        assert_eq!(face_info(&bytes, 0).unwrap().weight, 100);
+        let selected = select_face(&bytes, "Aa09").unwrap();
+        assert_eq!(selected.index, 1);
+        assert_eq!(selected.weight, 400);
+        let font = FontVec::try_from_vec_and_index(bytes, selected.index).unwrap();
+        let glyph = font.glyph_id('A').with_scale(13.0);
+        assert!(
+            font.outline_glyph(glyph).is_some(),
+            "selected real font must rasterize"
+        );
+    }
+
+    #[test]
+    fn malformed_font_metadata_is_rejected_without_panicking() {
+        for bytes in [
+            &b""[..],
+            &b"ttcf"[..],
+            &b"ttcf\0\x01\0\0\xff\xff\xff\xff"[..],
+        ] {
+            assert!(select_face(bytes, "A").is_none());
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn macos_system_fonts_cover_english_and_korean_with_regular_faces() {
+        let details = diagnostics();
+        assert!(
+            (' '..='~').all(|c| glyph_for(c).is_some()),
+            "ASCII coverage missing:\n{details}"
+        );
+        assert!(
+            "가나다라마바사안녕하세요클립캣한글힣"
+                .chars()
+                .all(|c| glyph_for(c).is_some()),
+            "Hangul coverage missing:\n{details}"
+        );
+        assert_eq!(fonts().len(), 2, "Both font slots must load:\n{details}");
+    }
+
+    #[test]
+    fn mixed_body_text_fits_clipboard_row_at_one_and_two_times_scale() {
+        for scale in [1.0, 2.0] {
+            let mut pm = Pixmap::new((360.0 * scale) as u32, (34.0 * scale) as u32).unwrap();
+            draw(
+                &mut pm,
+                "Clipboard 클립보드 한글 0123456789",
+                8.0,
+                8.0,
+                1.4,
+                (30, 35, 40, 255),
+                Transform::from_scale(scale, scale),
+            );
+            let rows: Vec<_> = pm
+                .data()
+                .chunks_exact(pm.width() as usize * 4)
+                .enumerate()
+                .filter(|(_, row)| row.chunks(4).any(|p| p[3] != 0))
+                .map(|(y, _)| y)
+                .collect();
+            assert!(!rows.is_empty());
+            assert!(
+                *rows.first().unwrap() > 0 && *rows.last().unwrap() < pm.height() as usize - 1,
+                "mixed glyphs touch row boundary at scale {scale}: {rows:?}\n{}",
+                diagnostics()
+            );
+        }
+    }
 
     #[test]
     fn measure_is_monotonic_and_truncate_fits() {

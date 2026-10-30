@@ -42,7 +42,7 @@ pub struct ClipPick {
 /// At most this many fish queue up during copy bursts.
 const FISH_QUEUE_MAX: usize = 1;
 
-/// Logical window size in physical pixels for a given scale (cat only).
+/// Logical window size for a given selectable cat scale (cat only).
 pub fn window_size(scale: f32) -> (i32, i32) {
     (
         (render::CANVAS_W * scale).round() as i32,
@@ -614,8 +614,8 @@ impl Pet {
         self.panel.open && !self.flyout
     }
 
-    /// Physical-pixel size of the flyout window (card + margins). The backend
-    /// uses it to size/resize the flyout window; valid regardless of state.
+    /// Logical size of the flyout window (card + margins). Backends apply
+    /// their device density when allocating physical buffers and windows.
     pub fn flyout_size(&self) -> (i32, i32) {
         let l = self.panel.layout_standalone();
         (l.canvas_w.round() as i32, l.canvas_h.round() as i32)
@@ -628,8 +628,13 @@ impl Pet {
     ///
     /// [`open_flyout`]: Pet::open_flyout
     pub fn render_flyout(&self, pm: &mut Pixmap) {
+        self.render_flyout_at_density(pm, 1.0);
+    }
+
+    /// The panel keeps logical geometry while glyphs rasterize at device density.
+    pub fn render_flyout_at_density(&self, pm: &mut Pixmap, density: f32) {
         pm.fill(tiny_skia::Color::TRANSPARENT);
-        render::draw_panel(pm, &self.build_panel_view(self.now_t()));
+        render::draw_panel_scaled(pm, &self.build_panel_view(self.now_t()), density);
     }
 
     /// Returns true once after a flyout grip-resize changed the card size, so
@@ -1333,16 +1338,21 @@ impl Pet {
 
     /// Draws onto a transparent canvas (native layered-window backend).
     pub fn render(&self, pm: &mut Pixmap) {
-        self.draw(pm, false);
+        self.draw(pm, false, 1.0);
     }
 
     /// Draws onto an opaque card background (portable backend).
     pub fn render_card(&self, pm: &mut Pixmap) {
-        self.draw(pm, true);
+        self.draw(pm, true, 1.0);
+    }
+
+    /// Renders the complete logical scene directly into a native-density pixmap.
+    pub fn render_at_density(&self, pm: &mut Pixmap, density: f32) {
+        self.draw(pm, false, density);
     }
 
     /// Builds the scene and rasterizes it with the chosen background.
-    fn draw(&self, pm: &mut Pixmap, card: bool) {
+    fn draw(&self, pm: &mut Pixmap, card: bool, density: f32) {
         let t = self.now_t();
         let blink = self.blink(t);
         let excite = self.excite();
@@ -1411,14 +1421,14 @@ impl Pet {
         if card {
             render::render_card(pm, &scene, self.scale());
         } else {
-            render::render(pm, &scene, self.scale());
+            render::render_at_density(pm, &scene, self.scale(), density);
         }
         // A flyout-owned panel is drawn in its own window, not here.
         if self.panel.open && !self.flyout {
             if let Some(picker) = &self.cat_picker {
                 let l = self.panel.layout();
-                picker.draw(pm, (l.card_x, l.card_y), self.lang());
-            } else { render::draw_panel(pm, &self.build_panel_view(t)); }
+                picker.draw_scaled(pm, (l.card_x, l.card_y), self.lang(), density);
+            } else { render::draw_panel_scaled(pm, &self.build_panel_view(t), density); }
         }
     }
 

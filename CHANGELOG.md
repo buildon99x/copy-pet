@@ -33,6 +33,10 @@ versions follow [SemVer](https://semver.org/). Maintenance rules:
   cat characters. Existing saved statistics and preferences remain compatible.
 
 ### Fixed
+- macOS Retina clipboard windows now keep their intended point size and render
+  text at native display density. Pointer/resize coordinates follow display
+  scaling, system font collections choose upright Regular faces, and secondary
+  panel text has stronger contrast.
 - Pausing collection or hiding the cat immediately clears remaining copy effects.
 
 ## [2.4.0] - 2026-10-30

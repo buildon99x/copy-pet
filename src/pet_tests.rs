@@ -784,3 +784,62 @@ fn fish_approach_stays_below_each_current_pose_mouth_for_every_cat() {
             "the approach still finishes exactly at the authored capture mouth");
     }
 }
+
+#[test]
+fn retina_flyout_renders_the_whole_logical_card_at_native_density() {
+    let mut p = pet();
+    p.open_flyout();
+    let (w, h) = p.flyout_size();
+    let mut pm = Pixmap::new(w as u32 * 2, h as u32 * 2).unwrap();
+    p.render_flyout_at_density(&mut pm, 2.0);
+    let l = p.panel.layout_standalone();
+    let x = ((l.card_x + l.card_w - 12.0) * 2.0) as u32;
+    let y = ((l.card_y + 60.0) * 2.0) as u32;
+    assert!(pm.pixel(x, y).unwrap().alpha() > 200, "2x panel must cover its physical right edge");
+}
+
+#[test]
+fn retina_panel_text_is_rasterized_in_device_pixels() {
+    let mut p = pet();
+    p.st.set_lang(crate::i18n::Lang::En);
+    p.open_flyout();
+    let (w, h) = p.flyout_size();
+    let mut pm = Pixmap::new(w as u32 * 2, h as u32 * 2).unwrap();
+    p.render_flyout_at_density(&mut pm, 2.0);
+    // Only header text, away from rounded edges, fish and button vectors.
+    // A nearest-neighbour enlargement of a 1x glyph repeats every 2x2 block.
+    let mut detailed = 0;
+    for y in (26..56).step_by(2) {
+        for x in (72..280).step_by(2) {
+            let a = pm.pixel(x, y).unwrap();
+            if [pm.pixel(x + 1, y), pm.pixel(x, y + 1), pm.pixel(x + 1, y + 1)]
+                .into_iter().any(|b| b.unwrap() != a) { detailed += 1; }
+        }
+    }
+    assert!(detailed > 40, "glyph edges need native 2x detail: {detailed}");
+}
+
+#[test]
+fn retina_pointer_hits_and_resize_preserve_logical_panel_geometry() {
+    let mut p = pet();
+    p.open_flyout();
+    let d = crate::viewport::Density::new(2.0);
+    let l = p.panel.layout_standalone();
+    let (x, y) = d.logical(((l.card_x + 100.0) as f64 * 2.0, (l.card_y + 100.0) as f64 * 2.0));
+    assert!(p.panel_hit(x, y));
+    let (gx, gy) = d.logical((((l.card_x + l.card_w - 4.0) * 2.0) as f64,
+        ((l.card_y + l.card_h - 4.0) * 2.0) as f64));
+    assert!(p.panel_drag_start(gx, gy));
+    let (dx, dy) = d.logical((80.0, 48.0));
+    p.panel_drag_update(dx, dy);
+    p.panel_drag_end();
+    assert_eq!(p.panel.w, l.card_w + 40.0);
+    assert_eq!(p.panel.h, l.card_h + 24.0);
+    assert_eq!((p.st.panel_w, p.st.panel_h), (p.panel.w, p.panel.h));
+    let (w, h) = p.flyout_size();
+    let mut normal = Pixmap::new(w as u32, h as u32).unwrap();
+    let mut explicit = normal.clone();
+    p.render_flyout(&mut normal);
+    p.render_flyout_at_density(&mut explicit, 1.0);
+    assert_eq!(normal.data(), explicit.data(), "1x backend pixels stay identical");
+}

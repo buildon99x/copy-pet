@@ -45,6 +45,7 @@ use crate::hotkey::Hotkey;
 use crate::input;
 use crate::panel::{self, fit_delta, NavKey, Rect};
 use crate::pet::{ClipPick, Pet};
+use crate::viewport::Density;
 
 /// A clipboard observation handed from the watcher thread to the main loop:
 /// the plain text plus any rich formats the platform could read (macOS only;
@@ -64,11 +65,20 @@ use std::time::{Duration, Instant};
 
 use winit::application::ApplicationHandler;
 use winit::dpi::{PhysicalPosition, PhysicalSize};
+#[cfg(target_os = "macos")]
+use winit::dpi::LogicalSize;
+
 use winit::event::{ElementState, Ime, MouseButton, MouseScrollDelta, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
 use winit::keyboard::{KeyCode, ModifiersState, PhysicalKey};
 use winit::window::{Window, WindowId, WindowLevel};
 
+fn window_density(window: &Window) -> Density {
+    #[cfg(target_os = "macos")]
+    { Density::new(window.scale_factor()) }
+    #[cfg(not(target_os = "macos"))]
+    { let _ = window; Density::new(1.0) }
+}
 const TICK: Duration = Duration::from_millis(33);
 const DBLCLICK: Duration = Duration::from_millis(350);
 /// Clipboard poll cadence (arboard has no change notifications).
@@ -100,6 +110,7 @@ struct PortableApp {
     #[cfg(target_os = "macos")]
     presenter: Option<super::mac_present::Presenter>,
     pm: tiny_skia::Pixmap,
+    density: Density,
     w: u32,
     h: u32,
     last_frame: Instant,
@@ -151,6 +162,7 @@ struct Flyout {
     window: Rc<Window>,
     presenter: Option<super::mac_present::Presenter>,
     pm: tiny_skia::Pixmap,
+    density: Density,
     w: u32,
     h: u32,
     cursor: PhysicalPosition<f64>,
@@ -192,13 +204,13 @@ fn monitor_rect(window: &Window) -> Option<Rect> {
 }
 
 /// Screen rect of a panel card whose window sits at `(origin_x, origin_y)`.
-fn card_rect(origin_x: f32, origin_y: f32, l: &panel::Layout) -> Rect {
-    Rect {
-        x: origin_x + l.card_x,
-        y: origin_y + l.card_y,
+fn card_rect(origin_x: f32, origin_y: f32, l: &panel::Layout, density: Density) -> Rect {
+    density.screen_rect((origin_x, origin_y), Rect {
+        x: l.card_x,
+        y: l.card_y,
         w: l.card_w,
         h: l.card_h,
-    }
+    })
 }
 
 impl PortableApp {
@@ -227,6 +239,7 @@ impl PortableApp {
             #[cfg(target_os = "macos")]
             presenter: None,
             pm: tiny_skia::Pixmap::new(w as u32, h as u32).unwrap(),
+            density: Density::new(1.0),
             w: w as u32,
             h: h as u32,
             last_frame: Instant::now(),
@@ -260,10 +273,10 @@ impl PortableApp {
             return;
         };
         let fit = self.pet.take_fit_panel();
-        let (nw, nh) = self.pet.canvas_size();
-        let (nw, nh) = (nw as u32, nh as u32);
+        let (nw, nh) = self.density.physical_size(self.pet.canvas_size());
 
-        let (dx, dy) = self.pet.take_window_shift();
+        let shift = self.pet.take_window_shift();
+        let (dx, dy) = self.density.physical_shift(shift);
         if (dx, dy) != (0, 0) {
             if let Ok(pos) = window.outer_position() {
                 window.set_outer_position(PhysicalPosition::new(pos.x + dx, pos.y + dy));
@@ -299,13 +312,13 @@ impl PortableApp {
     /// the screen at all.
     fn panel_fit_shift(&self, window: &Window) -> Option<(f32, f32)> {
         let win = window.outer_position().ok()?;
-        // layout() is already in physical pixels (card at scale 1.0), so the
-        // card's screen rect is just the window origin plus the card offset.
+        // Monitor fit runs in physical screen pixels; return logical core units.
         let l = self.pet.panel.layout();
-        let card = card_rect(win.x as f32, win.y as f32, &l);
+        let card = card_rect(win.x as f32, win.y as f32, &l, self.density);
         let vis = monitor_rect(window)?;
         let (dx, dy) = fit_delta(card, vis);
-        (dx.abs() >= 0.5 || dy.abs() >= 0.5).then_some((dx, dy))
+        (dx.abs() >= 0.5 || dy.abs() >= 0.5)
+            .then_some(self.density.logical((dx as f64, dy as f64)))
     }
 
     /// Cursor position in screen coordinates (window position + local
@@ -339,7 +352,7 @@ impl PortableApp {
     /// opaque "card" and blits it with softbuffer (ADR-0003 / LNR-0001).
     #[cfg(target_os = "macos")]
     fn paint(&mut self) {
-        self.pet.render(&mut self.pm);
+        self.pet.render_at_density(&mut self.pm, self.density.scale());
         let scale = self.window.as_ref().map(|w| w.scale_factor()).unwrap_or(1.0);
         if let Some(presenter) = self.presenter.as_mut() {
             presenter.present(&self.pm, scale);
@@ -363,11 +376,9 @@ impl PortableApp {
         let _ = buf.present();
     }
 
-    /// Cursor in window-client physical pixels. The panel is hit-tested at
-    /// scale 1.0 (its coords are physical) and `Pet::cat_point` divides by the
-    /// cat scale itself, so neither needs pre-division here.
+    /// Convert the raw physical cursor once at the logical core boundary.
     fn client_xy(&self) -> (f32, f32) {
-        (self.cursor.x as f32, self.cursor.y as f32)
+        self.density.logical((self.cursor.x, self.cursor.y))
     }
 
     /// Clears the pending single/double-click state — used whenever a press
@@ -637,7 +648,7 @@ impl PortableApp {
         if self.flyout.is_none() {
             let attrs = Window::default_attributes()
                 .with_title("ClipCat Clipboard")
-                .with_inner_size(PhysicalSize::new(fw, fh))
+                .with_inner_size(LogicalSize::new(fw, fh))
                 .with_decorations(false)
                 .with_transparent(true)
                 .with_resizable(false)
@@ -652,6 +663,7 @@ impl PortableApp {
                 window: win,
                 presenter,
                 pm: tiny_skia::Pixmap::new(fw, fh).unwrap(),
+                density: Density::new(1.0),
                 w: fw,
                 h: fh,
                 cursor: PhysicalPosition::new(0.0, 0.0),
@@ -660,7 +672,6 @@ impl PortableApp {
                 drag_screen: (0.0, 0.0),
             });
         }
-        self.resize_flyout_buffers();
         self.place_flyout(super::mac_caret::caret_screen_pos());
         if let Some(f) = self.flyout.as_ref() {
             f.window.set_visible(true);
@@ -675,6 +686,7 @@ impl PortableApp {
         let (fw, fh) = self.pet.flyout_size();
         let (fw, fh) = (fw as u32, fh as u32);
         if let Some(f) = self.flyout.as_mut() {
+            let (fw, fh) = f.density.physical_size((fw as i32, fh as i32));
             if (fw, fh) != (f.w, f.h) {
                 let _ = f.window.request_inner_size(PhysicalSize::new(fw, fh));
                 f.w = fw;
@@ -689,31 +701,36 @@ impl PortableApp {
     /// top-left when no anchor is available.
     fn place_flyout(&mut self, anchor: Option<(f64, f64)>) {
         let l = self.pet.panel.layout_standalone();
-        let Some(f) = self.flyout.as_ref() else {
+        let Some(f) = self.flyout.as_mut() else {
             return;
         };
         let (ax, ay) = anchor.unwrap_or((40.0, 40.0));
         // window top-left so the card (at card_x/card_y inside it) hits anchor
-        let mut wx = ax - l.card_x as f64;
-        let mut wy = ay - l.card_y as f64;
+        let mut wx = ax;
+        let mut wy = ay;
         // park there first so current_monitor resolves the anchor's monitor
         f.window
             .set_outer_position(PhysicalPosition::new(wx as i32, wy as i32));
+        f.density = Density::new(f.window.current_monitor()
+            .map(|m| m.scale_factor()).unwrap_or_else(|| f.window.scale_factor()));
+        wx -= l.card_x as f64 * f.density.scale() as f64;
+        wy -= l.card_y as f64 * f.density.scale() as f64;
         if let Some(vis) = monitor_rect(&f.window) {
-            let card = card_rect(wx as f32, wy as f32, &l);
+            let card = card_rect(wx as f32, wy as f32, &l, f.density);
             let (dx, dy) = fit_delta(card, vis);
             wx += dx as f64;
             wy += dy as f64;
         }
         f.window
             .set_outer_position(PhysicalPosition::new(wx as i32, wy as i32));
+        self.resize_flyout_buffers();
     }
 
     fn paint_flyout(&mut self) {
         let Some(f) = self.flyout.as_mut() else {
             return;
         };
-        self.pet.render_flyout(&mut f.pm);
+        self.pet.render_flyout_at_density(&mut f.pm, f.density.scale());
         let scale = f.window.scale_factor();
         if let Some(p) = f.presenter.as_mut() {
             p.present(&f.pm, scale);
@@ -740,12 +757,36 @@ impl PortableApp {
     fn flyout_window_event(&mut self, event: WindowEvent) {
         match event {
             WindowEvent::RedrawRequested => self.paint_flyout(),
+            WindowEvent::ScaleFactorChanged { scale_factor, mut inner_size_writer } => {
+                if let Some(f) = self.flyout.as_mut() {
+                    f.density = Density::new(scale_factor);
+                    let (w, h) = f.density.physical_size(self.pet.flyout_size());
+                    let _ = inner_size_writer.request_inner_size(PhysicalSize::new(w, h));
+                    f.move_drag = false;
+                    f.resize_drag = false;
+                }
+                self.pet.panel_drag_end();
+                self.pet.clear_cursor();
+                self.resize_flyout_buffers();
+                if let Some(f) = self.flyout.as_ref() {
+                    if let (Ok(pos), Some(vis)) = (f.window.outer_position(), monitor_rect(&f.window)) {
+                        let l = self.pet.panel.layout_standalone();
+                        let card = card_rect(pos.x as f32, pos.y as f32, &l, f.density);
+                        let (dx, dy) = fit_delta(card, vis);
+                        f.window.set_outer_position(PhysicalPosition::new(
+                            pos.x + dx.round() as i32, pos.y + dy.round() as i32));
+                    }
+                }
+                self.paint_flyout();
+            }
             WindowEvent::Focused(false) | WindowEvent::CloseRequested => self.close_flyout(),
             WindowEvent::CursorMoved { position, .. } => {
                 if let Some(f) = self.flyout.as_mut() {
                     f.cursor = position;
                 }
-                self.pet.set_cursor(position.x as f32, position.y as f32);
+                let density = self.flyout.as_ref().map(|f| f.density).unwrap_or(Density::new(1.0));
+                let (cx, cy) = density.logical((position.x, position.y));
+                self.pet.set_cursor(cx, cy);
                 let (mv, rz) = self
                     .flyout
                     .as_ref()
@@ -766,7 +807,8 @@ impl PortableApp {
                                 }
                             }
                         } else {
-                            self.pet.panel_drag_update(dx as f32, dy as f32);
+                            let (dx, dy) = density.logical((dx, dy));
+                            self.pet.panel_drag_update(dx, dy);
                         }
                         if let Some(f) = self.flyout.as_mut() {
                             f.drag_screen = sc;
@@ -783,7 +825,7 @@ impl PortableApp {
                     let (cx, cy) = self
                         .flyout
                         .as_ref()
-                        .map(|f| (f.cursor.x as f32, f.cursor.y as f32))
+                        .map(|f| f.density.logical((f.cursor.x, f.cursor.y)))
                         .unwrap_or((0.0, 0.0));
                     if self.pet.panel_drag_start(cx, cy) {
                         let kind = self.pet.panel_drag_kind();
@@ -873,7 +915,10 @@ impl ApplicationHandler for PortableApp {
         if self.window.is_some() {
             return;
         }
-        let (w, h) = (self.w as i32, self.h as i32);
+        let (w, h) = self.pet.canvas_size();
+        let initial_density = event_loop.primary_monitor()
+            .map(|m| if cfg!(target_os = "macos") { m.scale_factor() } else { 1.0 }).unwrap_or(1.0);
+        let (pw, ph) = Density::new(initial_density).physical_size((w, h));
 
         // initial position: saved, else bottom-right of the primary monitor
         let pos = if self.pet.st.has_pos {
@@ -883,7 +928,7 @@ impl ApplicationHandler for PortableApp {
                 .primary_monitor()
                 .map(|m| (m.size().width as i32, m.size().height as i32))
                 .unwrap_or((1920, 1080));
-            PhysicalPosition::new(mw - w - 40, mh - h - 64)
+            PhysicalPosition::new(mw - pw as i32 - 40, mh - ph as i32 - 64)
         };
 
         // macOS presents through a non-opaque CALayer (transparent, floating
@@ -898,6 +943,8 @@ impl ApplicationHandler for PortableApp {
             .with_resizable(false)
             .with_window_level(WindowLevel::AlwaysOnTop);
 
+        #[cfg(target_os = "macos")]
+        let attrs = attrs.with_inner_size(LogicalSize::new(w, h));
         let window = match event_loop.create_window(attrs) {
             Ok(win) => Rc::new(win),
             Err(_) => {
@@ -922,7 +969,12 @@ impl ApplicationHandler for PortableApp {
             self.presenter = super::mac_present::Presenter::new(&window);
         }
 
+        self.density = window_density(&window);
         self.window = Some(window);
+        let (w, h) = self.density.physical_size(self.pet.canvas_size());
+        self.w = w;
+        self.h = h;
+        self.pm = tiny_skia::Pixmap::new(w, h).unwrap();
         self.resize_surface();
         self.last_frame = Instant::now();
         self.paint();
@@ -945,6 +997,26 @@ impl ApplicationHandler for PortableApp {
                 event_loop.exit();
             }
             WindowEvent::RedrawRequested => self.paint(),
+            #[cfg(target_os = "macos")]
+            WindowEvent::ScaleFactorChanged { scale_factor, mut inner_size_writer } => {
+                self.density = Density::new(scale_factor);
+                let (w, h) = self.density.physical_size(self.pet.canvas_size());
+                let _ = inner_size_writer.request_inner_size(PhysicalSize::new(w, h));
+                self.panel_dragging = false;
+                self.cat_drag = false;
+                self.reset_click_state();
+                self.pet.panel_drag_end();
+                self.pet.clear_cursor();
+                self.apply_size();
+                if self.pet.embedded_panel_open() {
+                    if let Some(window) = self.window.as_ref() {
+                        if let Some((dx, dy)) = self.panel_fit_shift(window) {
+                            self.pet.shift_panel(dx, dy);
+                            self.apply_size();
+                        }
+                    }
+                }
+            }
             WindowEvent::CursorEntered { .. } => self.pet.set_hover(true),
             WindowEvent::CursorLeft { .. } => {
                 self.pet.set_hover(false);
@@ -956,21 +1028,21 @@ impl ApplicationHandler for PortableApp {
                 self.pet.set_cursor(cx, cy);
                 if self.panel_dragging || self.cat_drag {
                     // card drag / cat-body drag (mirror images of each other):
-                    // screen-pixel deltas are panel units (1.0); the tick
-                    // applies the new layout (resize + window shift)
+                    // Keep screen deltas raw until crossing into logical core units.
                     let sc = self.screen_cursor();
                     let (dx, dy) = (sc.0 - self.drag_screen.0, sc.1 - self.drag_screen.1);
                     if dx != 0.0 || dy != 0.0 {
+                        let (dx, dy) = self.density.logical((dx, dy));
                         if self.panel_dragging {
-                            self.pet.panel_drag_update(dx as f32, dy as f32);
+                            self.pet.panel_drag_update(dx, dy);
                         } else {
-                            self.pet.drag_pet(dx as f32, dy as f32);
+                            self.pet.drag_pet(dx, dy);
                         }
                         self.drag_screen = sc;
                     }
                 } else if self.mouse_down && !self.dragging && !self.pet.st.locked {
-                    let dx = position.x - self.press_pos.x;
-                    let dy = position.y - self.press_pos.y;
+                    let (dx, dy) = self.density.logical((position.x - self.press_pos.x,
+                        position.y - self.press_pos.y));
                     if dx * dx + dy * dy > 9.0 {
                         self.dragging = true;
                         self.mouse_down = false;

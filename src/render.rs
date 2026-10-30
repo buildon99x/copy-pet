@@ -20,7 +20,8 @@ pub const CANVAS_H: f32 = 256.0;
 const OUTLINE: (u8, u8, u8, u8) = (84, 72, 58, 255);
 const FUR: (u8, u8, u8, u8) = (250, 247, 242, 255);
 const TEXT: (u8, u8, u8, u8) = (84, 72, 58, 255);
-const TEXT_DIM: (u8, u8, u8, u8) = (149, 138, 124, 255);
+// Secondary copy remains readable on search, selected-row and card backgrounds.
+const TEXT_DIM: (u8, u8, u8, u8) = (105, 97, 87, 255);
 const FISH_BLUE: (u8, u8, u8) = (108, 160, 220);
 const ROW_SEL: (u8, u8, u8, u8) = (208, 228, 248, 200);
 const ROW_HOVER: (u8, u8, u8, u8) = (226, 238, 250, 150);
@@ -280,7 +281,7 @@ pub const CARD_BG: (u8, u8, u8, u8) = (216, 231, 246, 255);
 /// where transparent pixels let the desktop show through and are click-through.
 pub fn render(pm: &mut Pixmap, sc: &Scene, scale: f32) {
     pm.fill(tiny_skia::Color::TRANSPARENT);
-    draw_scene(pm, sc, scale);
+    draw_scene(pm, sc, scale, 1.0);
 }
 
 /// Render onto an opaque rounded "card" — used by the portable backend, whose
@@ -301,15 +302,22 @@ pub fn render_card(pm: &mut Pixmap, sc: &Scene, scale: f32) {
         cv.stroke(&frame, (255, 255, 255, 150), 3.0);
         cv.stroke(&frame, fade(OUTLINE, 0.30), 1.5);
     }
-    draw_scene(pm, sc, scale);
+    draw_scene(pm, sc, scale, 1.0);
 }
 
-fn draw_scene(pm: &mut Pixmap, sc: &Scene, scale: f32) {
+/// Rasterizes at native backing density, including text before glyph lookup.
+pub fn render_at_density(pm: &mut Pixmap, sc: &Scene, scale: f32, density: f32) {
+    pm.fill(tiny_skia::Color::TRANSPARENT);
+    draw_scene(pm, sc, scale, density);
+}
+
+fn draw_scene(pm: &mut Pixmap, sc: &Scene, scale: f32, density: f32) {
     let mut cv = Cv {
         pm,
         // origin is in physical pixels (the cat block's top-left in the union
         // canvas); translate after the scale so only the cat is scaled.
-        ts: Transform::from_scale(scale, scale).post_translate(sc.origin.0, sc.origin.1),
+        ts: Transform::from_scale(scale, scale).post_translate(sc.origin.0, sc.origin.1)
+            .post_scale(density, density),
     };
 
     // One cached illustrated character, with a brief copy-event compression.
@@ -592,13 +600,16 @@ pub struct PanelView<'a> {
 }
 
 /// Draws the clipboard panel card (geometry from [`crate::panel::Layout`]).
-/// The card always renders at scale 1.0 (panel units == physical pixels), so
-/// the layout is used verbatim with no scale transform — the cat's size never
-/// affects the panel.
+/// Layout remains in logical units, independent of the cat's size.
 pub fn draw_panel(pm: &mut Pixmap, v: &PanelView) {
+    draw_panel_scaled(pm, v, 1.0);
+}
+
+/// Applies backing density before rasterizing vectors, images and glyphs.
+pub fn draw_panel_scaled(pm: &mut Pixmap, v: &PanelView, density: f32) {
     let mut cv = Cv {
         pm,
-        ts: Transform::identity(),
+        ts: Transform::from_scale(density, density),
     };
     let lang = v.lang;
     let lt = v.panel.active_layout();
@@ -783,7 +794,7 @@ pub fn draw_panel(pm: &mut Pixmap, v: &PanelView) {
     let qy = sy + (sh - 7.0 * qpx) / 2.0;
     let query = v.panel.tag_edit.as_ref().map_or(v.panel.query.as_str(), |(_, draft)| draft.as_str());
     if query.is_empty() {
-        cv.ui_text(t(lang, if v.panel.tag_edit.is_some() { Msg::TagEditHint } else { Msg::SearchHint }), qx, qy, qpx, fade(TEXT_DIM, 0.8));
+        cv.ui_text(t(lang, if v.panel.tag_edit.is_some() { Msg::TagEditHint } else { Msg::SearchHint }), qx, qy, qpx, TEXT_DIM);
         if v.caret {
             cv.fill(&round_rect(qx - 3.0, sy + 3.0, 1.6, sh - 6.0, 0.8), fade(TEXT, 0.7));
         }
@@ -995,7 +1006,7 @@ pub fn draw_panel(pm: &mut Pixmap, v: &PanelView) {
                 cv.stroke(&chip, fade(OUTLINE, 0.35), 1.2);
                 let d = char::from(b'0' + idx as u8).to_string();
                 let dw = sysfont::measure(&d, 1.3);
-                cv.ui_text(&d, qcx - dw / 2.0, mid - 4.0, 1.3, fade(TEXT_DIM, 0.9));
+                cv.ui_text(&d, qcx - dw / 2.0, mid - 4.0, 1.3, TEXT_DIM);
             }
         }
 
@@ -1035,7 +1046,7 @@ pub fn draw_panel(pm: &mut Pixmap, v: &PanelView) {
         lt.card_x + lt.card_w - 10.0 - hw,
         lt.footer_y + 3.0,
         1.4,
-        fade(TEXT_DIM, 0.8),
+        TEXT_DIM,
     );
     let keys = sysfont::truncate_to_width(t(lang, if v.panel.tag_edit.is_some() { Msg::TagEditKeys } else { Msg::FooterKeys }), 1.25, lt.row_w);
     let kw = sysfont::measure(&keys, 1.25);
@@ -1044,7 +1055,7 @@ pub fn draw_panel(pm: &mut Pixmap, v: &PanelView) {
         lt.card_x + (lt.card_w - kw) / 2.0,
         lt.footer_y + 16.0,
         1.25,
-        fade(TEXT_DIM, 0.75),
+        TEXT_DIM,
     );
 
     // resize grip: three diagonal score lines in the bottom-right corner
@@ -1311,4 +1322,59 @@ pub fn draw_icon_scaled(pm: &mut Pixmap, k: f32) {
         cv.filled(&tail, fc, OUTLINE, 1.4, t);
         cv.fill(&oval(21.0, 26.8, 0.9, 0.9), OUTLINE);
     }
+}
+
+#[cfg(test)]
+mod readability_tests {
+    use super::*;
+
+    fn over(fg: (u8, u8, u8, u8), bg: (u8, u8, u8, u8)) -> (u8, u8, u8, u8) {
+        let a = fg.3 as f32 / 255.0;
+        let c = |f: u8, b: u8| (f as f32 * a + b as f32 * (1.0 - a)).round() as u8;
+        (c(fg.0, bg.0), c(fg.1, bg.1), c(fg.2, bg.2), 255)
+    }
+    fn luminance(c: (u8, u8, u8, u8)) -> f64 {
+        let linear = |v: u8| { let s = v as f64 / 255.0; if s <= 0.04045 { s / 12.92 } else { ((s + 0.055) / 1.055).powf(2.4) } };
+        0.2126 * linear(c.0) + 0.7152 * linear(c.1) + 0.0722 * linear(c.2)
+    }
+    #[test]
+    fn secondary_panel_text_meets_normal_text_contrast_on_actual_backgrounds() {
+        let white = (255, 255, 255, 255);
+        for background in [white, over(ROW_SEL, white), (243, 240, 235, 255), (226, 238, 253, 255), (229, 239, 251, 255)] {
+            let fg = over(TEXT_DIM, background);
+            let ratio = (luminance(background) + 0.05) / (luminance(fg) + 0.05);
+            assert!(ratio >= 4.5, "secondary text contrast {ratio:.2} on {background:?}");
+        }
+    }
+    #[test]
+    fn rendered_placeholder_and_footer_keep_readable_text_opacity() {
+        let mut panel = crate::panel::Panel::default();
+        panel.toggle();
+        panel.standalone = true;
+        let l = panel.active_layout();
+        let store = crate::clipboard::ClipStore::default();
+        let mut pm = Pixmap::new(l.canvas_w as u32, l.canvas_h as u32).unwrap();
+        draw_panel(&mut pm, &PanelView { panel: &panel, store: &store,
+            lang: Lang::En, capture: true, hint: "CMD+SHIFT+V", caret: false });
+        let workbench = panel.workbench_footer_text(Lang::En);
+        let wx = l.card_x + l.card_w - 10.0 - sysfont::measure(&workbench, 1.4);
+        for (name, x, y, w, h, background) in [
+            ("placeholder", l.search_x + 24.0, l.search_y + 5.0, 180.0, l.search_h - 9.0, (243, 240, 235, 255)),
+            ("workbench footer", wx, l.footer_y + 3.0, sysfont::measure(&workbench, 1.4), 12.0, (255, 255, 255, 255)),
+            ("keyboard hint", l.row_x + 5.0, l.footer_y + 16.0, l.row_w - 30.0, 11.0, (255, 255, 255, 255)),
+        ] {
+            let mut strongest: f64 = 0.0;
+            for py in y as u32..(y + h) as u32 {
+                for px in x as u32..(x + w) as u32 {
+                    let c = pm.pixel(px, py).unwrap();
+                    // tiny-skia stores premultiplied color; composite on white desktop.
+                    let a = 255 - c.alpha();
+                    let color = (c.red().saturating_add(a), c.green().saturating_add(a), c.blue().saturating_add(a), 255);
+                    strongest = strongest.max((luminance(background) + 0.05) / (luminance(color) + 0.05));
+                }
+            }
+            assert!(strongest >= 4.5, "{name} rendered text has only {strongest:.2} contrast");
+        }
+    }
+
 }

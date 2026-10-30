@@ -37,6 +37,7 @@ macOS와 Linux는 같은 코어를 사용하는 portable 백엔드로 동작한�
 - `ClipPick`은 텍스트, 서식, 붙여넣기 의도, 일반 텍스트 여부를 백엔드에 전달한다. Windows·macOS는 HTML/RTF를 보존하고 Linux는 일반 텍스트로 동작한다. Windows 네이티브는 PNG·DIB 이미지도 캡처하고 다시 복사한다. 검색·미리보기·중복 판정은 일반 텍스트를 기준으로 한다.
 - Windows 네이티브와 macOS의 핫키 패널은 별도 커서 기반 플라이아웃 창이다. 가운데 클릭은 고양이 창의 내장 패널을 사용한다. Linux·Windows portable은 내장 패널을 사용한다.
 - macOS 전역 입력은 `mac_input.rs`의 CoreGraphics 이벤트 탭을 사용한다. macOS 키보드 경로를 `rdev`로 되돌리지 않는다. macOS 투명 표시는 CALayer, Linux·Windows portable 표시는 불투명 softbuffer 카드다.
+- macOS UI는 논리 포인트로 계산하며 `viewport::Density`를 통해 창·입력 경계에서만 물리 픽셀과 변환한다. 폰트도 배율을 적용한 해상도로 직접 래스터화한다. TTC의 첫 서체를 Regular로 가정하지 않는다(ADR-0019).
 
 ### 변경 시 지켜야 할 계약
 

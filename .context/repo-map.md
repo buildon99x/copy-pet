@@ -19,6 +19,7 @@ src/
   render.rs            illustrated cat composition, vector fish/panel/bubble/icon
   sysfont.rs           system-font text for everything drawn (ab_glyph,
                        ADR-0007/0011); hollow tofu box for uncovered glyphs
+  viewport.rs          logical/physical density conversion at the macOS boundary (ADR-0019)
   hotkey.rs            panel-hotkey spec parsing ("win+shift+v") + display label
   cat.rs               stable twelve-character catalog, authored timings and mouth tracks
   cat_picker.rs        free selection gallery, static thumbnails and explicit small preview
@@ -67,6 +68,8 @@ src/
                        never element text; falls back to the mouse cursor.
   bin/gen_icon.rs      regenerates assets/clipcat.ico from render::draw_icon_scaled
 examples/preview.rs    renders representative frames to PNGs (headless review)
+examples/font_diagnostics.rs  selected font face/weight/coverage inventory and samples
+examples/review_at_density.rs  actual renderer 1x/2x clipboard/workbench/gallery previews
 examples/prepare_cat_atlas.rs  offline measured sprite extraction and foot alignment
 tests/e2e.rs           end-to-end core flows through the public Pet API
 tests/release_script.rs  e2e of scripts/release.sh in a scratch git repo (unix)

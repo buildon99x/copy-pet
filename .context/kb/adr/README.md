@@ -25,3 +25,4 @@ rather than rewrite.
 | [0016](0016-local-ai-request-workbench.md) | Explicit local AI request workbench, project trays and confirmed safe copies | Accepted |
 | [0017](0017-cached-illustrated-pet.md) | Cached illustrated ragdoll frames and visible-state redraws | Accepted |
 | [0018](0018-selected-cat-atlases.md) | Twelve cats, bounded selected art, free gallery and quiet input | Accepted |
+| [0019](0019-logical-ui-and-system-font-faces.md) | Logical macOS UI geometry, native-density text and explicit Regular faces | Accepted |
