@@ -43,6 +43,8 @@ Reproduce from the source-art artifact directory (manifest +3 PNGs + cuts):
 cargo run --locked --release --example prepare_affection -- SOURCE_DIRECTORY
 ```
 
-This preserves the original16 frames pixel-for-pixel and appends4 poses. The
-runtime accepts20–24 complete frames, bounded below4MiB; gallery previews retain
+This preserves all alpha values and every pixel with alpha>0 in the original16
+frames, and appends4 poses. Unused RGB beneath alpha0 canonicalizes during the
+premultiplied PNG roundtrip; visible/premultiplied art is unchanged. The runtime
+accepts20–24 complete frames, bounded below4MiB; gallery previews retain
 only their existing16 reduced frames and decode thumbnails sequentially.

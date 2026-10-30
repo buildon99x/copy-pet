@@ -133,3 +133,13 @@ be certified from Linux crosschecks. Controller will record actual Linux GUI use
 all12clicks, rapid/locked/blank/panel/drag/concurrent-copy and performance separately;
 this report does not claim those controller checks. No consolidated GUI automation
 was duplicated by the implementer. Source/render previews are not OS screenshots.
+
+## Independent review documentation follow-up
+
+Independent Task3 review approved specification compliance and quality with no
+blocking findings. Both Minor documentation findings were corrected: the stable
+spec footer now distinguishes its approval-time pre-implementation statement from
+the implemented feature branch and outstanding OS validation; the asset README
+now states exact alpha and alpha>0 preservation while disclosing alpha0 RGB
+canonicalization. Verified the scoped diff and git diff --check. Documentation
+only; no runtime changes or repeated build/tests.
