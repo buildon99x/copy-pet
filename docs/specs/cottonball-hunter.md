@@ -1,5 +1,9 @@
 # Cottonball Hunter / 솜뭉치 사냥꾼
 
+The current implementation extends this original character to twelve companions.
+See [Cat companions](cat-companions.md) for current selection and quiet-input
+behavior; the original visual identity below remains the Ragdoll reference.
+
 ClipCat's illustrated ragdoll is a quiet collecting companion. Bright blue eyes,
 a seal bicolor mask with an inverted white V, broad white paws and a rounded
 loaf silhouette identify the character. Fish stay badged with the source app;
@@ -8,12 +12,11 @@ the decorative art never shows copied text or image contents.
 An accepted clipboard capture starts notice → crouch → paw reach, followed by
 chewing, satisfaction and a return to rest. Twelve frames form this reaction;
 four more provide half-blink, blink, affection and sleep. The complete copy
-cycle lasts 0.9 seconds (about 13 illustrated frames per second); the fish
-reaches the mouth during the open-mouth frame before satisfaction. Small input
-activity gives an attentive glance rather than continuous whole-body movement.
+cycle now follows the Ragdoll's authored 1.06-second timeline; the fish
+reaches its measured mouth during the open-mouth frame before satisfaction.
 
-Double-click still pets the cat and grants the existing XP. Sleep begins after
-75 seconds without activity. The capture-pause badge is a separate persistent
+Body clicks and ordinary input no longer create reactions. Sleep begins after
+75 seconds without a captured copy. The capture-pause badge is a separate persistent
 state: sleeping does not mean capture has stopped. Pausing collection cancels
 running and pending copy reactions, without deleting clips already collected.
 Resume keeps the platform's existing clipboard synchronization behavior.
@@ -37,10 +40,10 @@ redraw on state changes and caret blinking. The platform's 33 ms bookkeeping
 tick remains, so this release reduces rendering work rather than promising zero
 timer wakeups. Clipboard polling on portable remains independent.
 
-The first integration uses hand-checked per-frame accessory anchors. Generated
-art is a finite pose sequence rather than a continuously deformable skeleton.
-Check all scales and accessories when replacing the atlas. See ADR-0017 and
-`assets/cottonball-hunter.md` for the source and integration contract.
+Generated art is a finite pose sequence rather than a continuously deformable
+skeleton. Check all scales and measured mouth tracks when replacing the atlas.
+Accessories are removed. See ADR-0018 and `assets/cats/README.md` for the current
+source and integration contract.
 
 ## 한국어
 

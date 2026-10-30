@@ -6,7 +6,7 @@
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
-use crate::i18n::{self, Lang};
+use crate::i18n::Lang;
 
 #[derive(Serialize, Deserialize, Clone)]
 #[serde(default)]
@@ -17,8 +17,9 @@ pub struct Persist {
     pub has_pos: bool,
     pub scale_idx: usize, // 0 small, 1 normal, 2 large
     // settings
-    pub accessory: usize,  // 0 = none, 1..=ACCESSORIES.len()
-    pub sound_mode: u8,    // 0 off, 1 events only, 2 taps + events
+    #[serde(deserialize_with = "deserialize_cat_kind")]
+    pub cat_kind: String, // stable character ID; old accessory fields are ignored
+    pub sound_mode: u8,   // 0 off, 1 events only
     pub bubble_pinned: bool,
     pub locked: bool,
     /// Window stacking: 0 = always on top (default), 1 = normal (can go behind
@@ -66,6 +67,12 @@ pub struct Persist {
     pub active_min_today: u32,
 }
 
+// A malformed new preference must not invalidate legacy statistics/settings.
+fn deserialize_cat_kind<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<String, D::Error> {
+    let value = serde_json::Value::deserialize(deserializer)?;
+    Ok(crate::cat::CatKind::from_id(value.as_str().unwrap_or("ragdoll")).id().into())
+}
+
 impl Default for Persist {
     fn default() -> Self {
         Persist {
@@ -73,7 +80,7 @@ impl Default for Persist {
             pos_y: 0,
             has_pos: false,
             scale_idx: 1,
-            accessory: 0,
+            cat_kind: "ragdoll".into(),
             sound_mode: 1,
             bubble_pinned: false,
             locked: false,
@@ -113,8 +120,11 @@ fn dir_named(name: &str) -> Option<PathBuf> {
     }
     #[cfg(target_os = "macos")]
     {
-        std::env::var_os("HOME")
-            .map(|h| PathBuf::from(h).join("Library/Application Support").join(name))
+        std::env::var_os("HOME").map(|h| {
+            PathBuf::from(h)
+                .join("Library/Application Support")
+                .join(name)
+        })
     }
     #[cfg(all(unix, not(target_os = "macos")))]
     {
@@ -207,11 +217,9 @@ impl Persist {
     /// is untouched. Mirrors the geometry/hotkey hardening in `load`.
     fn clamp_settings(&mut self) {
         self.scale_idx = self.scale_idx.min(crate::pet::SCALES.len() - 1);
-        self.sound_mode = self.sound_mode.min(2);
+        self.sound_mode = self.sound_mode.min(1);
         self.panel_view = self.panel_view.min(1);
-        if self.accessory > ACCESSORIES.len() {
-            self.accessory = 0;
-        }
+        self.cat_kind = crate::cat::CatKind::from_id(&self.cat_kind).id().into();
         // window_level 2 is "Hide": saturating a corrupt value to 2 would
         // enforce Hide on startup (both backends call apply_window_level) and
         // launch the app invisible — the opposite of self-healing. Reset an
@@ -331,36 +339,6 @@ pub fn level_progress(total_xp: u64) -> (u32, u64, u64) {
     }
 }
 
-pub struct AccessoryDef {
-    pub level: u32,
-    pub msg: i18n::Msg,
-}
-
-impl AccessoryDef {
-    pub fn name(&self, lang: Lang) -> &'static str {
-        i18n::t(lang, self.msg)
-    }
-
-    /// Whether a pet at `level` has unlocked this accessory.
-    pub fn unlocked_at(&self, level: u32) -> bool {
-        level >= self.level
-    }
-}
-
-/// Index in this array + 1 == Persist::accessory id (0 = none).
-/// Order must match `render::Accessory::from_id` for the same ids.
-pub const ACCESSORIES: [AccessoryDef; 9] = [
-    AccessoryDef { level: 2,  msg: i18n::Msg::AccRedScarf },
-    AccessoryDef { level: 3,  msg: i18n::Msg::AccGlasses },
-    AccessoryDef { level: 5,  msg: i18n::Msg::AccBlueBeanie },
-    AccessoryDef { level: 7,  msg: i18n::Msg::AccHeadphones },
-    AccessoryDef { level: 10, msg: i18n::Msg::AccGoldCrown },
-    AccessoryDef { level: 15, msg: i18n::Msg::AccWizardHat },
-    AccessoryDef { level: 21, msg: i18n::Msg::AccSprout },
-    AccessoryDef { level: 54, msg: i18n::Msg::AccLuckyClover },
-    AccessoryDef { level: 57, msg: i18n::Msg::AccPudding },
-];
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -385,16 +363,6 @@ mod tests {
     fn level_is_clamped() {
         let (lv, _, _) = level_progress(u64::MAX);
         assert!(lv <= 99);
-    }
-
-    #[test]
-    fn every_accessory_has_a_reachable_level() {
-        use crate::i18n::{t, Lang};
-        for acc in ACCESSORIES.iter() {
-            assert!(acc.level >= 2 && acc.level <= 99);
-            assert!(!t(Lang::En, acc.msg).is_empty());
-            assert!(!t(Lang::Ko, acc.msg).is_empty());
-        }
     }
 
     #[test]
@@ -431,6 +399,28 @@ mod tests {
     }
 
     #[test]
+    fn legacy_accessory_and_unknown_cat_keep_existing_stats() {
+        let st: Persist =
+            serde_json::from_str(r#"{"accessory":8,"total_xp":12345,"total_keys":42}"#).unwrap();
+        assert_eq!(st.cat_kind, "ragdoll");
+        assert_eq!((st.total_xp, st.total_keys), (12345, 42));
+        let mut st: Persist =
+            serde_json::from_str(r#"{"cat_kind":"future-cat","total_xp":12345,"sound_mode":2}"#)
+                .unwrap();
+        st.clamp_settings();
+        assert_eq!(st.cat_kind, "ragdoll");
+        assert_eq!(st.total_xp, 12345);
+        assert_eq!(st.sound_mode, 1);
+    }
+
+    #[test]
+    fn malformed_cat_setting_does_not_discard_existing_stats() {
+        let st: Persist=serde_json::from_str(r#"{"cat_kind":42,"total_xp":9001,"total_keys":123}"#).expect("only the invalid character preference falls back");
+        assert_eq!(st.cat_kind,"ragdoll");
+        assert_eq!((st.total_xp,st.total_keys),(9001,123));
+    }
+
+    #[test]
     fn out_of_range_settings_are_clamped_on_load() {
         // A hand-edited/corrupt state.json with out-of-range scalars must not
         // leave a radio submenu with no checked item or feed the backend an
@@ -441,18 +431,18 @@ mod tests {
             sound_mode: 9,
             window_level: 200,
             panel_view: 5,
-            accessory: 99,
+            cat_kind: "unknown".into(),
             ..Persist::default()
         };
         st.clamp_settings();
         assert_eq!(st.scale_idx, crate::pet::SCALES.len() - 1);
-        assert_eq!(st.sound_mode, 2);
+        assert_eq!(st.sound_mode, 1);
         assert_eq!(
             st.window_level, 0,
             "out-of-range window_level resets to a visible mode, not Hide (2)"
         );
         assert_eq!(st.panel_view, 1);
-        assert_eq!(st.accessory, 0, "unknown accessory id resets to none");
+        assert_eq!(st.cat_kind, "ragdoll");
 
         // valid data is left untouched
         let mut ok = Persist {
@@ -460,13 +450,19 @@ mod tests {
             sound_mode: 1,
             window_level: 2,
             panel_view: 0,
-            accessory: ACCESSORIES.len(),
+            cat_kind: "ragdoll".into(),
             ..Persist::default()
         };
         ok.clamp_settings();
         assert_eq!(
-            (ok.scale_idx, ok.sound_mode, ok.window_level, ok.panel_view, ok.accessory),
-            (0, 1, 2, 0, ACCESSORIES.len())
+            (
+                ok.scale_idx,
+                ok.sound_mode,
+                ok.window_level,
+                ok.panel_view,
+                ok.cat_kind.as_str()
+            ),
+            (0, 1, 2, 0, "ragdoll")
         );
     }
 }

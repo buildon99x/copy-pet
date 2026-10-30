@@ -176,8 +176,8 @@ pub fn t(lang: Lang, msg: Msg) -> &'static str {
         (SoundOff, Lang::Ko) => "끄기",
         (SoundEvents, Lang::En) => "Events only",
         (SoundEvents, Lang::Ko) => "이벤트 소리만",
-        (SoundAll, Lang::En) => "Typing + events",
-        (SoundAll, Lang::Ko) => "타이핑 소리 + 이벤트",
+        (SoundAll, Lang::En) => "Events",
+        (SoundAll, Lang::Ko) => "이벤트 소리",
         (MenuWindowLevel, Lang::En) => "Window",
         (MenuWindowLevel, Lang::Ko) => "창",
         (WinLevelTop, Lang::En) => "Always on top",
@@ -447,9 +447,7 @@ pub fn about_text(
              clips: {clips}\n\n- Copy anywhere: the cat eats a fish and saves the clip\n\
              - {hotkey} or middle-click: clipboard history\n- Click a clip: paste it \
              back with its original formatting (or use \"...\" to paste as plain text)\n\
-             - Type/click: the cat taps \
-             along and earns XP\n- Double-click: pet the \
-             cat\n\nEverything stays on this PC; the only network use is an \
+             - Choose a cat from the menu (A on portable)\n\nEverything stays on this PC; the only network use is an \
              optional daily GitHub check for new versions (toggle in this menu)."
         ),
         Lang::Ko => format!(
@@ -457,8 +455,7 @@ pub fn about_text(
              고양이.\n\n현재 레벨: LV {lv}\n누적 키 입력: {keys}\n저장된 클립: {clips}개\n\n\
              - 어디서든 복사 → 고양이가 생선을 먹고 클립을 저장\n- {hotkey} 또는 \
              휠클릭 → 클립보드 히스토리\n- 클립 클릭 → 원본 서식 그대로 붙여넣기 \
-             (\"...\"로 텍스트만 붙여넣기 가능)\n- 타이핑/클릭 → \
-             고양이가 따라 치고 XP 획득\n- 더블클릭 → 쓰다듬기\n\n모든 데이터는 이 PC에만 \
+             (\"...\"로 텍스트만 붙여넣기 가능)\n- 메뉴에서 고양이 선택 (portable: A)\n\n모든 데이터는 이 PC에만 \
              저장됩니다. 네트워크는 GitHub 새 버전 확인에만 쓰입니다(이 메뉴에서 끌 수 \
              있음)."
         ),
@@ -481,23 +478,83 @@ mod tests {
     fn every_message_has_both_translations() {
         use Msg::*;
         let all = [
-            MenuShowStats, MenuCapturePause, MenuSize, SizeSmall, SizeNormal,
-            SizeLarge, MenuAccessory, AccNone,
-            AccRedScarf, AccGlasses, AccBlueBeanie, AccHeadphones, AccGoldCrown, AccWizardHat,
-            AccSprout, AccLuckyClover, AccPudding,
-            MenuSound, SoundOff, SoundEvents, SoundAll,
-            MenuWindowLevel, WinLevelTop, WinLevelNormal, WinLevelHide,
-            MenuLock, MenuLanguage, MenuAutostart, MenuLoginStart, MenuReset, Cancel, MenuAbout,
-            MenuGithub, MenuExit, ResetTitle,
-            ResetConfirm, PanelTitle, SearchHint, TagEditHint, TagEditKeys, TipTags,
-            ImageClip, ToastTagsSaved, ToastTagsInvalid, PanelEmpty, PanelNoMatch, FooterKeys,
-            MenuAutoClose, MenuPasteOnSelect, ToastCopied, ToastPasteOn, ToastPasteOff,
-            ToastDeleted, ToastRestored, ToastClearConfirm,
-            ToastCapturePaused, ToastCaptureOn, ToastAutoCloseOn, ToastAutoCloseOff,
-            ToastPastedPlain, TipView, TipFilter, TipPause, TipResume, TipClear, TipLang, TipClose,
-            TipPin, TipUnpin,
-            MenuAutoUpdate, ToastUpdateDownloading,
-            ToastUpdateFailed, ToastAccessibility, BubbleLv, BubbleKeys, BubbleClicks, BubbleClips,
+            MenuShowStats,
+            MenuCapturePause,
+            MenuSize,
+            SizeSmall,
+            SizeNormal,
+            SizeLarge,
+            MenuAccessory,
+            AccNone,
+            AccRedScarf,
+            AccGlasses,
+            AccBlueBeanie,
+            AccHeadphones,
+            AccGoldCrown,
+            AccWizardHat,
+            AccSprout,
+            AccLuckyClover,
+            AccPudding,
+            MenuSound,
+            SoundOff,
+            SoundEvents,
+            SoundAll,
+            MenuWindowLevel,
+            WinLevelTop,
+            WinLevelNormal,
+            WinLevelHide,
+            MenuLock,
+            MenuLanguage,
+            MenuAutostart,
+            MenuLoginStart,
+            MenuReset,
+            Cancel,
+            MenuAbout,
+            MenuGithub,
+            MenuExit,
+            ResetTitle,
+            ResetConfirm,
+            PanelTitle,
+            SearchHint,
+            TagEditHint,
+            TagEditKeys,
+            TipTags,
+            ImageClip,
+            ToastTagsSaved,
+            ToastTagsInvalid,
+            PanelEmpty,
+            PanelNoMatch,
+            FooterKeys,
+            MenuAutoClose,
+            MenuPasteOnSelect,
+            ToastCopied,
+            ToastPasteOn,
+            ToastPasteOff,
+            ToastDeleted,
+            ToastRestored,
+            ToastClearConfirm,
+            ToastCapturePaused,
+            ToastCaptureOn,
+            ToastAutoCloseOn,
+            ToastAutoCloseOff,
+            ToastPastedPlain,
+            TipView,
+            TipFilter,
+            TipPause,
+            TipResume,
+            TipClear,
+            TipLang,
+            TipClose,
+            TipPin,
+            TipUnpin,
+            MenuAutoUpdate,
+            ToastUpdateDownloading,
+            ToastUpdateFailed,
+            ToastAccessibility,
+            BubbleLv,
+            BubbleKeys,
+            BubbleClicks,
+            BubbleClips,
             BubbleActive,
         ];
         for msg in all {
@@ -667,5 +724,166 @@ pub fn ai(lang: Lang, msg: AiText) -> &'static str {
         ko
     } else {
         en
+    }
+}
+
+/// Localized character name; personas describe fictional app characters.
+pub fn cat_name(lang: Lang, kind: crate::cat::CatKind) -> &'static str {
+    let rows = [
+        ("Ragdoll", "랙돌"),
+        ("Birman", "버만"),
+        ("Siamese", "샴"),
+        ("Bombay", "봄베이"),
+        ("RagaMuffin", "라가머핀"),
+        ("Persian", "페르시안"),
+        ("Turkish Angora", "터키시 앙고라"),
+        ("American Curl", "아메리칸 컬"),
+        ("Munchkin", "먼치킨"),
+        ("British Shorthair", "브리티시 쇼트헤어"),
+        ("Russian Blue", "러시안 블루"),
+        ("Tuxedo pattern", "턱시도 무늬"),
+    ];
+    let row = rows[kind as usize];
+    match lang {
+        Lang::En => row.0,
+        Lang::Ko => row.1,
+    }
+}
+
+/// Localized character description; personas describe fictional app characters.
+pub fn cat_description(lang: Lang, kind: crate::cat::CatKind) -> &'static str {
+    let rows = [
+        (
+            "Blue eyes, plush coat and a white face V.",
+            "푸른 눈, 풍성한 털과 얼굴의 흰 V 무늬.",
+        ),
+        (
+            "Blue eyes, dark points and white gloves.",
+            "푸른 눈, 포인트 배색과 흰 장갑.",
+        ),
+        (
+            "A slim body, large ears and blue eyes.",
+            "가는 몸, 큰 귀와 푸른 눈.",
+        ),
+        (
+            "A sleek black coat and copper eyes.",
+            "매끈한 검정 털과 구리빛 눈.",
+        ),
+        (
+            "A plush tabby coat and broad face.",
+            "풍성한 태비 털과 넓은 얼굴.",
+        ),
+        (
+            "Long cream fur, round face and small ears.",
+            "긴 크림색 털, 둥근 얼굴과 작은 귀.",
+        ),
+        (
+            "A slender white cat with a flowing tail.",
+            "가는 흰 몸과 길고 풍성한 꼬리.",
+        ),
+        (
+            "Tabby fur and ears that curl backward.",
+            "태비 털과 뒤로 말린 귀.",
+        ),
+        (
+            "Short legs with a full-sized body.",
+            "짧은 다리와 정상 크기의 몸.",
+        ),
+        (
+            "Round cheeks, dense blue fur and copper eyes.",
+            "둥근 볼, 조밀한 블루 털과 구리빛 눈.",
+        ),
+        (
+            "A slender silver-blue cat with green eyes.",
+            "날렵한 은빛 청회색 몸과 녹색 눈.",
+        ),
+        (
+            "A black-and-white coat pattern, not a breed.",
+            "품종이 아닌 검정·흰색 털무늬 유형.",
+        ),
+    ];
+    let row = rows[kind as usize];
+    match lang {
+        Lang::En => row.0,
+        Lang::Ko => row.1,
+    }
+}
+
+/// Localized character persona; personas describe fictional app characters.
+pub fn cat_persona(lang: Lang, kind: crate::cat::CatKind) -> &'static str {
+    let rows = [
+        (
+            "A relaxed hunter who lowers a paw to collect.",
+            "느긋하게 몸을 낮춰 앞발로 확보하는 사냥꾼.",
+        ),
+        (
+            "A tidy observer who collects with both paws.",
+            "두 앞발로 단정하게 받는 관찰자.",
+        ),
+        (
+            "A quick scout with a precise reach.",
+            "빠르고 정확하게 뻗는 정찰대원.",
+        ),
+        (
+            "A quiet guardian with a compact pounce.",
+            "짧고 힘 있게 확보하는 조용한 경비원.",
+        ),
+        (
+            "A warm host who gathers a catch close.",
+            "생선을 포근히 끌어안는 다정한 주인.",
+        ),
+        (
+            "An unhurried gourmet with a small paw gesture.",
+            "작은 앞발 동작을 즐기는 느긋한 미식가.",
+        ),
+        (
+            "An elegant dancer with a flowing reach.",
+            "유연하게 손을 뻗는 우아한 무용수.",
+        ),
+        (
+            "A curious inventor who scoops with one paw.",
+            "한 발로 떠받치는 호기심 많은 발명가.",
+        ),
+        (
+            "A cheerful explorer with a quick low reach.",
+            "낮고 빠르게 확보하는 쾌활한 탐험가.",
+        ),
+        (
+            "A composed clerk who collects without fuss.",
+            "담담하게 한 발로 받는 태연한 실무자.",
+        ),
+        (
+            "A careful archivist with a precise pull.",
+            "확인한 뒤 정확히 당기는 신중한 기록 담당.",
+        ),
+        (
+            "A sly butler with a casual paw swipe.",
+            "무심하게 앞발로 슬쩍 확보하는 능청스러운 집사.",
+        ),
+    ];
+    let row = rows[kind as usize];
+    match lang {
+        Lang::En => row.0,
+        Lang::Ko => row.1,
+    }
+}
+
+/// Explicit character-selection controls; character metadata is localized separately.
+#[derive(Clone, Copy)]
+pub enum PickerText { Title, Appearance, Persona, Idle, Copy, Sleep, Apply, Close, Hint, Error }
+pub fn picker(lang: Lang, text: PickerText) -> &'static str {
+    use PickerText::*;
+    match (text, lang) {
+        (Title, Lang::En) => "Choose a cat", (Title, Lang::Ko) => "고양이 선택",
+        (Appearance, Lang::En) => "Appearance", (Appearance, Lang::Ko) => "외형",
+        (Persona, Lang::En) => "Character", (Persona, Lang::Ko) => "캐릭터 설정",
+        (Idle, Lang::En) => "Idle", (Idle, Lang::Ko) => "평상",
+        (Copy, Lang::En) => "Copy", (Copy, Lang::Ko) => "복사 반응",
+        (Sleep, Lang::En) => "Sleep", (Sleep, Lang::Ko) => "수면",
+        (Apply, Lang::En) => "Choose this cat", (Apply, Lang::Ko) => "함께하기",
+        (Close, Lang::En) => "Close", (Close, Lang::Ko) => "닫기",
+        (Hint, Lang::En) => "All cats are available · Select a card, preview, then apply",
+        (Hint, Lang::Ko) => "모든 고양이 자유 선택 · 카드를 고르고 미리 본 뒤 함께하세요",
+        (Error, Lang::En) => "Could not load this cat", (Error, Lang::Ko) => "고양이를 불러오지 못했습니다",
     }
 }

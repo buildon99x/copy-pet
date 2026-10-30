@@ -7,11 +7,13 @@
 use clipcat::clipboard::ClipStore;
 use clipcat::i18n::Lang;
 use clipcat::panel::Panel;
-use clipcat::render::{self, Accessory, Badge, BubbleData, FishView, PanelView, Scene};
+use clipcat::render::{self, Badge, BubbleData, FishView, PanelView, Scene};
 use tiny_skia::Pixmap;
 
 fn base_scene(lang: Lang) -> Scene<'static> {
+    static ART: std::sync::OnceLock<clipcat::hunter_art::CatArt> = std::sync::OnceLock::new();
     Scene {
+        cat_art: ART.get_or_init(|| clipcat::hunter_art::CatArt::load(clipcat::cat::CatKind::Ragdoll).unwrap()),
         hunter_frame: 0,
         capture_paused: false,
         paw_l: 0.0,
@@ -24,7 +26,6 @@ fn base_scene(lang: Lang) -> Scene<'static> {
         breath: 0.3,
         tail_phase: 1.2,
         mouth_open: 0.0,
-        accessory: Accessory::Scarf,
         particles: &[],
         fish: None,
         bubble: None,
@@ -333,42 +334,6 @@ fn main() {
         save(&pm, &dir, "5-icon");
     }
 
-    // 6. accessory sheet: all 9 accessories on the cat, for visual review.
-    {
-        let all = [
-            Accessory::Scarf,
-            Accessory::Glasses,
-            Accessory::Beanie,
-            Accessory::Headphones,
-            Accessory::Crown,
-            Accessory::Wizard,
-            Accessory::Sprout,
-            Accessory::Clover,
-            Accessory::Pudding,
-        ];
-        let cols = 3u32;
-        let (cw, ch) = (240u32, 256u32);
-        let rows = (all.len() as u32).div_ceil(cols);
-        let mut sheet = Pixmap::new(cw * cols, ch * rows).unwrap();
-        sheet.fill(tiny_skia::Color::from_rgba8(245, 242, 236, 255));
-        for (i, acc) in all.iter().enumerate() {
-            let mut sc = base_scene(Lang::Ko);
-            sc.accessory = *acc;
-            let mut cell = Pixmap::new(cw, ch).unwrap();
-            render::render_card(&mut cell, &sc, 1.0);
-            let x = (i as u32 % cols) * cw;
-            let y = (i as u32 / cols) * ch;
-            sheet.draw_pixmap(
-                0,
-                0,
-                cell.as_ref(),
-                &tiny_skia::PixmapPaint::default(),
-                tiny_skia::Transform::from_translate(x as f32, y as f32),
-                None,
-            );
-        }
-        save(&sheet, &dir, "6-accessories");
-    }
 
     // Explicit, local AI request preparation in the existing clipboard panel.
     for lang in [Lang::En, Lang::Ko] {
@@ -499,54 +464,53 @@ fn main() {
     for frame in 0..16 {
         let mut sc = base_scene(Lang::Ko);
         sc.hunter_frame = frame;
-        sc.accessory = Accessory::None;
         let mut pm = Pixmap::new(240, 256).unwrap();
         render::render_card(&mut pm, &sc, 1.0);
         save(&pm, &dir, &format!("10-hunter-{frame:02}"));
     }
     for (i, scale) in clipcat::pet::SCALES.iter().enumerate() {
         let mut sc = base_scene(Lang::Ko);
-        sc.accessory = Accessory::None;
         sc.capture_paused = true;
         let mut pm = Pixmap::new((240.0 * scale).round() as u32, (256.0 * scale).round() as u32).unwrap();
         render::render(&mut pm, &sc, *scale);
         save(&pm, &dir, &format!("10-hunter-scale-{i}"));
         for frame in [0, 6, 15] {
             let mut sc = base_scene(Lang::Ko);
-            sc.accessory = Accessory::Glasses;
             sc.hunter_frame = frame;
             let mut pm = Pixmap::new((240.0 * scale).round() as u32, (256.0 * scale).round() as u32).unwrap();
             render::render_card(&mut pm, &sc, *scale);
-            save(&pm, &dir, &format!("10-hunter-glasses-{frame:02}-scale-{i}"));
+            save(
+                &pm,
+                &dir,
+                &format!("10-hunter-pose-{frame:02}-scale-{i}"),
+            );
         }
     }
 
-    // 7. shipped collection: every unlockable accessory, rendered via from_id
-    // (canonical check that the ids line up with state::ACCESSORIES)
-    {
-        let n = clipcat::state::ACCESSORIES.len();
-        let cols = 3u32;
-        let (cw, ch) = (240u32, 256u32);
-        let rows = (n as u32).div_ceil(cols);
-        let mut sheet = Pixmap::new(cw * cols, ch * rows).unwrap();
-        sheet.fill(tiny_skia::Color::from_rgba8(245, 242, 236, 255));
-        for id in 1..=n {
-            let mut sc = base_scene(Lang::Ko);
-            sc.accessory = Accessory::from_id(id);
-            let mut cell = Pixmap::new(cw, ch).unwrap();
-            render::render_card(&mut cell, &sc, 1.0);
-            let idx = (id - 1) as u32;
-            let x = (idx % cols) * cw;
-            let y = (idx / cols) * ch;
-            sheet.draw_pixmap(
-                0,
-                0,
-                cell.as_ref(),
-                &tiny_skia::PixmapPaint::default(),
-                tiny_skia::Transform::from_translate(x as f32, y as f32),
-                None,
-            );
+
+    // Selected-character gallery and explicit preview states.
+    for lang in [Lang::En, Lang::Ko] {
+        let mut p = clipcat::pet::Pet::new(clipcat::state::Persist::default());
+        p.st.set_lang(lang);
+        let opened=std::time::Instant::now();
+        p.open_cat_picker();
+        println!("gallery open {}: {:.2} ms",lang.code(),opened.elapsed().as_secs_f64()*1000.0);
+        let (w,h)=p.canvas_size();
+        let mut pm=Pixmap::new(w as u32,h as u32).unwrap();
+        p.render_card(&mut pm);
+        save(&pm,&dir,&format!("11-cat-picker-{}",lang.code()));
+    }
+    for kind in clipcat::cat::CatKind::ALL {
+        let began=std::time::Instant::now();
+        let art=clipcat::hunter_art::CatArt::load(kind).unwrap();
+        println!("cat decode {}: {:.2} ms, {} bytes",kind.id(),began.elapsed().as_secs_f64()*1000.0,art.cache_bytes());
+        for frame in [0,6,15] {
+            let mut sc=base_scene(Lang::En);
+            sc.cat_art=&art;
+            sc.hunter_frame=frame;
+            let mut pm=Pixmap::new(240,256).unwrap();
+            render::render_card(&mut pm,&sc,1.0);
+            save(&pm,&dir,&format!("12-{}-{frame}",kind.id()));
         }
-        save(&sheet, &dir, "7-collection");
     }
 }

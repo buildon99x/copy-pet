@@ -24,3 +24,4 @@ rather than rewrite.
 | [0015](0015-clipboard-tags-and-windows-images.md) | Tags and bounded PNG/DIB image history on Windows | Accepted |
 | [0016](0016-local-ai-request-workbench.md) | Explicit local AI request workbench, project trays and confirmed safe copies | Accepted |
 | [0017](0017-cached-illustrated-pet.md) | Cached illustrated ragdoll frames and visible-state redraws | Accepted |
+| [0018](0018-selected-cat-atlases.md) | Twelve cats, bounded selected art, free gallery and quiet input | Accepted |

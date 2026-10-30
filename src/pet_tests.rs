@@ -69,23 +69,22 @@ fn hunter_burst_collects_every_clip_but_keeps_only_one_pending_reaction() {
 }
 
 #[test]
-fn hunter_fish_reaches_the_illustrated_open_mouth_and_crunch_uses_that_location() {
+fn every_cat_fish_reaches_its_authored_mouth_and_crunch_location() {
     let badge = Badge::from_source(None);
-    let fish = Pet::fish_view(&badge, 1.0);
-    // Hand-checked mouth position in the rendered frame 6, not the old cat.
-    assert!((fish.x - 175.0).abs() < 6.0 && (fish.y - 196.0).abs() < 6.0);
     let mut p = pet();
-    p.nom();
-    let heart = p.particles.iter().find(|p| matches!(p.kind, ParticleKind::Heart)).unwrap();
-    assert!((heart.x - 175.0).abs() < 6.0 && heart.y > 175.0);
-}
-
-#[test]
-fn hunter_fish_approaches_from_the_paws_without_covering_the_blue_eyes() {
-    let badge = Badge::from_source(None);
-    for progress in [0.0, 0.25, 0.5, 0.75, 1.0] {
-        assert!(Pet::fish_view(&badge, progress).y >= 196.0,
-            "the fish should approach below the face, not cross the eyes");
+    for kind in crate::cat::CatKind::ALL {
+        p.select_cat(kind).unwrap();
+        let frame = kind.frame(Some(kind.catch_progress()), 0.0, 0.0, 0.0);
+        let (mx,my) = kind.mouth(frame);
+        let fish = p.fish_view(&badge,1.0);
+        assert!((fish.x-mx).abs()<0.1 && (fish.y-my).abs()<0.1);
+        p.fish=Some((Badge::from_source(None),kind.catch_progress()));
+        p.nom();
+        let heart=p.particles.iter().find(|p| matches!(p.kind,ParticleKind::Heart)).unwrap();
+        assert!((heart.x-mx).abs()<0.1 && (heart.y-(my-12.0)).abs()<0.1);
+        for progress in [0.0,0.25,0.5,0.75,1.0] {
+            assert!(p.fish_view(&badge,progress).y >= my.min(kind.fish_start().1), "fish stays below the mouth");
+        }
     }
 }
 
@@ -121,19 +120,22 @@ fn hunter_deep_sleep_has_no_continuous_particles_or_repaints() {
 }
 
 #[test]
-fn hunter_plays_the_whole_twelve_frame_cycle_in_under_one_second() {
-    let mut p = pet();
-    p.st.onboarded = true;
-    p.on_copy("synthetic short cycle".into(), None, None);
-    let mut visited = std::collections::BTreeSet::new();
-    for _ in 0..28 {
-        p.last_tick -= std::time::Duration::from_millis(33);
-        p.advance(0, 0, 0);
-        visited.insert(p.hunter_frame(p.now_t()));
+fn every_cat_finishes_its_authored_copy_cycle_with_bounded_visual_work() {
+    let mut p=pet();
+    p.st.onboarded=true;
+    for (i,kind) in crate::cat::CatKind::ALL.into_iter().enumerate() {
+        p.select_cat(kind).unwrap();
+        p.on_copy(format!("synthetic cycle {i}"),None,None);
+        let mut visited=std::collections::BTreeSet::new();
+        for _ in 0..((kind.copy_duration()/0.033).ceil() as usize+3) {
+            p.last_tick-=std::time::Duration::from_millis(33);
+            p.advance(0,0,0);
+            visited.insert(p.hunter_frame(p.now_t()));
+        }
+        assert!((1..12).all(|frame| visited.contains(&frame)), "{kind:?} complete notice/action/recovery: {visited:?}");
+        assert!(p.fish.is_none());
+        assert_eq!(p.hunter_frame(p.now_t()),kind.frame(None,p.happy,p.sleep,p.blink(p.now_t())));
     }
-    assert!((0..12).all(|frame| visited.contains(&frame)), "all poses belong to the short cycle: {visited:?}");
-    assert!(p.fish.is_none());
-    assert_eq!(p.hunter_frame(p.now_t()), 0, "finish in the stable resting pose");
 }
 
 #[test]
@@ -306,14 +308,16 @@ fn menu_autostart_check_reflects_param() {
 }
 
 #[test]
-fn menu_locks_accessories_until_their_level() {
-    let mut p = pet(); // level 1: every accessory locked
-    let m = p.build_menu("HK", false);
-    assert!(find(&m, MenuAction::SetAccessory(0)).unwrap().enabled, "None always enabled");
-    assert!(!find(&m, MenuAction::SetAccessory(1)).unwrap().enabled, "locked accessory greyed");
-    // applying a locked accessory is a guarded no-op
-    p.apply_menu_action(MenuAction::SetAccessory(1));
-    assert_eq!(p.st.accessory, 0);
+fn menu_opens_free_cat_gallery() {
+    let mut p = pet();
+    assert!(
+        find(&p.build_menu("HK", false), MenuAction::OpenCatPicker)
+            .unwrap()
+            .enabled
+    );
+    p.apply_menu_action(MenuAction::OpenCatPicker);
+    assert!(p.cat_picker.is_some());
+    assert_eq!(crate::cat::CatKind::ALL.len(), 12);
 }
 
 #[test]
@@ -642,34 +646,141 @@ fn render_panel_open_smoke() {
 }
 
 #[test]
-fn body_click_levels_up_immediately() {
+fn switching_and_reset_preserve_selected_cat_and_statistics() {
     let mut p = pet();
-    // one XP below the level-2 threshold; a body click grants +1 XP, which
-    // must trigger the level-up in-call rather than deferring to a later tick.
-    p.st.total_xp = crate::state::xp_to_next(1) - 1;
-    assert_eq!(p.level(), 1);
-    p.click_bounce(0.0, 0.0);
-    assert_eq!(p.level(), 2, "body click XP must level up within click_bounce");
+    p.st.total_keys = 42;
+    p.st.total_xp = 10_000_000;
+    p.on_copy("synthetic switch".into(), None, None);
+    p.advance(0, 0, 0);
+    let chosen = crate::cat::CatKind::ALL[3];
+    p.select_cat(chosen).unwrap();
+    assert_eq!(p.st.cat_kind, chosen.id());
+    assert_eq!(p.st.total_keys, 42);
+    assert!(p.fish.is_none() && p.fish_queue.is_empty() && p.particles.is_empty());
+    p.maybe_level_up();
+    assert_eq!(p.st.cat_kind, chosen.id());
+    p.reset_stats();
+    assert_eq!(p.st.cat_kind, chosen.id());
 }
 
 #[test]
-fn multi_level_jump_equips_highest_unlocked_accessory() {
+fn global_input_and_body_clicks_leave_sleeping_character_quiet() {
     let mut p = pet();
-    // A single large XP grant jumps many levels at once. The auto-equip must
-    // land on the highest newly-unlocked accessory, not silently skip it when
-    // the destination level does not exactly equal an accessory unlock level.
-    p.st.total_xp = 10_000_000;
-    p.maybe_level_up();
-    let cur = p.level();
-    let expected = crate::state::ACCESSORIES
-        .iter()
-        .enumerate()
-        .filter(|(_, a)| a.level <= cur)
-        .max_by_key(|(_, a)| a.level)
-        .map(|(i, _)| i + 1)
-        .expect("some accessory is unlocked at a high level");
-    assert_eq!(
-        p.st.accessory, expected,
-        "a multi-level jump must equip the highest newly-unlocked accessory"
-    );
+    p.st.onboarded = true;
+    p.sleep = 1.0;
+    p.last_event -= std::time::Duration::from_secs(90);
+    p.advance(0, 0, 0);
+    let xp = p.st.total_xp;
+    p.pet();
+    p.click_bounce(120.0, 180.0);
+    assert_eq!(p.st.total_xp, xp, "body controls never grant affection XP");
+    p.set_hover(true);
+    p.advance(3, 2, 1);
+    assert_eq!(p.hunter_frame(p.now_t()), 15, "input cannot wake the cat");
+    assert!(p.particles.is_empty());
+    assert_eq!((p.paw_l, p.paw_r, p.rate, p.squash), (0.0, 0.0, 0.0, 0.0));
+    assert_eq!(p.bubble_alpha, 0.0);
+    assert_eq!((p.st.total_keys, p.st.total_clicks), (3, 2));
+}
+
+#[test]
+fn gallery_navigation_preview_apply_and_history_hotkey_are_explicit() {
+    let mut p = pet();
+    let size = (p.panel.w, p.panel.h);
+    p.open_cat_picker();
+    let original = p.cat_kind();
+    p.panel_nav(NavKey::Right);
+    assert_eq!(p.cat_picker.as_ref().unwrap().selected, crate::cat::CatKind::ALL[1]);
+    assert_eq!(p.cat_kind(), original, "browsing does not apply");
+    p.panel_char('3');
+    assert_eq!(p.cat_picker.as_ref().unwrap().frame(), 15);
+    p.panel_nav(NavKey::Enter);
+    assert_eq!(p.cat_kind(), crate::cat::CatKind::ALL[1]);
+    assert!(p.cat_picker.is_none());
+    assert_eq!((p.panel.w, p.panel.h), size);
+    p.open_cat_picker();
+    p.open_panel();
+    assert!(p.cat_picker.is_none(), "history shortcut reaches history from gallery");
+    assert!(p.panel_open());
+}
+
+#[test]
+fn copy_wakes_a_sleeping_cat_immediately_but_input_level_up_is_quiet() {
+    let mut p = pet();
+    p.sleep = 1.0;
+    p.last_event -= std::time::Duration::from_secs(90);
+    p.st.total_xp = crate::state::xp_to_next(1)-1;
+    p.advance(1,0,0);
+    assert_eq!(p.level(),2);
+    assert_eq!(p.sleep,1.0);
+    assert!(p.particles.is_empty() && p.toast.is_none());
+    p.on_copy("wake synthetic".into(),None,None);
+    assert_eq!(p.sleep,0.0);
+}
+
+#[test]
+fn pause_after_catch_cancels_particles_and_compression_without_replay() {
+    let mut p = pet();
+    p.on_copy("synthetic caught copy".into(), None, None);
+    p.advance(0, 0, 0);
+    for _ in 0..40 {
+        p.last_tick -= std::time::Duration::from_millis(33);
+        p.advance(0, 0, 0);
+        if !p.particles.is_empty() { break; }
+    }
+    assert!(!p.particles.is_empty() && p.squash > 0.0, "reach the actual catch effects first");
+    p.run_action(PanelAction::ToggleCapture);
+    assert!(p.fish.is_none() && p.fish_queue.is_empty());
+    assert!(p.particles.is_empty(), "pause cancels already-spawned copy particles");
+    assert_eq!((p.squash, p.happy), (0.0, 0.0));
+    p.run_action(PanelAction::ToggleCapture);
+    p.advance(0, 0, 0);
+    assert!(p.fish.is_none() && p.fish_queue.is_empty() && p.particles.is_empty());
+    assert_eq!((p.squash, p.happy), (0.0, 0.0));
+    assert_eq!((p.clips.len(), p.st.total_copies), (1, 1));
+}
+
+#[test]
+fn hide_after_catch_cancels_particles_and_compression_before_quick_show() {
+    let mut p = pet();
+    p.on_copy("synthetic caught hidden copy".into(), None, None);
+    p.advance(0, 0, 0);
+    for _ in 0..40 {
+        p.last_tick -= std::time::Duration::from_millis(33);
+        p.advance(0, 0, 0);
+        if !p.particles.is_empty() { break; }
+    }
+    assert!(!p.particles.is_empty() && p.squash > 0.0, "reach the actual catch effects first");
+    p.set_window_level(2);
+    assert!(p.fish.is_none() && p.fish_queue.is_empty());
+    assert!(p.particles.is_empty(), "hide cancels already-spawned copy particles");
+    assert_eq!((p.squash, p.happy), (0.0, 0.0));
+    assert!(p.show_window());
+    p.advance(0, 0, 0);
+    assert!(p.fish.is_none() && p.fish_queue.is_empty() && p.particles.is_empty());
+    assert_eq!((p.squash, p.happy), (0.0, 0.0));
+    assert_eq!((p.clips.len(), p.st.total_copies), (1, 1));
+}
+
+#[test]
+fn fish_approach_stays_below_each_current_pose_mouth_for_every_cat() {
+    let badge = Badge::from_source(None);
+    let mut p = pet();
+    for kind in crate::cat::CatKind::ALL {
+        p.select_cat(kind).unwrap();
+        for sample in 0..=100 {
+            let ft = sample as f32 / 100.0;
+            let progress = ft * kind.catch_progress();
+            let frame = kind.frame(Some(progress), 0.0, 0.0, 0.0);
+            let (_, mouth_y) = kind.mouth(frame);
+            let fish = p.fish_view(&badge, ft);
+            assert!(fish.y + 0.01 >= mouth_y,
+                "{kind:?} approach {ft:.2}, frame {frame}: fish y {} crosses above current mouth y {mouth_y}", fish.y);
+        }
+        let catch_frame = kind.frame(Some(kind.catch_progress()), 0.0, 0.0, 0.0);
+        let endpoint = kind.mouth(catch_frame);
+        let fish = p.fish_view(&badge, 1.0);
+        assert!((fish.x - endpoint.0).abs() < 0.01 && (fish.y - endpoint.1).abs() < 0.01,
+            "the approach still finishes exactly at the authored capture mouth");
+    }
 }

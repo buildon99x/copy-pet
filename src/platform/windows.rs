@@ -10,6 +10,7 @@
 //! `WS_EX_NOACTIVATE` and takes focus so the search box can receive
 //! keyboard input (incl. IME-composed Hangul via WM_CHAR).
 
+use crate::clip_image::{ClipImage, MAX_IMAGE_BYTES};
 use crate::clipboard::{b64_decode, b64_encode, RichFormats};
 use crate::hotkey::{self, Hotkey};
 use crate::i18n::{self, t, Lang, Msg};
@@ -17,9 +18,8 @@ use crate::input;
 use crate::menu::MenuAction;
 use crate::panel::{fit_delta, Layout, NavKey, PanelDrag, Rect};
 use crate::pet::{window_size, ClipPick, Pet, SCALES};
-use crate::clip_image::{ClipImage, MAX_IMAGE_BYTES};
 use crate::render::{self, Badge};
-use crate::state::{Persist, ACCESSORIES};
+use crate::state::{Persist};
 use crate::update;
 use std::cell::RefCell;
 use std::ffi::c_void;
@@ -29,8 +29,8 @@ use windows_sys::Win32::Foundation::*;
 use windows_sys::Win32::Graphics::Gdi::*;
 use windows_sys::Win32::System::DataExchange::{
     AddClipboardFormatListener, CloseClipboard, EmptyClipboard, GetClipboardData,
-    GetClipboardOwner, OpenClipboard, RegisterClipboardFormatW, RemoveClipboardFormatListener,
-    SetClipboardData, GetClipboardSequenceNumber,
+    GetClipboardOwner, GetClipboardSequenceNumber, OpenClipboard, RegisterClipboardFormatW,
+    RemoveClipboardFormatListener, SetClipboardData,
 };
 use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows_sys::Win32::System::Memory::{
@@ -78,7 +78,7 @@ const CMD_AUTOCLOSE: usize = 23;
 const CMD_GITHUB: usize = 24;
 const CMD_SIZE0: usize = 20; // ..=22
 const CMD_SOUND0: usize = 30; // ..=32
-const CMD_ACC0: usize = 40; // 40 = none, 41..=46 accessories
+const CMD_CAT_PICKER: usize = 40;
 const CMD_LANG_EN: usize = 50;
 const CMD_LANG_KO: usize = 51;
 const CMD_WINLEVEL0: usize = 52; // 52 top, 53 normal, 54 hide
@@ -893,9 +893,14 @@ unsafe fn read_clipboard_content(hwnd: HWND) -> Option<CapturedClip> {
         if OpenClipboard(hwnd) == 0 {
             continue;
         }
-        let image = read_blob_open(png_atom(), MAX_IMAGE_BYTES).and_then(|b| ClipImage::from_png(&b))
-            .or_else(|| read_blob_open(17, 64 * 1024 * 1024 + 4096).and_then(|b| ClipImage::from_dib(&b)))
-            .or_else(|| read_blob_open(8, 64 * 1024 * 1024 + 4096).and_then(|b| ClipImage::from_dib(&b)));
+        let image = read_blob_open(png_atom(), MAX_IMAGE_BYTES)
+            .and_then(|b| ClipImage::from_png(&b))
+            .or_else(|| {
+                read_blob_open(17, 64 * 1024 * 1024 + 4096).and_then(|b| ClipImage::from_dib(&b))
+            })
+            .or_else(|| {
+                read_blob_open(8, 64 * 1024 * 1024 + 4096).and_then(|b| ClipImage::from_dib(&b))
+            });
         if let Some(image) = image {
             CloseClipboard();
             return Some(CapturedClip::Image(image));
@@ -1065,7 +1070,11 @@ unsafe fn clipboard_source_at(
     let name = path
         .rsplit(['\\', '/'])
         .next()
-        .map(|n| n.trim_end_matches(".exe").trim_end_matches(".EXE").to_string())
+        .map(|n| {
+            n.trim_end_matches(".exe")
+                .trim_end_matches(".EXE")
+                .to_string()
+        })
         .filter(|n| !n.is_empty());
 
     let mut badge = Badge::from_source(name.as_deref());
@@ -1439,8 +1448,6 @@ struct MenuSnapshot {
     scale_idx: usize,
     sound: u8,
     window_level: u8,
-    accessory: usize,
-    level: u32,
     autostart: bool,
     lang: Lang,
     capture: bool,
@@ -1528,39 +1535,14 @@ unsafe fn show_menu(hwnd: HWND, ms: &MenuSnapshot) -> usize {
         Msg::MenuSize,
     );
 
-    // accessory submenu
-    let acc_menu = CreatePopupMenu();
-    AppendMenuW(
-        acc_menu,
-        MF_STRING | chk(ms.accessory == 0),
-        CMD_ACC0,
-        wz(t(lang, Msg::AccNone)).as_ptr(),
-    );
-    for (i, acc) in ACCESSORIES.iter().enumerate() {
-        let unlocked = acc.unlocked_at(ms.level);
-        let label = if unlocked {
-            acc.name(lang).to_string()
-        } else {
-            i18n::accessory_locked(lang, acc.name(lang), acc.level)
-        };
-        let mut flags = MF_STRING | chk(ms.accessory == i + 1);
-        if !unlocked {
-            flags |= MF_GRAYED;
-        }
-        AppendMenuW(acc_menu, flags, CMD_ACC0 + 1 + i, wz(&label).as_ptr());
-    }
-    AppendMenuW(
-        menu,
-        MF_POPUP,
-        acc_menu as usize,
-        wz(t(lang, Msg::MenuAccessory)).as_ptr(),
-    );
+    AppendMenuW(menu, MF_STRING, CMD_CAT_PICKER,
+        wz(i18n::picker(lang, i18n::PickerText::Title)).as_ptr());
 
     // sound submenu
     radio_submenu(
         menu,
         lang,
-        &[Msg::SoundOff, Msg::SoundEvents, Msg::SoundAll],
+        &[Msg::SoundOff, Msg::SoundEvents],
         ms.sound as usize,
         CMD_SOUND0,
         Msg::MenuSound,
@@ -1666,8 +1648,6 @@ fn menu_snapshot() -> Option<MenuSnapshot> {
         scale_idx: a.pet.st.scale_idx,
         sound: a.pet.st.sound_mode,
         window_level: a.pet.window_level(),
-        accessory: a.pet.st.accessory,
-        level: a.pet.level(),
         autostart: unsafe { autostart_enabled() },
         lang: a.pet.lang(),
         capture: a.pet.st.clip_capture,
@@ -1806,7 +1786,7 @@ unsafe fn open_menu(hwnd: HWND) {
                     a.pet.set_scale_idx(c - CMD_SIZE0);
                 });
             }
-            c if (CMD_SOUND0..CMD_SOUND0 + 3).contains(&c) => {
+            c if (CMD_SOUND0..CMD_SOUND0 + 2).contains(&c) => {
                 with_app(|a| {
                     a.pet.st.sound_mode = (c - CMD_SOUND0) as u8;
                     a.pet.dirty = true;
@@ -1818,10 +1798,8 @@ unsafe fn open_menu(hwnd: HWND) {
                     a.apply_window_level();
                 });
             }
-            c if (CMD_ACC0..=CMD_ACC0 + ACCESSORIES.len()).contains(&c) => {
-                with_app(|a| {
-                    a.pet.apply_menu_action(MenuAction::SetAccessory(c - CMD_ACC0));
-                });
+            CMD_CAT_PICKER => {
+                with_app(|a| { a.pet.show_window(); a.apply_window_level(); a.pet.apply_menu_action(MenuAction::OpenCatPicker); });
             }
             _ => {}
         }
@@ -2006,8 +1984,12 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
                         with_app(|a| {
                             let (source, badge) = a.clipboard_source();
                             match content {
-                                CapturedClip::Text(text, formats) => a.pet.on_copy_rich(text, source, badge, formats),
-                                CapturedClip::Image(image) => a.pet.on_copy_image(image, source, badge),
+                                CapturedClip::Text(text, formats) => {
+                                    a.pet.on_copy_rich(text, source, badge, formats)
+                                }
+                                CapturedClip::Image(image) => {
+                                    a.pet.on_copy_image(image, source, badge)
+                                }
                             }
                         });
                     }
@@ -2559,7 +2541,9 @@ mod clipboard_tests {
             assert!(write_format(8, &image.to_dib().unwrap()));
             CloseClipboard();
             match read_clipboard_content(hwnd).unwrap() {
-                CapturedClip::Image(captured) => assert_eq!(captured.pixmap().unwrap().data(), pm.data()),
+                CapturedClip::Image(captured) => {
+                    assert_eq!(captured.pixmap().unwrap().data(), pm.data())
+                }
                 _ => panic!("DIB-only clipboard was not captured"),
             }
             assert!(set_clipboard_rich(hwnd, "plain", None, true).is_some());

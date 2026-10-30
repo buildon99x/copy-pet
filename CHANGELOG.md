@@ -16,6 +16,25 @@ versions follow [SemVer](https://semver.org/). Maintenance rules:
 
 ## [Unreleased]
 
+### Added
+- **Twelve cat companions** — freely choose Ragdoll, Birman, Siamese, Bombay,
+  RagaMuffin, Persian, Turkish Angora, American Curl, Munchkin, British Shorthair,
+  Russian Blue or a tuxedo-pattern cat. Each has its own illustrated silhouette,
+  copy reaction, expression and sleeping pose. Preview and apply from the cat
+  gallery; history, tags, projects, level and statistics stay together.
+
+### Changed
+- **Quiet input behavior** — typing, clicking, scrolling and hovering no longer
+  animate, wake or make the cat play tap sounds. Clipboard collection remains
+  expressive; shortcuts, dragging and input statistics continue to work.
+
+### Removed
+- Accessories and level-based automatic costumes, replaced by freely selectable
+  cat characters. Existing saved statistics and preferences remain compatible.
+
+### Fixed
+- Pausing collection or hiding the cat immediately clears remaining copy effects.
+
 ## [2.4.0] - 2026-10-30
 
 ### Added

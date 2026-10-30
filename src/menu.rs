@@ -25,7 +25,7 @@ pub enum MenuAction {
     TogglePasteOnSelect,
     ToggleStats,
     SetSize(usize),
-    SetAccessory(usize),
+    OpenCatPicker,
     SetSound(u8),
     /// Window stacking: 0 = always on top, 1 = normal, 2 = hidden.
     SetWindowLevel(u8),
@@ -53,7 +53,7 @@ pub enum MenuEntry {
 
 /// A rendered menu item. A non-empty `submenu` makes it a parent and its
 /// `action` is ignored; `checked` shows a check/radio mark; `enabled == false`
-/// greys it out (e.g. a still-locked accessory).
+/// greys it out.
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct MenuItem {
     pub label: String,
@@ -69,8 +69,13 @@ impl MenuItem {
         Self::leaf_enabled(label, action, checked, true)
     }
 
-    /// A leaf item that may be greyed out (e.g. a still-locked accessory).
-    pub fn leaf_enabled(label: impl Into<String>, action: MenuAction, checked: bool, enabled: bool) -> MenuEntry {
+    /// A leaf item that may be greyed out.
+    pub fn leaf_enabled(
+        label: impl Into<String>,
+        action: MenuAction,
+        checked: bool,
+        enabled: bool,
+    ) -> MenuEntry {
         MenuEntry::Item(MenuItem {
             label: label.into(),
             action: Some(action),

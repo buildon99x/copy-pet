@@ -7,14 +7,14 @@
 //! per-pixel alpha to the desktop compositor (the native Win32 backend keeps
 //! the fully transparent, click-through look). See ADR-0001 / ADR-0003.
 //!
-//! Interactions: drag to move, double-click to pet, single-click to bounce,
-//! middle-click to toggle the clipboard panel, hover to show today's stats,
+//! Interactions: drag to move, middle-click to toggle the clipboard panel,
+//! explicit stats toggle (B), cat gallery (A),
 //! and the global panel hotkey (Cmd+Shift+V on macOS, Super+Shift+V on
 //! Linux by default — the configured `win` modifier maps to the OS super
 //! key). The panel card itself is movable (drag its header strip) and
 //! resizable (drag the bottom-right grip) independently of the cat.
 //! Settings have no system tray here; when the window is focused
-//! these keys apply: S size · A accessory · M sound · B stats bubble ·
+//! these keys apply: S size · A cat gallery · M sound · B stats bubble ·
 //! L lock · G language · C clipboard panel · O auto-close after copy ·
 //! V list/thumbnail view · U update download page · Q/Esc quit. While the panel is open the
 //! keyboard drives it instead (type to search, arrows/Home/End + Enter,
@@ -40,9 +40,9 @@
 //! Linux keeps `rdev::listen` (X11). If the macOS tap can't be created
 //! (Accessibility permission missing) the app stays up and shows a hint.
 
+use crate::clipboard::RichFormats;
 use crate::hotkey::Hotkey;
 use crate::input;
-use crate::clipboard::RichFormats;
 use crate::panel::{self, fit_delta, NavKey, Rect};
 use crate::pet::{ClipPick, Pet};
 
@@ -53,7 +53,7 @@ struct ClipCapture {
     text: String,
     formats: Option<RichFormats>,
 }
-use crate::state::{Persist, ACCESSORIES};
+use crate::state::{Persist};
 #[cfg(not(target_os = "macos"))]
 use std::num::NonZeroU32;
 use std::rc::Rc;
@@ -318,7 +318,6 @@ impl PortableApp {
         }
     }
 
-
     /// Resizes the presentation buffers to the current `w`×`h`. On macOS the
     /// view's backing layer follows the window automatically, so this is a
     /// no-op there (the next `paint` pushes a correctly sized image).
@@ -537,21 +536,9 @@ impl PortableApp {
                 self.pet
                     .set_scale_idx((self.pet.st.scale_idx + 1) % 3);
             }
-            KeyCode::KeyA => {
-                // cycle through none + unlocked accessories only
-                let level = self.pet.level();
-                let mut next = self.pet.st.accessory;
-                for _ in 0..=ACCESSORIES.len() {
-                    next = (next + 1) % (ACCESSORIES.len() + 1);
-                    if next == 0 || ACCESSORIES[next - 1].unlocked_at(level) {
-                        break;
-                    }
-                }
-                self.pet.st.accessory = next;
-                self.pet.dirty = true;
-            }
+            KeyCode::KeyA => self.pet.open_cat_picker(),
             KeyCode::KeyM => {
-                self.pet.st.sound_mode = (self.pet.st.sound_mode + 1) % 3;
+                self.pet.st.sound_mode = (self.pet.st.sound_mode + 1) % 2;
                 self.pet.dirty = true;
             }
             KeyCode::KeyB => {

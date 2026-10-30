@@ -13,7 +13,7 @@ use clipcat::i18n::Lang;
 use clipcat::menu::{MenuAction, MenuEntry, MenuItem, MenuOutcome};
 use clipcat::panel::{self, NavKey};
 use clipcat::pet::Pet;
-use clipcat::render::{self, Accessory, BubbleData, Scene};
+use clipcat::render::{self, BubbleData, Scene};
 use clipcat::state::Persist;
 use tiny_skia::Pixmap;
 
@@ -31,25 +31,12 @@ fn pet_at_xp(xp: u64) -> Pet {
 }
 
 #[test]
-fn hunter_glasses_surround_the_visible_blue_eyes_in_idle_frame() {
-    let mut p = pet();
-    p.st.onboarded = true;
-    p.st.accessory = 2; // glasses, canonical persisted accessory id
-    let mut plain = Pixmap::new(240, 256).unwrap();
-    p.render(&mut plain);
-    p.st.accessory = 0;
-    let mut without_glasses = Pixmap::new(240, 256).unwrap();
-    p.render(&mut without_glasses);
-    // The top of each ring sits above the corresponding eye in the chosen
-    // illustrated idle pose. Locations were read from the rendered PNG.
-    for (x, y) in [(132, 139), (175, 139)] {
-        let dark_outline = (x-3..=x+3).any(|px| (y-3..=y+3).any(|py| {
-            let c = plain.pixel(px, py).unwrap();
-            c != without_glasses.pixel(px, py).unwrap()
-                && c.alpha() > 240 && c.red() < 90 && c.green() < 90 && c.blue() < 90
-        }));
-        assert!(dark_outline, "glasses must sit around eye at x={x}");
-    }
+fn legacy_accessory_is_ignored_without_changing_the_selected_cat_or_stats() {
+    let state: Persist=serde_json::from_str(r#"{"accessory":2,"total_xp":7890,"total_keys":42}"#).unwrap();
+    let p=Pet::new(state);
+    assert_eq!(p.cat_kind(),clipcat::cat::CatKind::Ragdoll);
+    assert_eq!((p.st.total_xp,p.st.total_keys),(7890,42));
+    assert!(!serde_json::to_string(&p.st).unwrap().contains("accessory"));
 }
 
 /// First menu item (recursing into submenus) carrying `action`.
@@ -377,8 +364,8 @@ fn context_menu_drives_settings_end_to_end() {
 
     // sound: toggle and watch the radio check move
     assert_eq!(p.apply_menu_action(MenuAction::SetSound(2)), MenuOutcome::Handled);
-    assert_eq!(p.st.sound_mode, 2);
-    assert!(menu_find(&p.build_menu("HK", false), MenuAction::SetSound(2)).unwrap().checked);
+    assert_eq!(p.st.sound_mode, 1);
+    assert!(menu_find(&p.build_menu("HK", false), MenuAction::SetSound(1)).unwrap().checked);
     assert!(!menu_find(&p.build_menu("HK", false), MenuAction::SetSound(0)).unwrap().checked);
 
     // lock / stats / auto-update toggles flip the persisted flags
@@ -584,7 +571,9 @@ fn held_key_counts_once_through_the_input_gate() {
 /// in the bubble area.
 #[test]
 fn stats_bubble_renders_with_system_font() {
+    let art=clipcat::hunter_art::CatArt::load(clipcat::cat::CatKind::Ragdoll).unwrap();
     let base = Scene {
+        cat_art: &art,
         hunter_frame: 0,
         capture_paused: false,
         paw_l: 0.0,
@@ -597,7 +586,6 @@ fn stats_bubble_renders_with_system_font() {
         breath: 0.0,
         tail_phase: 0.0,
         mouth_open: 0.0,
-        accessory: Accessory::None,
         particles: &[],
         fish: None,
         bubble: None,
@@ -634,28 +622,25 @@ fn stats_bubble_renders_with_system_font() {
     assert!(diff > 4000, "bubble box + text must rasterize ({diff} bytes differ)");
 }
 
-/// Accessories are greyed until their level, then become selectable — the
-/// menu's `enabled`/`checked` flags and the apply guard agree.
+/// Every gallery card is free, previews do not apply, and Apply persists stable IDs.
 #[test]
-fn context_menu_unlocks_accessories_by_level() {
-    let mut low = pet(); // level 1
-    assert!(!menu_find(&low.build_menu("HK", false), MenuAction::SetAccessory(1)).unwrap().enabled);
-    low.apply_menu_action(MenuAction::SetAccessory(1)); // guarded no-op
-    assert_eq!(low.st.accessory, 0);
-
-    let mut high = pet_at_xp(10_000_000); // well past every unlock
-    let m = high.build_menu("HK", false);
-    assert!(menu_find(&m, MenuAction::SetAccessory(1)).unwrap().enabled);
-    high.apply_menu_action(MenuAction::SetAccessory(1));
-    assert_eq!(high.st.accessory, 1);
-    assert!(menu_find(&high.build_menu("HK", false), MenuAction::SetAccessory(1)).unwrap().checked);
-
-    // An out-of-range id (past the accessory table) must be a guarded no-op,
-    // not an index-out-of-bounds panic — `apply_menu_action` takes an
-    // untrusted index that round-trips through the native menus.
-    let prev = high.st.accessory;
-    high.apply_menu_action(MenuAction::SetAccessory(9999));
-    assert_eq!(high.st.accessory, prev);
+fn context_menu_gallery_applies_all_twelve_cats_without_changing_statistics() {
+    let mut p=pet_at_xp(12345);
+    p.st.total_keys=42;
+    for (i,kind) in clipcat::cat::CatKind::ALL.into_iter().enumerate() {
+        let previous=p.cat_kind();
+        assert!(menu_find(&p.build_menu("HK",false),MenuAction::OpenCatPicker).unwrap().enabled);
+        p.apply_menu_action(MenuAction::OpenCatPicker);
+        let l=p.panel.layout();
+        p.panel_click(l.card_x+20.0+(i%4) as f32*144.0,l.card_y+60.0+(i/4) as f32*108.0);
+        assert_eq!(p.cat_kind(),previous,"browsing only previews");
+        for key in ['1','2','3'] { p.panel_char(key); }
+        p.panel_click(l.card_x+380.0,l.card_y+540.0);
+        assert_eq!(p.cat_kind(),kind);
+        assert_eq!((p.st.total_xp,p.st.total_keys),(12345,42));
+        let restored: Persist=serde_json::from_str(&serde_json::to_string(&p.st).unwrap()).unwrap();
+        assert_eq!(Pet::new(restored).cat_kind(),kind);
+    }
 }
 
 /// Rich-format paste parity (ADR-0014): a normal pick re-emits the original

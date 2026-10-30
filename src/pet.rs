@@ -9,9 +9,9 @@ use crate::clipboard::{ClipStore, RichFormats};
 use crate::i18n::{self, t, Lang, Msg};
 use crate::menu::{MenuAction, MenuEntry, MenuItem, MenuOutcome};
 use crate::panel::{NavKey, Panel, PanelAction, PanelDrag};
-use crate::render::{self, Accessory, Badge, BubbleData, FishView, Particle, ParticleKind, Scene};
+use crate::render::{self, Badge, BubbleData, FishView, Particle, ParticleKind, Scene};
 use crate::sound;
-use crate::state::{level_progress, Persist, ACCESSORIES};
+use crate::state::{level_progress, Persist};
 use std::collections::VecDeque;
 use std::hash::{Hash, Hasher};
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
@@ -39,8 +39,6 @@ pub struct ClipPick {
     pub image: Option<ClipImage>,
 }
 
-/// Lifetime of a complete notice/hunt/satisfaction cycle, in seconds.
-const FISH_SECS: f32 = 0.9;
 /// At most this many fish queue up during copy bursts.
 const FISH_QUEUE_MAX: usize = 1;
 
@@ -88,6 +86,8 @@ fn seed() -> u32 {
 
 pub struct Pet {
     pub st: Persist,
+    cat_art: crate::hunter_art::CatArt,
+    pub cat_picker: Option<crate::cat_picker::CatPicker>,
     pub clips: ClipStore,
     pub workbench: crate::ai_workbench::Workbench,
     pub panel: Panel,
@@ -99,7 +99,6 @@ pub struct Pet {
     // animation
     paw_l: f32,
     paw_r: f32,
-    next_paw_left: bool,
     blink_start: f32,
     blink_next: f32,
     happy: f32,
@@ -116,7 +115,6 @@ pub struct Pet {
     fish: Option<(Badge, f32)>, // badge, flight progress 0..1
     fish_queue: VecDeque<Badge>,
     // inputs from the platform
-    hover: bool,
     panel_hint: String,
     update_available: Option<String>, // newer release found (crate::update)
     accessibility_hinted: bool,       // macOS Accessibility hint shown once
@@ -157,7 +155,11 @@ impl Pet {
         let mut panel = Panel::with_geometry(st.panel_w, st.panel_h, (st.panel_off_x, st.panel_off_y));
         panel.cat_scale = SCALES[st.scale_idx.min(2)];
         panel.view = st.panel_view.min(1);
+        let kind = crate::cat::CatKind::from_id(&st.cat_kind);
+        let cat_art = crate::hunter_art::CatArt::load(kind).expect("bundled cat atlas");
         Pet {
+            cat_art,
+            cat_picker: None,
             st,
             clips: ClipStore::load(),
             workbench: crate::ai_workbench::Workbench::load(),
@@ -168,7 +170,6 @@ impl Pet {
             last_tick: now,
             paw_l: 0.0,
             paw_r: 0.0,
-            next_paw_left: true,
             blink_start: -1.0,
             blink_next: 2.0,
             happy: 0.0,
@@ -183,7 +184,6 @@ impl Pet {
             bubble_alpha: 0.0,
             fish: None,
             fish_queue: VecDeque::new(),
-            hover: false,
             panel_hint: String::new(),
             update_available: None,
             accessibility_hinted: false,
@@ -226,7 +226,7 @@ impl Pet {
     }
 
     pub fn set_hover(&mut self, hover: bool) {
-        self.hover = hover;
+        let _ = hover;
     }
 
     /// Footer hint shown in the panel (backend-specific hotkey text).
@@ -265,7 +265,7 @@ impl Pet {
     /// The macOS global-input event tap could not be installed — Accessibility
     /// permission has not been granted. Point the user at the setting, once;
     /// the pet, clipboard history and panel (C / middle-click) keep working,
-    /// only the global hotkey and the keyboard/mouse "tap along" do not.
+    /// only the global hotkey and activity statistics are unavailable.
     pub fn notify_accessibility_needed(&mut self) {
         if self.accessibility_hinted {
             return;
@@ -444,6 +444,8 @@ impl Pet {
             self.fish = None;
             self.fish_queue.clear();
             self.happy = 0.0;
+            self.particles.clear();
+            self.squash = 0.0;
         }
         self.st.window_level = level;
         self.dirty = true;
@@ -498,6 +500,7 @@ impl Pet {
     }
 
     fn copy_feedback(&mut self, badge: Badge) {
+        self.sleep = 0.0;
         if self.st.window_level != 2 {
             if self.fish_queue.len() >= FISH_QUEUE_MAX {
                 self.fish_queue.pop_front();
@@ -517,6 +520,7 @@ impl Pet {
     }
 
     pub fn toggle_panel(&mut self) {
+        if self.cat_picker.is_some() { self.close_cat_picker(); return; }
         self.drag = None;
         self.relayout(|p| {
             // Opening the panel for the first time retires the first-run hint.
@@ -544,6 +548,7 @@ impl Pet {
     /// search/filter is preserved); the backend still brings the window to the
     /// front so an obscured or hidden panel reappears.
     pub fn open_panel(&mut self) {
+        if self.cat_picker.is_some() { self.close_cat_picker(); }
         if !self.panel.open {
             self.toggle_panel();
         }
@@ -565,6 +570,7 @@ impl Pet {
     /// no panel; the backend positions the flyout window at the focused app's
     /// text caret. Idempotent on panel contents when already a flyout.
     pub fn open_flyout(&mut self) {
+        if self.cat_picker.is_some() { self.close_cat_picker(); }
         // An embedded (middle-click) panel must retract first so the cat
         // window returns to its plain size before the flyout takes over.
         if self.panel.open && !self.flyout {
@@ -669,6 +675,7 @@ impl Pet {
     /// drag started (the backend then feeds deltas and must not treat the
     /// press as a click).
     pub fn panel_drag_start(&mut self, cx: f32, cy: f32) -> bool {
+        if self.cat_picker.is_some() { return false; }
         self.drag = self.panel.drag_hit(cx, cy);
         self.drag.is_some()
     }
@@ -732,11 +739,9 @@ impl Pet {
         self.panel.hit(cx, cy)
     }
 
-    /// Shared reaction to picking a clip (copy / paste-as-text): toast, a happy
-    /// bump, the pop sound, and closing the panel when auto-close is on.
+    /// Functional feedback after picking a clip, and optional panel dismissal.
     fn after_pick(&mut self, toast: Msg) {
         self.toast_msg(toast, 1.6);
-        self.happy = (self.happy + 0.4).min(1.0);
         if self.st.sound_mode >= 1 {
             sound::play_pop();
         }
@@ -844,6 +849,8 @@ impl Pet {
                     self.fish = None;
                     self.fish_queue.clear();
                     self.happy = 0.0;
+                    self.particles.clear();
+                    self.squash = 0.0;
                 }
                 self.toggle_bool_toast(self.st.clip_capture, Msg::ToastCaptureOn, Msg::ToastCapturePaused);
             }
@@ -913,6 +920,20 @@ impl Pet {
 
     /// A click at window-canvas coords while the panel is open.
     pub fn panel_click(&mut self, cx: f32, cy: f32) -> Option<ClipPick> {
+        if self.cat_picker.is_some() {
+            let l = self.panel.layout();
+            let action = self.cat_picker.as_mut().unwrap().click(cx-l.card_x, cy-l.card_y);
+            match action {
+                crate::cat_picker::Action::Apply(kind) => {
+                    if self.select_cat(kind).is_ok() { self.close_cat_picker(); }
+                    else { self.set_toast(i18n::picker(self.lang(), i18n::PickerText::Error).into(), 3.0); }
+                },
+                crate::cat_picker::Action::Close => self.close_cat_picker(),
+                crate::cat_picker::Action::None => {},
+            }
+            self.last_visual = None;
+            return None;
+        }
         if !self.panel.hit(cx, cy) {
             return None;
         }
@@ -958,6 +979,7 @@ impl Pet {
     }
     /// Mouse wheel over the panel (positive rows = scroll down).
     pub fn panel_wheel(&mut self, rows: i32) {
+        if self.cat_picker.is_some() { return; }
         if self.workbench.open {
             self.workbench
                 .wheel(rows, self.panel.active_layout().rows, self.lang());
@@ -969,6 +991,10 @@ impl Pet {
 
     /// Printable character while the panel is open (search input).
     pub fn panel_char(&mut self, c: char) {
+        if let Some(picker)=self.cat_picker.as_mut() {
+            if ('1'..='3').contains(&c) { picker.preview_mode(c as u8-b'1'); self.last_visual=None; }
+            return;
+        }
         if self.workbench.open {
             self.workbench.input(c);
             self.sync_workbench();
@@ -979,6 +1005,16 @@ impl Pet {
 
     /// Navigation key while the panel is open.
     pub fn panel_nav(&mut self, key: NavKey) -> Option<ClipPick> {
+        if let Some(picker)=self.cat_picker.as_mut() {
+            match key {
+                NavKey::Left => picker.navigate(-1), NavKey::Right => picker.navigate(1),
+                NavKey::Up => picker.navigate(-4), NavKey::Down => picker.navigate(4),
+                NavKey::Enter => { let kind=picker.selected; if self.select_cat(kind).is_ok() { self.close_cat_picker(); } },
+                NavKey::Esc => self.close_cat_picker(), _=>{},
+            }
+            self.last_visual=None;
+            return None;
+        }
         if key == NavKey::Workbench {
             if self.workbench.open {
                 self.workbench.toggle();
@@ -1007,6 +1043,7 @@ impl Pet {
 
     /// Opens the existing panel in explicit request-preparation mode.
     pub fn open_workbench(&mut self) {
+        if self.cat_picker.is_some() { self.close_cat_picker(); }
         if !self.panel.open {
             self.toggle_panel();
         }
@@ -1026,7 +1063,7 @@ impl Pet {
     }
 
     pub fn workbench_editing(&self) -> bool {
-        self.panel.open && self.workbench.open && self.workbench.editing()
+        self.cat_picker.is_none() && self.panel.open && self.workbench.open && self.workbench.editing()
     }
 
     /// Receives an explicit paste while our editor has focus, never global input.
@@ -1048,10 +1085,6 @@ impl Pet {
         self.last_tick = now;
 
         if k + c + wh > 0 {
-            if self.sleep > 0.5 {
-                self.spawn_sparkles(3, 120.0, 100.0); // waking up
-            }
-            self.last_event = now;
             self.st.total_keys += k;
             self.st.total_clicks += c;
             self.st.keys_today += k;
@@ -1068,21 +1101,9 @@ impl Pet {
                 }
             }
 
-            // paw taps (alternate; cap per tick so mashing doesn't teleport)
-            let taps = (k + c).min(3);
-            for _ in 0..taps {
-                if self.next_paw_left {
-                    self.paw_l = 1.0;
-                } else {
-                    self.paw_r = 1.0;
-                }
-                self.next_paw_left = !self.next_paw_left;
-            }
-            if taps > 0 && self.st.sound_mode >= 2 {
-                sound::play_tap(self.next_paw_left);
-            }
-
-            self.maybe_level_up();
+            let (level, _, _) = level_progress(self.st.total_xp);
+            self.level_changed |= level != self.level;
+            self.level = level;
         }
 
         // ease animation params toward rest
@@ -1091,8 +1112,7 @@ impl Pet {
         self.happy = (self.happy - dt / 1.8).max(0.0);
         self.squash = (self.squash - dt * 6.0).max(0.0);
 
-        let inst_rate = (k + c) as f32 / dt;
-        self.rate += (inst_rate - self.rate) * (dt * 2.5).min(1.0);
+
 
         let idle_secs = (now - self.last_event).as_secs_f32();
         let sleep_target = if idle_secs > 75.0 { 1.0 } else { 0.0 };
@@ -1115,19 +1135,23 @@ impl Pet {
         self.breath_phase += dt * (2.2 - self.sleep * 1.2);
 
         // fish flight
+        let mut fish_started = false;
         if self.fish.is_none() {
             if let Some(badge) = self.fish_queue.pop_front() {
                 self.fish = Some((badge, 0.0));
+                fish_started = true;
             }
         }
+        let duration = self.cat_kind().copy_duration();
+        let catch = self.cat_kind().catch_progress();
         let mut nom_now = false;
         if let Some((_, ft)) = &mut self.fish {
             let before = *ft;
-            *ft += dt / FISH_SECS;
+            if !fish_started { *ft += dt / duration; }
             // The seventh illustrated pose opens the mouth. Eat here, then
             // finish the remaining satisfaction/recovery frames in the same
             // short cycle, rather than replaying a slow recovery afterwards.
-            nom_now = before < 0.55 && *ft >= 0.55;
+            nom_now = before < catch && *ft >= catch;
             if *ft >= 1.0 {
                 self.fish = None;
             }
@@ -1155,7 +1179,7 @@ impl Pet {
         self.particles.retain(|p| p.life > 0.0);
 
         // bubble fade (hidden while the panel is open)
-        let bubble_target = if !self.panel.open && (self.st.bubble_pinned || self.hover) {
+        let bubble_target = if !self.panel.open && self.st.bubble_pinned {
             1.0
         } else {
             0.0
@@ -1188,21 +1212,30 @@ impl Pet {
     }
 
     fn hunter_frame(&self, t: f32) -> usize {
-        let frame = crate::hunter_motion::frame(
+        self.cat_kind().frame(
             self.fish.as_ref().map(|(_, progress)| *progress),
             self.happy, self.sleep, self.blink(t),
-        );
-        // Input activity is a small attentive glance, never a whole-body loop.
-        if frame == 0 && self.paw_l.max(self.paw_r) > 0.25 { 1 } else { frame }
+        )
     }
 
     /// Hash only visible state. No rasterization, serialization or clipboard
     /// scanning is needed on stable ticks; a change invalidates both presenters.
     fn visual_stamp(&self, t: f32) -> u64 {
         let mut h = std::collections::hash_map::DefaultHasher::new();
-        (self.hunter_frame(t), self.st.clip_capture, self.st.accessory,
-            self.st.scale_idx, self.st.window_level, self.st.onboarded,
-            &self.st.lang, &self.st.hotkey, self.panel.open, self.flyout).hash(&mut h);
+        if let Some(picker) = &self.cat_picker { (picker.selected, picker.frame()).hash(&mut h); }
+        (
+            self.hunter_frame(t),
+            self.st.clip_capture,
+            &self.st.cat_kind,
+            self.st.scale_idx,
+            self.st.window_level,
+            self.st.onboarded,
+            &self.st.lang,
+            &self.st.hotkey,
+            self.panel.open,
+            self.flyout,
+        )
+            .hash(&mut h);
         ((self.squash * 100.0).round() as u32).hash(&mut h);
         ((self.bubble_alpha * 20.0).round() as u32).hash(&mut h);
         if self.bubble_alpha > 0.01 {
@@ -1216,7 +1249,7 @@ impl Pet {
         if let Some((badge, progress)) = &self.fish {
             badge.letter.hash(&mut h);
             badge.color.hash(&mut h);
-            if *progress <= 0.58 {
+            if *progress <= self.cat_kind().catch_progress() + 0.03 {
                 ((progress * 30.0).round() as u32).hash(&mut h);
             }
         }
@@ -1246,11 +1279,12 @@ impl Pet {
     fn nom(&mut self) {
         self.happy = (self.happy + 0.5).min(1.0);
         self.squash = 0.6;
-        self.spawn_sparkles(4, 175.0, 196.0);
+        let (mx, my) = self.cat_kind().mouth(self.hunter_frame(self.now_t()));
+        self.spawn_sparkles(4, mx, my);
         let r = rand_f(&mut self.rng);
         self.particles.push(Particle {
-            x: 175.0,
-            y: 184.0,
+            x: mx,
+            y: my - 12.0,
             vx: (r - 0.5) * 18.0,
             vy: -32.0,
             life: 1.0,
@@ -1264,15 +1298,19 @@ impl Pet {
     }
 
     /// Fish position along its arc into the mouth (cat-local coords).
-    fn fish_view<'a>(badge: &'a Badge, ft: f32) -> FishView<'a> {
+    fn fish_view<'a>(&self, badge: &'a Badge, ft: f32) -> FishView<'a> {
         // A short arc from the front paws into the illustrated open mouth;
         // keeping it below the face avoids covering the blue eyes.
-        let (sx, sy) = (212.0f32, 219.0f32);
-        let (cx, cy) = (210.0f32, 219.0f32);
-        let (mx, my) = (175.0f32, 196.0f32);
+        let kind = self.cat_kind();
+        let (sx, sy) = kind.fish_start();
+        let (mx, my) = kind.mouth(kind.frame(Some(kind.catch_progress()), 0.0, 0.0, 0.0));
+        let (cx, cy) = ((sx + mx) * 0.5 + 8.0, sy.max(my) + 4.0);
         let u = 1.0 - ft;
         let x = u * u * sx + 2.0 * u * ft * cx + ft * ft * mx;
-        let y = u * u * sy + 2.0 * u * ft * cy + ft * ft * my;
+        let (_, current_mouth_y) = kind.mouth(kind.frame(Some(ft * kind.catch_progress()), 0.0, 0.0, 0.0));
+        // A lowered head can cross the future capture arc. Stay below the
+        // currently displayed mouth while retaining the authored endpoint.
+        let y = (u * u * sy + 2.0 * u * ft * cy + ft * ft * my).max(current_mouth_y);
         // velocity for heading
         let dx = 2.0 * u * (cx - sx) + 2.0 * ft * (mx - cx);
         let dy = 2.0 * u * (cy - sy) + 2.0 * ft * (my - cy);
@@ -1329,9 +1367,12 @@ impl Pet {
             None
         };
 
-        let fish = self.fish.as_ref()
-            .filter(|(_, progress)| *progress <= 0.58)
-            .map(|(badge, progress)| Self::fish_view(badge, (progress / 0.55).min(1.0)));
+        let catch = self.cat_kind().catch_progress();
+        let fish = self
+            .fish
+            .as_ref()
+            .filter(|(_, progress)| *progress <= catch + 0.03)
+            .map(|(badge, progress)| self.fish_view(badge, (progress / catch).min(1.0)));
         // mouth opens as the fish closes in
         let mouth_open = match &self.fish {
             Some((_, ft)) => ((ft - 0.45) / 0.4).clamp(0.0, 1.0),
@@ -1345,6 +1386,7 @@ impl Pet {
         });
 
         let scene = Scene {
+            cat_art: &self.cat_art,
             hunter_frame: self.hunter_frame(t),
             capture_paused: !self.st.clip_capture,
             paw_l: ease_press(self.paw_l),
@@ -1357,7 +1399,6 @@ impl Pet {
             breath,
             tail_phase: self.tail_phase,
             mouth_open,
-            accessory: Accessory::from_id(self.st.accessory),
             particles: &self.particles,
             fish,
             bubble,
@@ -1374,7 +1415,10 @@ impl Pet {
         }
         // A flyout-owned panel is drawn in its own window, not here.
         if self.panel.open && !self.flyout {
-            render::draw_panel(pm, &self.build_panel_view(t));
+            if let Some(picker) = &self.cat_picker {
+                let l = self.panel.layout();
+                picker.draw(pm, (l.card_x, l.card_y), self.lang());
+            } else { render::draw_panel(pm, &self.build_panel_view(t)); }
         }
     }
 
@@ -1394,52 +1438,51 @@ impl Pet {
 
     // ---- interactions ------------------------------------------------------
 
-    /// Double-click / explicit pet: a burst of hearts and bonus XP.
-    pub fn pet(&mut self) {
-        self.happy = 1.0;
-        self.st.total_xp += 10;
-        self.dirty = true;
-        for _ in 0..6 {
-            let r1 = rand_f(&mut self.rng);
-            let r2 = rand_f(&mut self.rng);
-            self.particles.push(Particle {
-                x: 95.0 + r1 * 50.0,
-                y: 92.0 + r2 * 16.0,
-                vx: (r1 - 0.5) * 30.0,
-                vy: -35.0 - r2 * 25.0,
-                life: 1.0,
-                kind: ParticleKind::Heart,
-                size: 4.5 + r1 * 3.0,
-                spin: 0.0,
-            });
-        }
-        if self.st.sound_mode >= 1 {
-            sound::play_pop();
-        }
-        self.maybe_level_up();
+    /// Kept for platform event compatibility; body clicks have no character feedback.
+    pub fn pet(&mut self) {}
+
+    pub fn click_bounce(&mut self, _cx: f32, _cy: f32) {}
+
+    pub fn cat_kind(&self) -> crate::cat::CatKind {
+        crate::cat::CatKind::from_id(&self.st.cat_kind)
     }
 
-    /// Single tap on the body: a little squash bounce and a sparkle.
-    /// `cx`/`cy` are in cat-local canvas coordinates (see [`Pet::cat_point`]).
-    pub fn click_bounce(&mut self, cx: f32, cy: f32) {
-        self.squash = 1.0;
-        self.st.total_xp += 1;
+    pub fn select_cat(&mut self, kind: crate::cat::CatKind) -> Result<(), String> {
+        let art = crate::hunter_art::CatArt::load(kind)?;
+        self.cat_art = art;
+        self.st.cat_kind = kind.id().into();
+        self.fish = None;
+        self.fish_queue.clear();
+        self.particles.clear();
+        self.toast = None;
+        self.happy = 0.0;
+        self.sleep = 0.0;
+        self.squash = 0.0;
+        self.last_event = Instant::now();
+        self.blink_start = -1.0;
+        self.blink_next = self.now_t() + 3.0;
+        self.last_visual = None;
         self.dirty = true;
-        let r = rand_f(&mut self.rng);
-        self.particles.push(Particle {
-            x: cx,
-            y: cy - 6.0,
-            vx: (r - 0.5) * 14.0,
-            vy: -28.0,
-            life: 1.0,
-            kind: ParticleKind::Sparkle,
-            size: 5.0,
-            spin: 0.0,
-        });
-        // A body click grants XP like every other input path, so it must be
-        // able to trigger a level-up immediately rather than deferring it to
-        // the next advance() tick that happens to see input.
-        self.maybe_level_up();
+        Ok(())
+    }
+
+    pub fn open_cat_picker(&mut self) {
+        if self.cat_picker.is_some() { return; }
+        if self.flyout { self.close_flyout(); }
+        self.open_panel();
+        let mut picker = crate::cat_picker::CatPicker::new(self.cat_kind());
+        picker.previous_size = (self.panel.w, self.panel.h);
+        self.relayout(|p| { p.panel.w = crate::cat_picker::WIDTH; p.panel.h = crate::cat_picker::HEIGHT; });
+        self.cat_picker = Some(picker);
+        self.last_visual = None;
+        self.fit_panel = true;
+    }
+
+    fn close_cat_picker(&mut self) {
+        if let Some(picker) = self.cat_picker.take() {
+            self.relayout(|p| { p.panel.w = picker.previous_size.0; p.panel.h = picker.previous_size.1; });
+            self.dismiss_panel();
+        }
     }
 
     /// Builds the right-click / tray context menu for the current state.
@@ -1448,7 +1491,6 @@ impl Pet {
     /// it). Mirrors the Windows tray menu order so the two stay at parity.
     pub fn build_menu(&self, hotkey: &str, autostart: bool) -> Vec<MenuEntry> {
         let lang = self.lang();
-        let level = self.level();
         let mut m: Vec<MenuEntry> = Vec::new();
 
         // Update available (top, like the Windows tray).
@@ -1503,33 +1545,13 @@ impl Pet {
         let size_items = radio_items(lang, &sizes, self.st.scale_idx, MenuAction::SetSize);
         m.push(MenuItem::parent(t(lang, Msg::MenuSize), size_items));
 
-        // Accessory submenu: None + each accessory, locked ones greyed.
-        let mut acc_items = vec![MenuItem::leaf(
-            t(lang, Msg::AccNone),
-            MenuAction::SetAccessory(0),
-            self.st.accessory == 0,
-        )];
-        for (i, acc) in ACCESSORIES.iter().enumerate() {
-            let id = i + 1;
-            let unlocked = acc.unlocked_at(level);
-            let label = if unlocked {
-                acc.name(lang).to_string()
-            } else {
-                i18n::accessory_locked(lang, acc.name(lang), acc.level)
-            };
-            acc_items.push(MenuItem::leaf_enabled(
-                label,
-                MenuAction::SetAccessory(id),
-                self.st.accessory == id,
-                unlocked,
-            ));
-        }
-        m.push(MenuItem::parent(t(lang, Msg::MenuAccessory), acc_items));
+        m.push(MenuItem::leaf(i18n::picker(self.lang(), i18n::PickerText::Title), MenuAction::OpenCatPicker, self.cat_picker.is_some()));
 
         // Sound submenu.
-        let sounds = [Msg::SoundOff, Msg::SoundEvents, Msg::SoundAll];
-        let sound_items =
-            radio_items(lang, &sounds, self.st.sound_mode as usize, |i| MenuAction::SetSound(i as u8));
+        let sounds = [Msg::SoundOff, Msg::SoundEvents];
+        let sound_items = radio_items(lang, &sounds, self.st.sound_mode as usize, |i| {
+            MenuAction::SetSound(i as u8)
+        });
         m.push(MenuItem::parent(t(lang, Msg::MenuSound), sound_items));
 
         // Window stacking submenu (always on top / normal / hide).
@@ -1588,16 +1610,9 @@ impl Pet {
                 self.dirty = true;
             }
             MenuAction::SetSize(i) => self.set_scale_idx(i),
-            MenuAction::SetAccessory(id) => {
-                // ignore a still-locked or unknown accessory (the menu greys it,
-                // but guard anyway — `id` is an untrusted index here)
-                if id == 0 || ACCESSORIES.get(id - 1).is_some_and(|a| a.unlocked_at(self.level())) {
-                    self.st.accessory = id;
-                    self.dirty = true;
-                }
-            }
+            MenuAction::OpenCatPicker => self.open_cat_picker(),
             MenuAction::SetSound(mode) => {
-                self.st.sound_mode = mode.min(2);
+                self.st.sound_mode = mode.min(1);
                 self.dirty = true;
             }
             MenuAction::SetWindowLevel(level) => {
@@ -1638,7 +1653,6 @@ impl Pet {
         self.st.clicks_today = 0;
         self.st.copies_today = 0;
         self.st.active_min_today = 0;
-        self.st.accessory = 0;
         self.level = 1;
         self.level_changed = true;
         self.save();
@@ -1653,25 +1667,11 @@ impl Pet {
     }
 
     fn level_up(&mut self, lv: u32, t: f32) {
-        let prev = self.level;
         self.level = lv;
         self.level_changed = true;
         self.happy = 1.0;
         self.spawn_stars(12);
-        let mut text = i18n::level_up(self.lang(), lv);
-        // Equip + announce the highest accessory newly unlocked in (prev, lv].
-        // A single XP grant can jump several levels, so keying on an exact
-        // `acc.level == lv` match would silently skip an intermediate unlock.
-        if let Some((i, acc)) = ACCESSORIES
-            .iter()
-            .enumerate()
-            .filter(|(_, a)| a.level > prev && a.level <= lv)
-            .max_by_key(|(_, a)| a.level)
-        {
-            self.st.accessory = i + 1;
-            text = i18n::new_accessory(self.lang(), acc.name(self.lang()));
-            self.spawn_sparkles(8, 120.0, 80.0);
-        }
+        let text = i18n::level_up(self.lang(), lv);
         self.toast = Some((text, t + 3.2));
         if self.st.sound_mode >= 1 {
             sound::play_chime();

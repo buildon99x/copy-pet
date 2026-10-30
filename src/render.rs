@@ -1,4 +1,4 @@
-//! All drawing: the cat, desk, keyboard, paws, accessories, particles,
+//! Drawing the selected illustrated cat, particles,
 //! stats bubble, toasts, the copy-event fish and the clipboard panel.
 //! Cached illustrated pet frames and vector UI via tiny-skia on a 240x256
 //! logical pet canvas (the panel canvas is larger), with a global pet scale.
@@ -26,36 +26,6 @@ const ROW_SEL: (u8, u8, u8, u8) = (208, 228, 248, 200);
 const ROW_HOVER: (u8, u8, u8, u8) = (226, 238, 250, 150);
 const PIN_GOLD: (u8, u8, u8, u8) = (242, 201, 76, 255);
 
-#[derive(Clone, Copy, PartialEq)]
-pub enum Accessory {
-    None,
-    Scarf,
-    Glasses,
-    Beanie,
-    Headphones,
-    Crown,
-    Wizard,
-    Sprout,
-    Clover,
-    Pudding,
-}
-
-impl Accessory {
-    pub fn from_id(id: usize) -> Accessory {
-        match id {
-            1 => Accessory::Scarf,
-            2 => Accessory::Glasses,
-            3 => Accessory::Beanie,
-            4 => Accessory::Headphones,
-            5 => Accessory::Crown,
-            6 => Accessory::Wizard,
-            7 => Accessory::Sprout,
-            8 => Accessory::Clover,
-            9 => Accessory::Pudding,
-            _ => Accessory::None,
-        }
-    }
-}
 
 #[derive(Clone, Copy)]
 pub enum ParticleKind {
@@ -170,7 +140,8 @@ pub struct FishView<'a> {
 }
 
 pub struct Scene<'a> {
-    /// Cached illustrated ragdoll frame, selected by the event timeline.
+    /// Owned selected-character cache and its event-timeline frame.
+    pub cat_art: &'a crate::hunter_art::CatArt,
     pub hunter_frame: usize,
     pub capture_paused: bool,
     pub paw_l: f32,
@@ -183,7 +154,6 @@ pub struct Scene<'a> {
     pub breath: f32,
     pub tail_phase: f32,
     pub mouth_open: f32,
-    pub accessory: Accessory,
     pub particles: &'a [Particle],
     pub fish: Option<FishView<'a>>,
     pub bubble: Option<BubbleData>,
@@ -253,7 +223,7 @@ impl<'a> Cv<'a> {
         self.stroke_t(p, c, w, Transform::identity());
     }
     /// Fill then stroke the same path — the outlined-shape pattern repeated all
-    /// over `draw_fish` / `draw_accessory`. Equivalent to `fill_t` + `stroke_t`.
+    /// over `draw_fish`. Equivalent to `fill_t` + `stroke_t`.
     fn filled(
         &mut self,
         p: &Option<Path>,
@@ -342,16 +312,12 @@ fn draw_scene(pm: &mut Pixmap, sc: &Scene, scale: f32) {
         ts: Transform::from_scale(scale, scale).post_translate(sc.origin.0, sc.origin.1),
     };
 
-    // A single cached illustrated frame replaces the old procedural cat,
-    // desk and keyboard. Short click compression preserves tactile feedback.
+    // One cached illustrated character, with a brief copy-event compression.
     let squash = 1.0 - 0.035 * sc.squash;
     let pose = Transform::from_translate(0.0, 232.0)
-        .pre_scale(1.0, squash).pre_translate(0.0, -232.0);
-    crate::hunter_art::draw(cv.pm, sc.hunter_frame, pose.post_concat(cv.ts));
-    let (nose_x, nose_y) = crate::hunter_art::face_anchor(sc.hunter_frame);
-    let head = Transform::from_scale(0.8, 0.8)
-        .post_translate(nose_x - 96.0, nose_y - 107.6);
-    draw_accessory(&mut cv, sc.accessory, head.post_concat(pose));
+        .pre_scale(1.0, squash)
+        .pre_translate(0.0, -232.0);
+    sc.cat_art.draw(cv.pm, sc.hunter_frame, pose.post_concat(cv.ts));
     if sc.capture_paused {
         let badge = round_rect(204.0, 230.0, 24.0, 20.0, 7.0);
         cv.fill(&badge, (250, 247, 242, 255));
@@ -483,161 +449,6 @@ fn draw_fish(cv: &mut Cv, f: &FishView) {
     }
 }
 
-fn draw_accessory(cv: &mut Cv, acc: Accessory, t: Transform) {
-    match acc {
-        Accessory::None => {}
-        Accessory::Scarf => {
-            let band = round_rect(76.0, 168.0, 88.0, 16.0, 8.0);
-            cv.filled(&band, (217, 79, 79, 255), OUTLINE, 2.5, t);
-            let knot = round_rect(140.0, 180.0, 14.0, 22.0, 6.0);
-            cv.filled(&knot, (185, 61, 61, 255), OUTLINE, 2.5, t);
-        }
-        Accessory::Glasses => {
-            for ex in [92.0f32, 148.0] {
-                let ring = oval(ex, 122.0, 13.0, 13.0);
-                cv.filled(&ring, (130, 180, 230, 50), (63, 63, 63, 255), 3.0, t);
-            }
-            let mut pb = PathBuilder::new();
-            pb.move_to(105.0, 120.0);
-            pb.quad_to(120.0, 114.0, 135.0, 120.0);
-            cv.stroke_t(&pb.finish(), (63, 63, 63, 255), 3.0, t);
-        }
-        Accessory::Beanie => {
-            let mut pb = PathBuilder::new();
-            pb.move_to(64.0, 92.0);
-            pb.quad_to(120.0, 30.0, 176.0, 92.0);
-            pb.close();
-            let hat = pb.finish();
-            cv.filled(&hat, (91, 141, 217, 255), OUTLINE, 3.0, t);
-            let brim = round_rect(62.0, 86.0, 116.0, 13.0, 6.0);
-            cv.filled(&brim, (74, 118, 184, 255), OUTLINE, 2.5, t);
-            let pom = oval(120.0, 54.0, 9.0, 9.0);
-            cv.filled(&pom, (240, 240, 240, 255), OUTLINE, 2.5, t);
-        }
-        Accessory::Headphones => {
-            let mut pb = PathBuilder::new();
-            pb.move_to(62.0, 110.0);
-            pb.quad_to(120.0, 44.0, 178.0, 110.0);
-            cv.stroke_t(&pb.finish(), (61, 61, 61, 255), 7.0, t);
-            for ex in [62.0f32, 178.0] {
-                let cup = oval(ex, 120.0, 11.0, 15.0);
-                cv.filled(&cup, (85, 85, 85, 255), (45, 45, 45, 255), 2.5, t);
-                cv.fill_t(&oval(ex, 120.0, 6.0, 9.5), (255, 122, 122, 255), t);
-            }
-        }
-        Accessory::Crown => {
-            let mut pb = PathBuilder::new();
-            pb.move_to(92.0, 84.0);
-            pb.line_to(96.0, 56.0);
-            pb.line_to(108.0, 72.0);
-            pb.line_to(120.0, 50.0);
-            pb.line_to(132.0, 72.0);
-            pb.line_to(144.0, 56.0);
-            pb.line_to(148.0, 84.0);
-            pb.close();
-            let crown = pb.finish();
-            cv.filled(&crown, (242, 201, 76, 255), (180, 140, 30, 255), 3.0, t);
-            cv.fill_t(&oval(120.0, 76.0, 4.0, 4.0), (217, 79, 79, 255), t);
-            cv.fill_t(&oval(102.0, 78.0, 3.0, 3.0), (79, 130, 217, 255), t);
-            cv.fill_t(&oval(138.0, 78.0, 3.0, 3.0), (79, 130, 217, 255), t);
-        }
-        Accessory::Wizard => {
-            let mut pb = PathBuilder::new();
-            pb.move_to(70.0, 88.0);
-            pb.line_to(120.0, 14.0);
-            pb.line_to(170.0, 88.0);
-            pb.close();
-            let cone = pb.finish();
-            cv.filled(&cone, (107, 91, 217, 255), OUTLINE, 3.0, t);
-            let brim = round_rect(56.0, 84.0, 128.0, 12.0, 6.0);
-            cv.filled(&brim, (88, 73, 184, 255), OUTLINE, 2.5, t);
-            star_at(cv, 120.0, 56.0, 9.0, 0.0, (250, 220, 90, 255), t);
-            star_at(cv, 102.0, 74.0, 4.5, 0.6, (250, 220, 90, 220), t);
-            star_at(cv, 140.0, 70.0, 4.5, 1.2, (250, 220, 90, 220), t);
-        }
-        Accessory::Sprout => {
-            // a tiny sprout poking from the top of the head (cute meme)
-            let green = (126, 201, 110, 255);
-            let stem = {
-                let mut pb = PathBuilder::new();
-                pb.move_to(120.0, 82.0);
-                pb.line_to(120.0, 66.0);
-                pb.finish()
-            };
-            cv.stroke_t(&stem, (96, 168, 84, 255), 3.0, t);
-            let left = {
-                let mut pb = PathBuilder::new();
-                pb.move_to(120.0, 73.0);
-                pb.quad_to(102.0, 64.0, 109.0, 77.0);
-                pb.quad_to(115.0, 75.0, 120.0, 73.0);
-                pb.close();
-                pb.finish()
-            };
-            cv.filled(&left, green, (96, 168, 84, 255), 1.8, t);
-            let right = {
-                let mut pb = PathBuilder::new();
-                pb.move_to(120.0, 70.0);
-                pb.quad_to(138.0, 58.0, 134.0, 72.0);
-                pb.quad_to(127.0, 70.0, 120.0, 70.0);
-                pb.close();
-                pb.finish()
-            };
-            cv.filled(&right, green, (96, 168, 84, 255), 1.8, t);
-        }
-        Accessory::Pudding => {
-            // a caramel pudding perched on the head, cherry on top
-            let custard = (246, 224, 150, 255);
-            let caramel = (190, 130, 70, 255);
-            let body = {
-                let mut pb = PathBuilder::new();
-                pb.move_to(102.0, 58.0);
-                pb.line_to(138.0, 58.0);
-                pb.line_to(152.0, 92.0);
-                pb.quad_to(120.0, 99.0, 88.0, 92.0);
-                pb.close();
-                pb.finish()
-            };
-            cv.filled(&body, custard, OUTLINE, 2.6, t);
-            let glaze = oval(120.0, 58.0, 20.0, 6.5);
-            cv.filled(&glaze, caramel, OUTLINE, 2.0, t);
-            for (dx, dy) in [(-12.0f32, 64.0f32), (10.0, 65.0)] {
-                let mut pb = PathBuilder::new();
-                pb.move_to(120.0 + dx, 58.0);
-                pb.quad_to(120.0 + dx + 1.0, dy, 120.0 + dx - 1.0, dy + 3.0);
-                cv.stroke_t(&pb.finish(), caramel, 3.0, t);
-            }
-            cv.filled(&oval(120.0, 49.0, 4.5, 4.5), (216, 72, 80, 255), OUTLINE, 1.6, t);
-            let mut stem = PathBuilder::new();
-            stem.move_to(122.0, 46.0);
-            stem.line_to(126.0, 40.0);
-            cv.stroke_t(&stem.finish(), (120, 90, 60, 255), 2.0, t);
-        }
-        Accessory::Clover => {
-            // a lucky four-leaf clover on the crown: one heart-leaf, tip at the
-            // center, rotated into four; a curved stem trailing down
-            let (cx, cy) = (120.0f32, 62.0f32);
-            let green = (118, 192, 96, 255);
-            let edge = (86, 150, 68, 255);
-            let mut stem = PathBuilder::new();
-            stem.move_to(cx + 2.0, cy + 3.0);
-            stem.quad_to(cx + 11.0, cy + 16.0, cx + 6.0, cy + 27.0);
-            cv.stroke_t(&stem.finish(), edge, 3.0, t);
-            let leaf = heart_path(cx, cy - 9.0 * 1.05, 9.0);
-            let vein = {
-                let mut pb = PathBuilder::new();
-                pb.move_to(cx, cy - 1.0);
-                pb.line_to(cx, cy - 14.0);
-                pb.finish()
-            };
-            for deg in [45.0f32, 135.0, 225.0, 315.0] {
-                let lt = t.pre_concat(Transform::from_rotate_at(deg, cx, cy));
-                cv.filled(&leaf, green, edge, 2.0, lt);
-                cv.stroke_t(&vein, fade(edge, 0.5), 1.3, lt);
-            }
-            cv.fill_t(&oval(cx, cy, 2.2, 2.2), edge, t);
-        }
-    }
-}
 
 fn star_path(cx: f32, cy: f32, r: f32, rot: f32) -> Option<Path> {
     let mut pb = PathBuilder::new();
@@ -655,9 +466,6 @@ fn star_path(cx: f32, cy: f32, r: f32, rot: f32) -> Option<Path> {
     pb.finish()
 }
 
-fn star_at(cv: &mut Cv, cx: f32, cy: f32, r: f32, rot: f32, c: (u8, u8, u8, u8), t: Transform) {
-    cv.fill_t(&star_path(cx, cy, r, rot), c, t);
-}
 
 fn heart_path(cx: f32, cy: f32, s: f32) -> Option<Path> {
     let mut pb = PathBuilder::new();
@@ -1018,9 +826,10 @@ pub fn draw_panel(pm: &mut Pixmap, v: &PanelView) {
             TEXT_DIM,
         );
     }
-    let hover = v.panel.cursor.filter(|(x, _)| {
-        (lt.row_x..=lt.row_x + lt.row_w).contains(x)
-    });
+    let hover = v
+        .panel
+        .cursor
+        .filter(|(x, _)| (lt.row_x..=lt.row_x + lt.row_w).contains(x));
     let hover_row = hover.and_then(|(_, y)| v.panel.row_at(y, total));
     let now = crate::clipboard::now_ts();
     // two list styles share this loop: the compact "list" (one body line, thin
@@ -1100,7 +909,14 @@ pub fn draw_panel(pm: &mut Pixmap, v: &PanelView) {
             pl::OVF_ZONE + pl::PIN_ZONE + if quick { 16.0 } else { 0.0 }
         };
         let tmax = right - cluster - tx - 6.0;
-        let image_label = clip.image.as_ref().map(|image| format!("{} {} × {}", t(lang,Msg::ImageClip), image.width, image.height));
+        let image_label = clip.image.as_ref().map(|image| {
+            format!(
+                "{} {} × {}",
+                t(lang, Msg::ImageClip),
+                image.width,
+                image.height
+            )
+        });
         let flat = image_label.as_deref().unwrap_or_else(|| clip.flattened());
         let (line1, line2) = if thumb {
             sysfont::wrap_two(flat, BODY_PX, tmax)

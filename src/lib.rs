@@ -6,6 +6,7 @@
 //! [`render::draw_icon_scaled`] to regenerate the embedded `.ico` asset.
 
 pub mod ai_workbench;
+pub mod cat;
 pub mod clip_image;
 pub mod clipboard;
 pub mod hotkey;
@@ -22,3 +23,5 @@ pub mod sound;
 pub mod state;
 pub mod sysfont;
 pub mod update;
+
+pub mod cat_picker;

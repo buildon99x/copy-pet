@@ -16,11 +16,11 @@ Windows; a portable build sharing the same core on macOS/Linux.
 
 ## Features
 
-- **Cottonball Hunter** — a fluffy blue-eyed ragdoll that quietly watches your
-  work, then gets unusually serious about a clipboard fish. Its illustrated
-  notice/hunt/satisfaction cycle uses cached frames; stable resting and sleeping
-  poses stop repainting. Capture pause stays visible as a separate pause badge.
-  [Animation behavior and performance](docs/specs/cottonball-hunter.md).
+- **Twelve cat companions** — choose a breed with its own silhouette, copy
+  reaction, expression and sleeping pose. Every cat is available from the start;
+  changing cats keeps your history, projects, level and statistics. Open the cat
+  gallery from the settings menu (`A` on portable), preview, then apply.
+  [Characters, quiet behavior and performance](docs/specs/cat-companions.md).
 
 - **AI request workbench** — collect and order clips into request/code/error/constraint
   sections, reuse named templates with variables, switch project trays explicitly,
@@ -76,12 +76,13 @@ Windows; a portable build sharing the same core on macOS/Linux.
 - **English + Korean** — full UI in both, switchable at runtime. All text
   renders in your **system font** (Segoe UI / Malgun Gothic on Windows —
   read from the OS, never bundled).
-- **Activity and growth** — global input *counts* drive small attentive reactions, XP and
-  levels: 2 XP/key, 1 XP/click & scroll, 5 XP/copy. Level-ups unlock
-  accessories (scarf, glasses, beanie, headphones, crown, wizard hat).
-- **Today's stats bubble** — hover the cat: keys, clicks, copies, active time.
+- **Activity and growth** — global input *counts* contribute to statistics and
+  levels: 2 XP/key, 1 XP/click & scroll, 5 XP/copy. Typing and mouse activity do
+  not animate, wake or play sounds. Cat choices are independent of levels.
+- **Today's stats bubble** — enable Show stats (`B` on portable) for keys,
+  clicks, copies and active time.
 - **Alive** — blinking, a short hunting reaction when a clip arrives, sleep
-  after 75 s idle, and an affectionate pose when petted.
+  after 75 s without a copy. Body clicks and hovering remain quiet.
 - **Unobtrusive & light** — always-on-top without stealing focus, transparent
   pixels click through (Windows), single exe, no installer, bounded cached art.
 
@@ -102,15 +103,14 @@ Windows; a portable build sharing the same core on macOS/Linux.
 | Type while panel is open | Search (arrows, Home/End, Enter; Esc clears query → filter → closes) |
 | Drag the panel header / corner grip | Move / resize the panel (cat stays put) |
 | Drag | Move the pet (unless position-locked) |
-| Click | Boop (squash bounce, +1 XP) |
-| Double-click | Pet it (+10 XP, hearts) |
-| Hover | Today's stats bubble |
+| Cat gallery / `A` (portable) | Preview and choose a cat |
+| Show stats / `B` (portable) | Toggle today's stats bubble |
 | Right-click (Windows tray / macOS) | Settings menu (see below) |
 | Tray icon click (Windows) | Hide/show the cat |
 
 The settings menu (Windows tray, macOS right-click) holds: clipboard panel,
 pause capture, close-after-copy, paste-on-select, panel hotkey (cycles through
-safe presets), show-stats, Size / Accessory / Sound / Window submenus, lock
+safe presets), show-stats, cat gallery, Size / Sound / Window submenus, lock
 position, language, run at login, automatic updates, reset stats, About,
 GitHub, quit.
 
@@ -119,7 +119,7 @@ GitHub, quit.
 Global (works everywhere): `Cmd+Shift+V` (macOS) / `Super+Shift+V` (Linux)
 opens the clipboard panel. With the window focused (and the panel closed):
 `C` clipboard panel · `V` list/card view · `O` close-after-copy · `K` panel
-hotkey preset · `S` size · `A` accessory · `M` sound · `B` stats bubble ·
+hotkey preset · `S` size · `A` cat gallery · `M` sound · `B` stats bubble ·
 `L` lock · `G` language · `U` update page (when one is found) · `Q`/`Esc` quit.
 (macOS also has the full right-click menu.)
 
@@ -200,9 +200,10 @@ automatically" / `auto_update` in `state.json`). There is no other network code.
 
 ## 특징
 
-- **솜뭉치 사냥꾼** — 파란 눈의 랙돌이 클립을 발견하고 사냥한 뒤 만족하는
-  연속 프레임을 보여줍니다. 대기·수면 상태는 불필요하게 다시 그리지 않고,
-  수집 정지는 별도의 Ⅱ 표시로 구분합니다.
+- **12종의 고양이 동료** — 종류마다 체형·자세·복사 반응·표정·수면 모습이
+  다릅니다. 처음부터 모두 자유롭게 선택하고 기록·프로젝트·레벨·통계는 함께
+  유지합니다. 메뉴의 고양이 선택(portable: `A`)에서 미리 본 뒤 함께하기를 누르세요.
+  [종류별 특징과 조용한 동작](docs/specs/cat-companions.md).
 
 - **태그** — 클립의 **... → #** 또는 `Ctrl/Cmd+T`로 태그를 편집하고
   일반 검색어로 내용·앱·태그 일부를 찾거나 `#태그`로 정확히 일치하는 태그를
@@ -249,10 +250,11 @@ automatically" / `auto_update` in `state.json`). There is no other network code.
   포함한 모든 텍스트가 **시스템 폰트**(Windows: 맑은 고딕/Segoe UI — OS에서
   읽어 오며 번들하지 않음)로 렌더링됩니다.
 - **활동과 성장** — 키 1회 = 2 XP, 클릭/스크롤 = 1 XP, 복사 = 5 XP.
-  레벨업하면 액세서리가 잠금해제됩니다 (목도리·안경·비니·헤드폰·왕관·마법사 모자).
-- **오늘의 통계** — 마우스를 올리면 키 입력 / 클릭 / 복사 / 활동 시간 표시.
+  입력은 통계·성장만 갱신하며 고양이 반응·기상·탭 소리를 만들지 않습니다.
+- **오늘의 통계** — 메뉴의 통계 고정(portable: `B`)으로 키 입력 / 클릭 /
+  복사 / 활동 시간을 표시합니다.
 - **살아있는 애니메이션** — 깜박임, 짧은 생선 사냥 반응, 75초 유휴 후 잠들기,
-  더블클릭 쓰다듬기.
+  몸통 클릭·호버는 외형에 영향을 주지 않습니다.
 - **가벼움** — 포커스를 훔치지 않는 항상 위 창, 투명 부분 클릭 통과(Windows),
   단일 exe, 설치 불필요, 크기가 제한된 캐릭터 이미지 캐시.
 
@@ -273,15 +275,14 @@ automatically" / `auto_update` in `state.json`). There is no other network code.
 | 패널 열고 타이핑 | 검색 (방향키·Home/End·Enter, Esc는 검색어 → 필터 → 닫기 순) |
 | 패널 헤더 / 모서리 그립 드래그 | 패널만 이동 / 크기 조절 (고양이는 제자리) |
 | 드래그 | 위치 이동 (잠금 시 제외) |
-| 클릭 | 콩— (+1 XP) |
-| 더블클릭 | 쓰다듬기 (+10 XP, 하트) |
-| 마우스 올리기 | 오늘의 통계 말풍선 |
+| 고양이 선택 / `A` (portable) | 고양이별 미리보기와 선택 |
+| 통계 고정 / `B` (portable) | 오늘의 통계 표시 전환 |
 | 우클릭 (Windows 트레이 / macOS) | 설정 메뉴 (아래 참조) |
 | 트레이 아이콘 클릭 (Windows) | 고양이 숨기기/보이기 |
 
 설정 메뉴(Windows 트레이, macOS 우클릭)에는 다음이 들어 있습니다: 클립보드
 패널, 수집 일시정지, 복사 후 자동 닫기, 선택 시 붙여넣기, 패널 핫키(안전한
-프리셋 순환), 통계 고정, 크기 / 액세서리 / 소리 / 창 모드 하위 메뉴, 위치
+프리셋 순환), 통계 고정, 고양이 선택, 크기 / 소리 / 창 모드 하위 메뉴, 위치
 잠금, 언어, 자동 실행, 자동 업데이트, 통계 초기화, 정보, GitHub, 종료.
 
 ### portable 빌드 (macOS / Linux) 단축키
@@ -289,7 +290,7 @@ automatically" / `auto_update` in `state.json`). There is no other network code.
 전역(어디서나): macOS `Cmd+Shift+V` / Linux `Super+Shift+V`로 패널 열기.
 창에 포커스를 준 뒤 (패널이 닫힌 상태에서):
 `C` 클립보드 패널 · `V` 리스트/카드 보기 · `O` 복사 후 자동 닫기 ·
-`K` 패널 핫키 프리셋 · `S` 크기 · `A` 액세서리 · `M` 소리 · `B` 통계 고정 ·
+`K` 패널 핫키 프리셋 · `S` 크기 · `A` 고양이 선택 · `M` 소리 · `B` 통계 고정 ·
 `L` 위치 잠금 · `G` 언어 · `U` 업데이트 페이지(새 버전이 있을 때) ·
 `Q`/`Esc` 종료. (macOS는 우클릭 메뉴도 제공합니다.)
 
