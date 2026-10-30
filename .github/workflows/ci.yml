@@ -13,7 +13,7 @@ name: CI
 # protection, so doc-only PRs stay mergeable even when the matrix is required.
 on:
   push:
-    branches: [main]
+    branches: [main, feat/cat-breeds-motion]
     tags: ["v*"]
   pull_request:
   workflow_dispatch:
@@ -88,6 +88,27 @@ jobs:
 
       - name: Test
         run: cargo test --release
+
+      - name: Validate macOS cat assets and rendering
+        if: runner.os == 'macOS'
+        run: |
+          sw_vers
+          uname -m
+          file target/release/clipcat
+          cargo test --locked --release --example prepare_cat_atlas
+          cargo run --locked --release --example preview -- "$RUNNER_TEMP/clipcat-macos-validation/previews"
+
+      - name: Smoke test macOS app and clipboard
+        if: runner.os == 'macOS'
+        run: python3 scripts/validate_macos.py
+
+      - name: Upload macOS validation evidence
+        if: always() && runner.os == 'macOS'
+        uses: actions/upload-artifact@v4
+        with:
+          name: clipcat-macos-validation
+          path: ${{ runner.temp }}/clipcat-macos-validation
+          if-no-files-found: warn
 
       # Also exercise the portable backend on Windows so it can't bit-rot.
       - name: Clippy (portable backend on Windows)
