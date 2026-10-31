@@ -11,7 +11,7 @@ ClipCat은 고양이 캐릭터와 클립보드 관리자를 하나로 묶은 데
 [개발 빌드](https://github.com/buildon99x/copy-pet/actions/workflows/ci.yml) ·
 [변경 이력](CHANGELOG.md) · [English](#english)
 
-> 이 README는 현재 개발 브랜치 `feat/cat-breeds-motion`을 기준으로 합니다. 공개 릴리스에는
+> 이 README는 개발 브랜치 `main`을 기준으로 합니다. 공개 릴리스에는
 > 아직 포함되지 않은 변경이 있을 수 있습니다. 차이는 [Unreleased](CHANGELOG.md#unreleased)를 확인하세요.
 
 ## 만나볼 고양이
@@ -188,6 +188,13 @@ Windows 네이티브 이미지 기록 기능을 제공하지 않습니다.
 macOS는 Retina 배율에 맞춰 논리 크기와 시스템 글꼴을 렌더링합니다.
 UI 언어는 한국어·영어를 전환할 수 있습니다.
 
+## 브랜치와 출시
+
+`main`은 최신 개발 코드이고, `production`은 최종 공개 정식 릴리스와 같은 커밋입니다.
+main의 검증된 버전을 production으로 승격하면 출시됩니다.
+출시 후보의 버전 태그만으로는 출시 완료가 아니며 CI 공개·승격 성공을 확인합니다.
+[출시·실패 복구 절차](docs/releasing.md)를 참고하세요. Microsoft Store 제출·심사는 별도로 진행합니다.
+
 ## 소스에서 빌드
 
 Rust stable이 필요하며 Windows는 MSVC 도구 체인을 사용합니다.
@@ -199,7 +206,7 @@ sudo apt-get install libx11-dev libxi-dev libxtst-dev libxkbcommon-dev libxkbcom
 ```
 
 ```bash
-git clone --branch feat/cat-breeds-motion https://github.com/buildon99x/copy-pet.git
+git clone --branch main https://github.com/buildon99x/copy-pet.git
 cd copy-pet
 cargo build --locked --release
 cargo run --locked --release --bin clipcat

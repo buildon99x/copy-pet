@@ -2,3 +2,6 @@
 *.png.tmp
 shot_*.png
 /.superpowers/
+
+# Python release tooling
+__pycache__/

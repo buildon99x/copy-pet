@@ -21,6 +21,18 @@ macOS와 Linux는 같은 코어를 사용하는 portable 백엔드로 동작한�
 - 렌더링·전역 입력·플랫폼 의존성·macOS 경로를 다룰 때는 [LNR](.context/kb/lnr/README.md)도 먼저 읽는다.
 - 완료 보고에는 변경 내용, 실제 검증 결과, 남은 제한을 적는다. 실행하지 않은 검사나 다른 OS의 동작을 통과했다고 표현하지 않는다.
 
+## 브랜치와 출시 계약
+
+- `main`은 최신 개발 코드이며 아직 출시되지 않은 작업을 포함할 수 있다.
+- `production`은 최종 공개 정식 릴리스의 태그와 정확히 같은 커밋이어야 한다.
+- `main → production` 승격이 출시다. production에 별도 개발·머지 커밋을 만들지 않는다.
+- 출시 요청은 main에서 `scripts/release.sh`로 준비한다. CI 빌드·검사·GitHub 공개 확인 후
+  `scripts/production.py`가 production을 fast-forward로 승격한다. 직접 push로 우회하지 않는다.
+- 출시 완료 보고 전에 CI 성공 및 production/공개 태그 SHA 일치를 확인한다. 실패 시 이전 출시를
+  유지하고, 공개 후 ref 갱신 실패는 동일 태그 CI를 재실행해 복구한다.
+- MS Store 심사는 별도 단계다. Store용 패키지는 production 태그/커밋을 기준으로 만들고 기록한다.
+- 상세 절차·원자성 제한·복구는 [출시 지침](docs/releasing.md)을 따른다.
+
 ## 개인정보와 의존성
 
 - 전역 키·마우스 입력 훅과 활동 카운터를 사용하지 않는다. 핫키는 OS 등록 알림만 받으며 `rdev`는 선택적 붙여넣기 출력에만 사용한다. 입력 내용·창 제목·입력 타이밍을 기록하거나 전송하지 않는다.

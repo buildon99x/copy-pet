@@ -11,7 +11,6 @@
 #   --dry-run        print every step, change nothing
 #   --no-push        commit + tag locally, don't push
 #   --skip-checks    skip cargo build/clippy/test gates
-#   --allow-any-branch  release from a branch other than main
 #
 # On Windows run it via scripts/release.cmd (uses Git for Windows bash).
 
@@ -66,13 +65,12 @@ fi
 # ---- parse args ---------------------------------------------------------------
 
 BUMP=$1; shift
-DRY_RUN=0 NO_PUSH=0 SKIP_CHECKS=0 ANY_BRANCH=0
+DRY_RUN=0 NO_PUSH=0 SKIP_CHECKS=0
 for arg in "$@"; do
     case "$arg" in
         --dry-run) DRY_RUN=1 ;;
         --no-push) NO_PUSH=1 ;;
         --skip-checks) SKIP_CHECKS=1 ;;
-        --allow-any-branch) ANY_BRANCH=1 ;;
         *) err "unknown option: $arg" ;;
     esac
 done
@@ -97,8 +95,8 @@ DATE=$(date +%Y-%m-%d)
 verify_changelog
 
 BRANCH=$(git rev-parse --abbrev-ref HEAD)
-if [ "$BRANCH" != "main" ] && [ "$ANY_BRANCH" -eq 0 ]; then
-    err "on branch '$BRANCH', not main (use --allow-any-branch to override)"
+if [ "$BRANCH" != "main" ]; then
+    err "on branch '$BRANCH', not main; release candidates must come from main"
 fi
 
 if [ -n "$(git status --porcelain)" ]; then
@@ -118,9 +116,10 @@ note "releasing $CUR -> $NEW (tag $TAG, $DATE) from branch $BRANCH"
 
 if [ "$SKIP_CHECKS" -eq 0 ]; then
     note "running quality gates (cargo build/clippy/test --release)"
-    cargo build --release
-    cargo clippy --release
-    cargo test --release
+    cargo build --locked --release
+    cargo clippy --locked --release
+    cargo test --locked --release
+    python3 -m unittest discover -s tests -p test_production.py
 else
     note "skipping quality gates (--skip-checks)"
 fi
@@ -162,10 +161,10 @@ note "committed and tagged $TAG"
 # ---- push -------------------------------------------------------------------------
 
 if [ "$NO_PUSH" -eq 1 ]; then
-    note "skipping push (--no-push); when ready: git push origin $BRANCH $TAG"
+    note "skipping push (--no-push); when ready: git push --atomic origin $BRANCH $TAG"
 else
-    git push origin "$BRANCH" "$TAG"
-    note "pushed $BRANCH and $TAG — CI builds the win/mac/linux artifacts"
+    git push --atomic origin "$BRANCH" "$TAG"
+    note "pushed $BRANCH and $TAG — CI builds Windows/macOS, publishes, then promotes production"
 fi
 
 note "done. release notes for $TAG:"

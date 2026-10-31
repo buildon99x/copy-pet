@@ -127,12 +127,12 @@ fn release_guards_branch_dirty_tree_and_bad_input() {
     assert!(git(dir, &["checkout", "-q", "-b", "feature"]).0);
     let (ok, out) = release(dir, &["patch", "--skip-checks", "--no-push"]);
     assert!(!ok && out.contains("main"), "branch guard:\n{out}");
-    // ...unless explicitly allowed (also proves the override works)
+    // Feature branches cannot bypass the main -> production release policy.
     let (ok, out) = release(
         dir,
         &["patch", "--skip-checks", "--no-push", "--allow-any-branch"],
     );
-    assert!(ok, "allow-any-branch failed:\n{out}");
+    assert!(!ok, "allow-any-branch must not bypass main:\n{out}");
     assert!(git(dir, &["checkout", "-q", "main"]).0);
 
     // dirty tree

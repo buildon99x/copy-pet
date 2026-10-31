@@ -1,19 +1,11 @@
 name: CI
 
-# Quality gates run once per change: on PRs and on main. Release binaries
-# are built ONLY for version tags pushed by scripts/release.sh — never on
-# PR creation or branch pushes. Linux is deliberately not built in CI (the
-# portable backend is exercised by the macOS job and by the Windows
-# `--features portable` lint).
-#
-# Doc/asset-only changes skip the heavy windows/macos build matrix. The skip
-# is done with a `changes` detection job + a job-level `if:` (NOT top-level
-# paths-ignore), so the matrix check contexts still report — as "skipped" —
-# instead of going missing. A skipped REQUIRED status check passes branch
-# protection, so doc-only PRs stay mergeable even when the matrix is required.
+# main is development; production is the exact latest published release commit.
+# Version tags request promotion. Failed builds never move production.
+# See docs/releasing.md for bootstrap, recovery and Store handoff.
 on:
   push:
-    branches: [main, feat/cat-breeds-motion]
+    branches: [main, production]
     tags: ["v*"]
   pull_request:
   workflow_dispatch:
@@ -22,6 +14,31 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  release-policy:
+    name: release policy
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Test production promotion guards
+        run: python3 -m unittest discover -s tests -p test_production.py
+      - name: Validate main release candidate
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: python3 scripts/production.py check "$RELEASE_TAG"
+      - name: Audit production against latest published release
+        if: github.ref == 'refs/heads/production'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 scripts/production.py audit
+
   # Cheap gate: did any SOURCE path change? Always runs, needs no toolchain.
   # On a missing/zero base ref (new branch, force-push) paths-filter fails
   # open (reports changed), so the build runs — the safe direction.
@@ -58,13 +75,14 @@ jobs:
 
   build:
     name: ${{ matrix.os }}
-    needs: changes
+    needs: [changes, changelog, release-policy]
     # Build when any source path changed, OR always on a v* tag push (so the
     # release path is never filtered out — the tag clause short-circuits
     # before trusting the filter on a ref it can't diff).
     if: >-
-      startsWith(github.ref, 'refs/tags/v') ||
-      needs.changes.outputs.source == 'true'
+      github.ref != 'refs/heads/production' &&
+      (startsWith(github.ref, 'refs/tags/v') ||
+      needs.changes.outputs.source == 'true')
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -150,22 +168,22 @@ jobs:
         if: startsWith(github.ref, 'refs/tags/v') && runner.os == 'Windows'
         shell: bash
         run: |
-          mkdir dist
-          cp target/release/clipcat.exe dist/clipcat-windows-x86_64.exe
+          mkdir -p dist/release
+          cp target/release/clipcat.exe dist/release/clipcat-windows-x86_64.exe
 
       # tar keeps the executable bit (macos-latest runners are arm64)
       - name: Prepare release asset (macOS)
         if: startsWith(github.ref, 'refs/tags/v') && runner.os == 'macOS'
         run: |
-          mkdir dist
-          tar -czf dist/clipcat-macos-arm64.tar.gz -C target/release clipcat
+          mkdir -p dist/release
+          tar -czf dist/release/clipcat-macos-arm64.tar.gz -C target/release clipcat
 
       - name: Upload release artifact
         if: startsWith(github.ref, 'refs/tags/v')
         uses: actions/upload-artifact@v4
         with:
           name: release-${{ matrix.os }}
-          path: dist/*
+          path: dist/release/*
           if-no-files-found: error
 
   # Publishes the GitHub Release the in-app updater checks against. Runs on
@@ -173,26 +191,45 @@ jobs:
   release:
     name: publish release
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: build
+    needs: [build, release-policy, changelog]
+    concurrency:
+      group: production-release
+      cancel-in-progress: false
     runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
       - uses: actions/checkout@v4
-
-      - uses: actions/download-artifact@v4
         with:
-          path: dist
-          merge-multiple: true
-
-      # Release notes come from the annotated tag (scripts/release.sh put
-      # the rotated CHANGELOG section there). Re-runs just re-upload assets.
-      - name: Create GitHub release with binaries
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Recheck promotion after acquiring release lock
         env:
           GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: python3 scripts/production.py ready "$RELEASE_TAG"
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: release-*
+          path: dist
+          merge-multiple: true
+      - name: Publish validated release and promote production
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.ref_name }}
         run: |
-          gh release create "$GITHUB_REF_NAME" dist/* \
-            --verify-tag \
-            --title "ClipCat $GITHUB_REF_NAME" \
-            --notes-from-tag \
-          || gh release upload "$GITHUB_REF_NAME" dist/* --clobber
+          set -euo pipefail
+          # Recovery never overwrites an already public version's binaries.
+          if ! gh release view "$RELEASE_TAG" --json isDraft > release-state.json; then
+            gh release create "$RELEASE_TAG" dist/* --verify-tag --draft \
+              --title "ClipCat $RELEASE_TAG" --notes-from-tag
+            gh release view "$RELEASE_TAG" --json isDraft > release-state.json
+          fi
+          if python3 -c 'import json,sys; sys.exit(0 if json.load(open("release-state.json"))["isDraft"] else 1)'; then
+            gh release upload "$RELEASE_TAG" dist/* --clobber
+            gh release edit "$RELEASE_TAG" --draft=false --latest
+          fi
+          python3 scripts/production.py promote "$RELEASE_TAG"
+          python3 scripts/production.py audit

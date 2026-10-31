@@ -74,7 +74,10 @@ tests/e2e.rs           end-to-end core flows through the public Pet API
 tests/release_script.rs  e2e of scripts/release.sh in a scratch git repo (unix)
 build.rs               embeds icon + version info on Windows hosts
 scripts/release.sh     the release path: gates, bump, CHANGELOG rotation, tag,
-                       push (scripts/release.cmd = Windows wrapper)
+                       atomic main/tag push (scripts/release.cmd = Windows wrapper)
+scripts/production.py  published-release validation, production promotion and audit
+tests/test_production.py  real Git remote promotion/recovery regression tests
+docs/releasing.md     main/production contract and failed-release recovery
 CHANGELOG.md           user-facing changes only — see policy in its header
 assets/clipcat.ico     the embedded app icon — generated, not hand-edited
 assets/cottonball-hunter.png  selected illustrated ragdoll atlas (ADR-0017)
