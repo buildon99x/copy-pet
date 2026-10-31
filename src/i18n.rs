@@ -103,6 +103,8 @@ pub enum Msg {
     ToastAutoCloseOn,
     ToastAutoCloseOff,
     /// Toast shown by the per-row "paste as text" action (ADR-0014).
+    PastePermissionTitle,
+    PastePermissionBody,
     ToastPastedPlain,
     // panel header-icon tooltips
     TipView,
@@ -234,6 +236,10 @@ pub fn t(lang: Lang, msg: Msg) -> &'static str {
         (ToastAutoCloseOn, Lang::Ko) => "복사 후 패널을 닫아요",
         (ToastAutoCloseOff, Lang::En) => "PANEL STAYS OPEN AFTER COPY",
         (ToastAutoCloseOff, Lang::Ko) => "복사 후에도 패널이 열려 있어요",
+        (PastePermissionTitle, Lang::En) => "Allow ClipCat to paste",
+        (PastePermissionTitle, Lang::Ko) => "ClipCat 붙여넣기 권한",
+        (PastePermissionBody, Lang::En) => "The selection was copied. To paste automatically, allow ClipCat in System Settings > Privacy & Security > Accessibility. You can also paste manually with Command+V.",
+        (PastePermissionBody, Lang::Ko) => "선택 항목을 복사했어요. 자동으로 붙여넣으려면 시스템 설정 > 개인정보 보호 및 보안 > 손쉬운 사용에서 ClipCat을 허용하세요. Command+V로 직접 붙여넣을 수도 있어요.",
         (ToastPastedPlain, Lang::En) => "PASTED AS TEXT",
         (ToastPastedPlain, Lang::Ko) => "텍스트로 붙여넣었어요",
         (TipView, Lang::En) => "List / card view",
@@ -477,6 +483,8 @@ mod tests {
             ToastCaptureOn,
             ToastAutoCloseOn,
             ToastAutoCloseOff,
+            PastePermissionTitle,
+            PastePermissionBody,
             ToastPastedPlain,
             TipView,
             TipFilter,

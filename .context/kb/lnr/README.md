@@ -14,3 +14,5 @@ before touching the related area.
 | [0006](0006-auto-paste-foreground-capture-order.md) | Auto-paste captured our own window as the target on the hotkey path | Windows backend (auto-paste) |
 | [0007](0007-flyout-paste-gated-on-unreachable-setting.md) | Win+V flyout never pasted: gated on a setting unreachable on the Windows tray menu | core pick contract + Windows backend |
 | [0008](0008-flyout-paste-hide-before-paste-race.md) | Win+V flyout paste dropped intermittently: hid the flyout before restoring foreground; held Shift corrupted Ctrl+V | Windows backend (auto-paste) |
+
+| [0009](0009-macos-flyout-initial-focus.md) | Initial Cocoa focus loss dismissed flyout before Enter; native paste needs explicit Command flags | macOS clipboard |

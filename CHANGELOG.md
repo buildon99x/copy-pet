@@ -16,6 +16,14 @@ versions follow [SemVer](https://semver.org/). Maintenance rules:
 
 ## [Unreleased]
 
+### Fixed
+- macOS clipboard flyouts accept Enter on first open and after reopening. Selected
+  clips are copied and pasted back into the original app; missing Accessibility
+  permission explains how to enable automatic paste or paste manually.
+- macOS update actions now download, validate and install the universal release,
+  then restart ClipCat, instead of only opening a browser. Both app bundles and
+  standalone binaries are supported on Apple Silicon and Intel Macs.
+
 ## [2.5.0] - 2026-10-31
 
 ### Added

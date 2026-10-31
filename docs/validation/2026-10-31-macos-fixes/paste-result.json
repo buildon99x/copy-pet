@@ -1,0 +1,11 @@
+{
+  "command_return_plain_text" : true,
+  "final_clipboard_types" : [
+    "public.utf8-plain-text",
+    "NSStringPboardType"
+  ],
+  "final_text" : "ClipCat synthetic selected 49614",
+  "paste_verified" : true,
+  "reopen_keypad_enter" : true,
+  "return" : true
+}

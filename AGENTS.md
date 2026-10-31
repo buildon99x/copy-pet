@@ -60,7 +60,7 @@ macOS와 Linux는 같은 코어를 사용하는 portable 백엔드로 동작한�
 - 내장 패널의 크기가 바뀌면 `canvas_size()`와 `take_window_shift()`를 함께 적용해 고양이 위치를 유지한다. 별도 플라이아웃은 고양이 창의 크기·위치를 바꾸지 않는다.
 - 고양이 창은 불필요하게 포커스를 가져오지 않는다. 패널 검색에 필요한 포커스 전환과 붙여넣기 대상 앱 복원 순서를 유지한다.
 - 드래그·클릭·패널 탐색·빠른 복사·크기 조절은 두 백엔드의 동작을 함께 검토한다. 메뉴는 Windows 트레이, macOS NSMenu, Linux·Windows portable 단축키의 차이를 고려한다. 공통 메뉴 항목과 동작은 `menu.rs` 및 `Pet::{build_menu,apply_menu_action}`에 둔다.
-- 업데이트 자산 이름은 `.github/workflows/ci.yml`과 `src/update.rs`의 계약이다. 변경할 때 양쪽과 `Cargo.toml`의 저장소 주소를 함께 확인한다.
+- 업데이트 자산 이름은 `.github/workflows/ci.yml`과 `src/update.rs`의 계약이다. macOS 자동 설치는 `clipcat-macos-universal.zip`의 서명된 `ClipCat.app`을 사용한다. 변경할 때 양쪽과 `Cargo.toml`의 저장소 주소를 함께 확인한다.
 
 ## 개발 환경과 명령
 

@@ -36,7 +36,7 @@ channel.
   into place, then relaunches via a detached `cmd /c ping … & start …`
   helper (~1 s delay frees the singleton mutex) and exits. The `.old` file
   is removed on next start.
-- **Portable (macOS/Linux)**: `U` after the update toast opens the releases
+- **Linux portable**: `U` after the update toast opens the releases
   page in the browser. Self-replacing a downloaded naked binary there
   (quarantine, exec bits, arch variants) is not worth the complexity for
   the non-premium platforms.
@@ -60,3 +60,21 @@ claiming "no network, ever".
   tray entry).
 - An aborted swap rolls back (`.old` renamed back); a failed download
   leaves the running install untouched and toasts "UPDATE FAILED".
+
+## macOS revision — 2026-10-31
+
+The macOS update action now installs and restarts instead of opening a browser.
+CI publishes `clipcat-macos-universal.zip` containing an ad-hoc signed universal
+`ClipCat.app`; the older arm64 tarball remains available. The updater validates
+the bundle signature, requested version and host CPU before replacing anything.
+A running `.app` is replaced as a whole, preserving its signed structure;
+standalone installs take the executable from that same archive. A sibling stage
+keeps renames on one volume, restores the old install if replacement fails, and
+retains a backup if rollback fails. No privileged helper is installed: read-only
+locations fail with the existing retry notification. A detached helper waits for
+process exit before reopening the original installation path.
+
+Downloads remain user-initiated and local history/settings are preserved. This
+is still ad-hoc signing, without Developer ID/notarization; macOS may require
+Accessibility approval again after an update. Existing macOS releases have no
+self-installer, so users must install the first release carrying this fix once.

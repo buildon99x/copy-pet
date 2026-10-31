@@ -54,3 +54,6 @@ mod registered_hotkey;
 
 #[cfg(any(all(windows, not(feature = "portable")), target_os = "macos", test))]
 mod flyout;
+
+#[cfg(target_os = "macos")]
+mod mac_paste;

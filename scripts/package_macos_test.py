@@ -1,4 +1,4 @@
-"""Package an already-built native/cross pair as a portable macOS test app."""
+"""Package a native/cross pair as a universal macOS app; --release emits updater assets."""
 import hashlib
 import json
 from pathlib import Path
@@ -9,9 +9,12 @@ import sys
 
 
 def main():
+    release = "--release" in sys.argv
+    if release:
+        sys.argv.remove("--release")
     if sys.platform != "darwin" or len(sys.argv) != 3:
-        raise SystemExit("usage on macOS: package_macos_test.py NATIVE_BINARY CROSS_BINARY")
-    output = Path("dist/macos-test")
+        raise SystemExit("usage on macOS: package_macos_test.py [--release] NATIVE_BINARY CROSS_BINARY")
+    output = Path("dist/macos-release" if release else "dist/macos-test")
     app = output / "ClipCat.app"
     contents = app / "Contents"
     executable = contents / "MacOS/clipcat"
@@ -25,20 +28,20 @@ def main():
     version = re.search(r'^version\s*=\s*"([^"]+)"', Path("Cargo.toml").read_text(), re.M).group(1)
     with (contents / "Info.plist").open("wb") as f:
         plistlib.dump({
-            "CFBundleIdentifier": "dev.clipcat.preview",
+            "CFBundleIdentifier": "dev.clipcat" if release else "dev.clipcat.preview",
             "CFBundleName": "ClipCat",
-            "CFBundleDisplayName": "ClipCat Preview",
+            "CFBundleDisplayName": "ClipCat" if release else "ClipCat Preview",
             "CFBundleExecutable": "clipcat",
             "CFBundlePackageType": "APPL",
             "CFBundleShortVersionString": version,
             "CFBundleVersion": version,
-            "CFBundleGetInfoString": f"Cat companions test build {commit[:7]}",
+            "CFBundleGetInfoString": f"ClipCat {version} ({commit[:7]})" if release else f"Cat companions test build {commit[:7]}",
             "LSMinimumSystemVersion": "11.0",
             "NSHighResolutionCapable": True,
         }, f)
     subprocess.run(["codesign", "--force", "--sign", "-", str(app)], check=True)
     subprocess.run(["codesign", "--verify", "--deep", "--strict", "--verbose=2", str(app)], check=True)
-    archive = output / "ClipCat-macos-universal-test.zip"
+    archive = output / ("clipcat-macos-universal.zip" if release else "ClipCat-macos-universal-test.zip")
     subprocess.run(["ditto", "-c", "-k", "--sequesterRsrc", "--keepParent", str(app), str(archive)], check=True)
     metadata = {"commit": commit, "architectures": architectures, "minimum_macos": "11.0",
                 "archive": archive.name, "sha256": hashlib.sha256(archive.read_bytes()).hexdigest(),

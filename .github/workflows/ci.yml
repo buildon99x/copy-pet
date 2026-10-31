@@ -134,7 +134,9 @@ jobs:
 
       - name: Smoke test macOS app and clipboard
         if: runner.os == 'macOS'
-        run: python3 scripts/validate_macos.py dist/macos-test/ClipCat.app/Contents/MacOS/clipcat
+        run: |
+          python3 scripts/validate_macos.py dist/macos-test/ClipCat.app/Contents/MacOS/clipcat
+          swift scripts/validate_macos_paste.swift dist/macos-test/ClipCat.app/Contents/MacOS/clipcat
 
       - name: Upload universal macOS test build
         if: success() && runner.os == 'macOS'
@@ -163,7 +165,7 @@ jobs:
 
       # The in-app updater (src/update.rs) downloads release assets from
       # github.com/<repo>/releases/download/<tag>/<name>; these names are
-      # part of that contract — keep them in sync with update::WINDOWS_ASSET.
+      # part of that contract — keep them in sync with update::{WINDOWS_ASSET,MACOS_ASSET}.
       - name: Prepare release asset (Windows)
         if: startsWith(github.ref, 'refs/tags/v') && runner.os == 'Windows'
         shell: bash
@@ -177,6 +179,13 @@ jobs:
         run: |
           mkdir -p dist/release
           tar -czf dist/release/clipcat-macos-arm64.tar.gz -C target/release clipcat
+          if [ "$(uname -m)" = "arm64" ]; then
+            cross_target=x86_64-apple-darwin
+          else
+            cross_target=aarch64-apple-darwin
+          fi
+          python3 scripts/package_macos_test.py --release target/release/clipcat "target/$cross_target/release/clipcat"
+          cp dist/macos-release/clipcat-macos-universal.zip dist/release/
 
       - name: Upload release artifact
         if: startsWith(github.ref, 'refs/tags/v')

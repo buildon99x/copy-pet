@@ -1,0 +1,12 @@
+[
+  {
+    "bundle": false,
+    "exit": 0,
+    "restarted_path": "/tmp/clipcat-update-proof/naked app's space/clipcat"
+  },
+  {
+    "bundle": true,
+    "exit": 0,
+    "restarted_path": "/private/tmp/clipcat-update-proof/bundle app's space/ClipCat.app/Contents/MacOS/clipcat"
+  }
+]

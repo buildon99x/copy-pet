@@ -4,11 +4,26 @@ pub(super) fn dispatch<R>(owned: bool, retire: impl FnOnce(), handle: impl FnOnc
     if owned { Some(handle()) } else { retire(); None }
 }
 
+/// Cocoa queues an initial Focused(false) while a hidden window is created.
+/// Only an established keyboard session can lose focus; stale callbacks must
+/// also agree with the native window's current focus state.
+#[cfg(any(target_os = "macos", test))]
+pub(super) fn dismiss_on_focus_loss(ever_focused: bool, has_focus: bool) -> bool {
+    ever_focused && !has_focus
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::{pet::Pet, state::Persist};
     use std::cell::Cell;
+
+    #[test]
+    fn initial_and_stale_focus_loss_do_not_dismiss_a_new_flyout() {
+        assert!(!dismiss_on_focus_loss(false, false));
+        assert!(!dismiss_on_focus_loss(true, true));
+        assert!(dismiss_on_focus_loss(true, false));
+    }
 
     #[test]
     fn ownership_transfer_retires_surface_before_cat_layout() {

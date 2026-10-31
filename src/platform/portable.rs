@@ -99,11 +99,19 @@ struct PortableApp {
     /// portable keep the embedded (cat-window) panel for the hotkey.
     #[cfg(target_os = "macos")]
     flyout: Option<Flyout>,
+    #[cfg(target_os = "macos")]
+    paste_target: Option<i32>,
+    #[cfg(target_os = "macos")]
+    last_external_pid: Option<i32>,
+    #[cfg(target_os = "macos")]
+    pending_paste: Option<(i32, Instant, Instant)>,
 }
 
 /// The flyout panel's dedicated winit window + transparent presenter (macOS).
 #[cfg(target_os = "macos")]
 struct Flyout {
+    focus_seen: bool,
+    focus_pending: bool,
     window: Rc<Window>,
     presenter: Option<super::mac_present::Presenter>,
     pm: tiny_skia::Pixmap,
@@ -197,6 +205,12 @@ impl PortableApp {
             mods: ModifiersState::default(),
             #[cfg(target_os = "macos")]
             flyout: None,
+            #[cfg(target_os = "macos")]
+            paste_target: None,
+            #[cfg(target_os = "macos")]
+            last_external_pid: None,
+            #[cfg(target_os = "macos")]
+            pending_paste: None,
         }
     }
 
@@ -369,14 +383,9 @@ impl PortableApp {
         }
     }
 
-    /// Puts text on the OS clipboard (a clip picked from the panel).
-    /// Puts a panel-picked clip on the OS clipboard (our own change is
-    /// suppressed once by the watcher). When `pick.paste` (the `paste_on_select`
-    /// setting), it also synthesizes the paste shortcut. Focus restoration is
-    /// best-effort here: unlike the Windows-native backend, the portable stack
-    /// can't reliably re-focus the previous app, so the paste lands in whatever
-    /// is frontmost after the panel closes.
-    fn set_clipboard(&self, pick: ClipPick) {
+    /// Write the selected clip, suppress our own capture once, then schedule
+    /// macOS paste after the original app regains focus on the main run loop.
+    fn set_clipboard(&mut self, pick: ClipPick) {
         if pick.image.is_some() { return; } // Image clipboard is Windows-native only.
         // suppression is keyed on the text, which is always written, so it stays
         // valid whether or not we also write the rich formats (ADR-0014).
@@ -398,6 +407,25 @@ impl PortableApp {
             }
         }
         if pick.paste {
+            #[cfg(target_os = "macos")]
+            {
+                if !super::mac_paste::trusted() {
+                    use crate::i18n::{t, Msg};
+                    super::mac_dialogs::info(t(self.pet.lang(), Msg::PastePermissionTitle),
+                        t(self.pet.lang(), Msg::PastePermissionBody));
+                    return;
+                }
+                // The flyout owns its captured target. Embedded panels use
+                // the most recent external app, observed before cat focus.
+                let target = self.paste_target.or(self.last_external_pid);
+                if let Some(pid) = target {
+                    if super::mac_paste::activate(pid) {
+                        let now = Instant::now();
+                        self.pending_paste = Some((pid, now + Duration::from_millis(100), now + Duration::from_secs(1)));
+                    }
+                }
+            }
+            #[cfg(not(target_os = "macos"))]
             paste_synthesize();
         }
     }
@@ -461,8 +489,18 @@ impl PortableApp {
             MenuOutcome::ReregisterHotkey(spec) => self.apply_new_hotkey(&spec),
             MenuOutcome::ApplyWindowLevel => self.apply_window_level(),
             MenuOutcome::OpenGithub => crate::update::open_github(),
-            MenuOutcome::InstallUpdate => crate::update::open_releases_page(),
+            MenuOutcome::InstallUpdate => self.install_update(),
         }
+    }
+
+    fn install_update(&mut self) {
+        #[cfg(target_os = "macos")]
+        if let Some(version) = self.pet.update_available().map(str::to_owned) {
+            crate::update::begin_install(&version);
+            self.pet.notify_update_downloading();
+        }
+        #[cfg(not(target_os = "macos"))]
+        crate::update::open_releases_page();
     }
 
     /// Applies a keyboard shortcut (panel closed).
@@ -493,7 +531,7 @@ impl PortableApp {
             KeyCode::KeyU => {
                 // only meaningful once the update toast announced a version
                 if self.pet.update_available().is_some() {
-                    crate::update::open_releases_page();
+                    self.install_update();
                 }
             }
             KeyCode::KeyQ | KeyCode::Escape => {
@@ -562,6 +600,12 @@ impl PortableApp {
     /// creating its window on first use, sizing it to the card and focusing it
     /// for the search box. The cat window is left untouched.
     fn open_flyout(&mut self, event_loop: &ActiveEventLoop) {
+        // Capture before creating/showing either ClipCat window; repeated
+        // hotkeys while we own focus must not replace the external target.
+        if let Some(pid) = super::mac_paste::frontmost_pid() {
+            if pid != std::process::id() as i32 { self.paste_target = Some(pid); }
+        }
+        self.pending_paste = None;
         self.pet.open_flyout();
         let (fw, fh) = self.pet.flyout_size();
         let (fw, fh) = (fw as u32, fh as u32);
@@ -579,8 +623,11 @@ impl PortableApp {
                 return;
             };
             let win = Rc::new(win);
+            win.set_ime_allowed(true);
             let presenter = super::mac_present::Presenter::new(&win);
             self.flyout = Some(Flyout {
+                focus_seen: false,
+                focus_pending: true,
                 window: win,
                 presenter,
                 pm: tiny_skia::Pixmap::new(fw, fh).unwrap(),
@@ -594,9 +641,10 @@ impl PortableApp {
             });
         }
         self.place_flyout(super::mac_caret::caret_screen_pos());
-        if let Some(f) = self.flyout.as_ref() {
+        if let Some(f) = self.flyout.as_mut() {
+            f.focus_seen = false;
+            f.focus_pending = true;
             f.window.set_visible(true);
-            f.window.focus_window();
         }
         self.paint_flyout();
     }
@@ -660,6 +708,7 @@ impl PortableApp {
 
     /// Retire an unowned surface before cat layout/focus or queued flyout input.
     fn reconcile_flyout(&mut self) -> bool {
+        if !self.pet.flyout_open() { self.paste_target = None; }
         super::flyout::dispatch(self.pet.flyout_open(), || {
             if let Some(f) = self.flyout.as_mut() {
                 f.move_drag = false;
@@ -670,6 +719,7 @@ impl PortableApp {
     }
 
     fn close_flyout(&mut self) {
+        self.paste_target = None;
         if self.pet.flyout_open() { self.pet.close_flyout(); }
         if let Some(f) = self.flyout.as_ref() {
             f.window.set_visible(false);
@@ -712,7 +762,16 @@ impl PortableApp {
                 }
                 self.paint_flyout();
             }
-            WindowEvent::Focused(false) | WindowEvent::CloseRequested => self.close_flyout(),
+            WindowEvent::Focused(true) => {
+                if let Some(f) = self.flyout.as_mut() { f.focus_seen = true; }
+            }
+            WindowEvent::Focused(false) => {
+                if self.flyout.as_ref().is_some_and(|f|
+                    super::flyout::dismiss_on_focus_loss(f.focus_seen, f.window.has_focus())) {
+                    self.close_flyout();
+                }
+            }
+            WindowEvent::CloseRequested => self.close_flyout(),
             WindowEvent::CursorMoved { position, .. } => {
                 if let Some(f) = self.flyout.as_mut() {
                     f.cursor = position;
@@ -840,6 +899,7 @@ impl PortableApp {
         if let Some(pick) = pick {
             self.set_clipboard(pick);
         }
+        if !self.pet.flyout_open() { self.paste_target = None; }
     }
 }
 
@@ -1049,6 +1109,14 @@ impl ApplicationHandler<HotkeyEvent> for PortableApp {
                     // (WM_MBUTTONUP), keeping the panel-toggle timing in parity.
                     if state == ElementState::Released {
                         self.pet.toggle_panel();
+                        #[cfg(target_os = "macos")]
+                        if self.pet.embedded_panel_open() {
+                            self.paste_target = None;
+                            if let Some(pid) = super::mac_paste::frontmost_pid() {
+                                if pid != std::process::id() as i32 { self.last_external_pid = Some(pid); }
+                            }
+                            if let Some(window) = &self.window { window.focus_window(); }
+                        }
                     }
                 }
                 #[cfg(target_os = "macos")]
@@ -1091,7 +1159,40 @@ impl ApplicationHandler<HotkeyEvent> for PortableApp {
     }
 
     fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
+        #[cfg(target_os = "macos")]
+        if !self.pet.flyout_open() && !self.pet.embedded_panel_open() {
+            // Only an app identity is queried: no window titles, input or
+            // accessibility contents. Retain it before a middle-click gives
+            // the cat keyboard focus, just as on the explicit hotkey path.
+            if let Some(pid) = super::mac_paste::frontmost_pid() {
+                if pid != std::process::id() as i32 { self.last_external_pid = Some(pid); }
+            }
+        }
+        #[cfg(target_os = "macos")]
+        if self.pet.flyout_open() {
+            if let Some(f) = self.flyout.as_mut() {
+                if std::mem::take(&mut f.focus_pending) { f.window.focus_window(); }
+            }
+        }
+        #[cfg(target_os = "macos")]
+        match crate::update::poll_install() {
+            crate::update::Install::Ready => {
+                self.save_position();
+                if crate::update::restart() { event_loop.exit(); return; }
+                self.pet.notify_update_failed();
+            }
+            crate::update::Install::Failed => self.pet.notify_update_failed(),
+            _ => {}
+        }
         let now = Instant::now();
+        #[cfg(target_os = "macos")]
+        if let Some((pid, due, deadline)) = self.pending_paste {
+            if now >= deadline { self.pending_paste = None; }
+            else if now >= due && super::mac_paste::frontmost_pid() == Some(pid) {
+                self.pending_paste = None;
+                super::mac_paste::paste();
+            }
+        }
         if now.duration_since(self.last_frame) >= TICK {
             self.last_frame = now;
             // the daily release check found a newer version
@@ -1183,6 +1284,7 @@ fn quick_digit(code: KeyCode) -> Option<u8> {
 /// never reads them, so the input-privacy guarantee is untouched (golden rule
 /// 1); and being a `simulate` call it avoids the macOS TIS *listen* crash path
 /// (LNR-0005).
+#[cfg(not(target_os = "macos"))]
 fn paste_synthesize() {
     for event in paste_events(cfg!(target_os = "macos")) {
         let _ = rdev::simulate(&event);
@@ -1191,6 +1293,7 @@ fn paste_synthesize() {
 
 /// Output-only neutralization prevents still-held panel modifiers from turning
 /// a fast pick into paste-special or another shortcut. Never reads input state.
+#[cfg(any(not(target_os = "macos"), test))]
 fn paste_events(mac: bool) -> Vec<rdev::EventType> {
     use rdev::{EventType::*, Key::*};
     let mut events: Vec<_> = [ShiftLeft, ShiftRight, ControlLeft, ControlRight, Alt, AltGr]
