@@ -939,23 +939,14 @@ pub fn draw_panel_scaled(pm: &mut Pixmap, v: &PanelView, density: f32) {
         cv.fill(&round_rect(tx, ty, 3.5, th, 1.7), fade(OUTLINE, 0.45));
     }
 
-    // footer: count + hotkey hint, then a keyboard-shortcut help line
+    // footer: clip count, then a keyboard-shortcut help line
     cv.line(
         &[(lt.row_x, lt.footer_y - 1.0), (lt.row_x + lt.row_w, lt.footer_y - 1.0)],
         fade(OUTLINE, 0.18),
         1.0,
     );
     let count = i18n::clip_count(lang, v.store.len(), v.store.pinned_count());
-    if !v.panel.ai_adding {cv.ui_text(&count, lt.card_x + 10.0, lt.footer_y + 3.0, 1.4, TEXT_DIM);}
-    let workbench_hint = v.panel.workbench_footer_text(lang);
-    let hw = sysfont::measure(&workbench_hint, 1.4);
-    cv.ui_text(
-        &workbench_hint,
-        lt.card_x + lt.card_w - 10.0 - hw,
-        lt.footer_y + 3.0,
-        1.4,
-        TEXT_DIM,
-    );
+    cv.ui_text(&count, lt.card_x + 10.0, lt.footer_y + 3.0, 1.4, TEXT_DIM);
     let keys = sysfont::truncate_to_width(t(lang, if v.panel.tag_edit.is_some() { Msg::TagEditKeys } else { Msg::FooterKeys }), 1.25, lt.row_w);
     let kw = sysfont::measure(&keys, 1.25);
     cv.ui_text(
@@ -1264,11 +1255,10 @@ mod readability_tests {
         let mut pm = Pixmap::new(l.canvas_w as u32, l.canvas_h as u32).unwrap();
         draw_panel(&mut pm, &PanelView { panel: &panel, store: &store,
             lang: Lang::En, capture: true, hint: "CMD+SHIFT+V", caret: false });
-        let workbench = panel.workbench_footer_text(Lang::En);
-        let wx = l.card_x + l.card_w - 10.0 - sysfont::measure(&workbench, 1.4);
+        let count = i18n::clip_count(Lang::En, 0, 0);
         for (name, x, y, w, h, background) in [
             ("placeholder", l.search_x + 24.0, l.search_y + 5.0, 180.0, l.search_h - 9.0, (243, 240, 235, 255)),
-            ("workbench footer", wx, l.footer_y + 3.0, sysfont::measure(&workbench, 1.4), 12.0, (255, 255, 255, 255)),
+            ("clip count", l.card_x + 10.0, l.footer_y + 3.0, sysfont::measure(&count, 1.4), 12.0, (255, 255, 255, 255)),
             ("keyboard hint", l.row_x + 5.0, l.footer_y + 16.0, l.row_w - 30.0, 11.0, (255, 255, 255, 255)),
         ] {
             let mut strongest: f64 = 0.0;

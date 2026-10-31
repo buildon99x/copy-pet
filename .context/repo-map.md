@@ -11,7 +11,7 @@ src/
   lib.rs               module wiring
   pet.rs               Pet: platform-agnostic simulation, fish animation,
                        clip/panel orchestration + scene building
-  ai_workbench.rs      local request/project snapshots, templates, variables and redaction review
+  ai_workbench.rs      legacy local project/draft compatibility; no app UI entry points
   clipboard.rs         ClipStore: text/image history, tags + clips.json persistence
   clip_image.rs        bounded PNG storage, Windows DIB conversion and thumbnails
   panel.rs             clipboard panel UI state, dynamic Layout geometry
@@ -68,7 +68,7 @@ src/
   bin/gen_icon.rs      regenerates assets/clipcat.ico from render::draw_icon_scaled
 examples/preview.rs    renders representative frames to PNGs (headless review)
 examples/font_diagnostics.rs  selected font face/weight/coverage inventory and samples
-examples/review_at_density.rs  actual renderer 1x/2x clipboard/workbench/gallery previews
+examples/review_at_density.rs  actual renderer 1x/2x clipboard/gallery previews
 examples/prepare_cat_atlas.rs  offline measured sprite extraction and foot alignment
 tests/e2e.rs           end-to-end core flows through the public Pet API
 tests/release_script.rs  e2e of scripts/release.sh in a scratch git repo (unix)

@@ -1152,7 +1152,6 @@ fn nav_from_key(event: &winit::event::KeyEvent, ctrl: bool) -> Option<NavKey> {
         PhysicalKey::Code(KeyCode::Escape) => Some(NavKey::Esc),
         PhysicalKey::Code(KeyCode::Tab) => Some(NavKey::Tab), // source filter
         PhysicalKey::Code(KeyCode::KeyA) if ctrl => Some(NavKey::SelectAll),
-        PhysicalKey::Code(KeyCode::KeyB) if ctrl => Some(NavKey::Workbench),
         PhysicalKey::Code(KeyCode::KeyT) if ctrl => Some(NavKey::Tags),
         PhysicalKey::Code(KeyCode::KeyP) if ctrl => Some(NavKey::Pin),
         PhysicalKey::Code(KeyCode::KeyZ) if ctrl => Some(NavKey::Undo),

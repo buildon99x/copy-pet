@@ -38,6 +38,8 @@ versions follow [SemVer](https://semver.org/). Maintenance rules:
   the flyout search intact and no longer selects a clipboard item.
 
 ### Removed
+- **AI workbench entry points** — removed its menu entries, clipboard footer link
+  and Ctrl/Cmd+B shortcut. Existing local project drafts remain saved.
 - **Activity statistics and growth** — typing, clicks, scrolls and copies no longer
   accumulate activity counts, XP or levels. Removed statistics displays and
   level-up effects; existing clips, projects, cats and settings are preserved.

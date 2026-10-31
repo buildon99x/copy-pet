@@ -1,9 +1,14 @@
 # AI request workbench / AI 요청 작업대
 
-The workbench prepares text locally for an AI application you choose. It does
-not call an AI provider or add any network destination. Open the existing
-clipboard panel and click **AI workbench** in its footer, press **Ctrl+B**
-(**Cmd+B** on macOS), or use the Windows tray / macOS context-menu entry.
+> **Withdrawn from the app UI on 2026-10-31.** Menus, the clipboard footer link
+> and Ctrl/Cmd+B no longer open this feature on any OS. Existing `requests.json`
+> drafts remain on disk. The instructions below document the former interface.
+>
+> **2026-10-31 UI에서 제거.** 모든 OS에서 메뉴·클립보드 하단 링크·단축키를
+> 제거했습니다. 기존 `requests.json` 프로젝트는 보존합니다. 아래는 이전 사용법입니다.
+
+The former workbench prepared text locally for an AI application. It did not
+call an AI provider or add any network destination.
 
 ## Build and reuse a request
 

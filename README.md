@@ -24,12 +24,6 @@ Windows; a portable build sharing the same core on macOS/Linux.
   gallery from the settings menu (`A` on portable), preview, then apply.
   [Characters, quiet behavior and performance](docs/specs/cat-companions.md).
 
-- **AI request workbench** — collect and order clips into request/code/error/constraint
-  sections, reuse named templates with variables, switch project trays explicitly,
-  and review a locally redacted copy before copying. Open **AI workbench** from
-  the panel footer or Windows tray, or press `Ctrl/Cmd+B` in the panel.
-  [Usage, privacy and limits / 한국어 사용법](docs/specs/ai-request-workbench.md).
-
 - **Tags** — use a clip's **... → #** action or `Ctrl/Cmd+T` to edit tags;
   search text, apps, or partial tags with ordinary words, or use `#tag` for an
   exact tag match. Combine tags with `#work #reference` (both required) and

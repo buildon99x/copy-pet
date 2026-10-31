@@ -736,7 +736,7 @@ fn ai_workbench_public_flow_collects_reorders_fills_and_confirms_a_safe_copy() {
     p.workbench = clipcat::ai_workbench::Workbench::default();
     copy(&mut p, "example source", None);
     copy(&mut p, "API_KEY=synthetic-example", None);
-    p.apply_menu_action(MenuAction::OpenWorkbench);
+    p.open_workbench();
     assert!(p.panel_open());
     assert!(p.panel.ai_view.is_some());
     ai_action(&mut p, "Request:");
@@ -983,27 +983,22 @@ fn workbench_header_only_responds_inside_each_visible_button() {
 }
 
 #[test]
-fn workbench_footer_hit_targets_match_the_visible_text_and_card_bounds() {
-    let mut p = pet();
-    p.st.lang = "en".into();
-    p.workbench = clipcat::ai_workbench::Workbench::default();
-    p.toggle_panel();
-    let lt = p.panel.active_layout();
-    p.panel_click(lt.card_x + lt.card_w + 10.0, lt.footer_y + 5.0);
-    assert!(!p.workbench.open);
-    p.panel_click(lt.row_x, lt.footer_y + 5.0);
-    assert!(!p.workbench.open);
-    let entry = p.panel.workbench_footer_text(Lang::En);
-    let width = clipcat::sysfont::measure(&entry, 1.4);
-    p.panel_click(
-        lt.card_x + lt.card_w - 10.0 - width / 2.0,
-        lt.footer_y + 5.0,
-    );
-    assert!(p.workbench.open);
-    p.panel_click(lt.row_x + lt.row_w - 50.0, lt.footer_y + 5.0);
-    assert!(p.workbench.open);
-    p.panel_click(lt.row_x + 5.0, lt.card_y + lt.card_h + 5.0);
-    assert!(p.workbench.open);
-    p.panel_click(lt.row_x + 5.0, lt.footer_y + 5.0);
-    assert!(!p.workbench.open);
+fn clipboard_footer_keeps_history_and_saved_project_intact() {
+    for lang in ["en", "ko"] {
+        let mut p = pet();
+        p.st.lang = lang.into();
+        p.workbench = clipcat::ai_workbench::Workbench::default();
+        p.workbench.projects[0].request = "saved project draft".into();
+        copy(&mut p, "clipboard stays available", None);
+        p.toggle_panel();
+        let lt = p.panel.active_layout();
+        // The former workbench entry occupied the right side of this footer.
+        for x in (lt.row_x as i32..(lt.row_x + lt.row_w) as i32).step_by(8) {
+            assert!(p.panel_click(x as f32, lt.footer_y + 5.0).is_none());
+            assert!(!p.workbench.open);
+            assert!(p.panel_open());
+        }
+        assert_eq!(p.workbench.project().request, "saved project draft");
+        assert_eq!(p.panel_nav(NavKey::Enter).unwrap().text, "clipboard stays available");
+    }
 }

@@ -15,7 +15,6 @@ use crate::i18n::Lang;
 /// What a chosen menu item does.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum MenuAction {
-    OpenWorkbench,
     TogglePanel,
     ToggleCapture,
     /// Close the clipboard panel automatically after copying a clip (on/off).

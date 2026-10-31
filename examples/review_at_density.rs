@@ -48,8 +48,6 @@ fn main() {
         }
         p.open_flyout();
         save(&p, &dir, &format!("flyout-{label}"), true);
-        p.open_workbench();
-        save(&p, &dir, &format!("workbench-{label}"), true);
         p.close_flyout();
         p.workbench = Default::default();
         p.panel.ai_view = None;

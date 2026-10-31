@@ -946,10 +946,6 @@ impl Pet {
             self.sync_workbench();
             return None;
         }
-        if self.panel.workbench_footer_hit(cx, cy, self.lang()) {
-            self.open_workbench();
-            return None;
-        }
         let action = self.panel.click(cx, cy, &self.clips)?;
         self.run_action(action)
     }
@@ -1017,7 +1013,8 @@ impl Pet {
         self.run_action(action)
     }
 
-    /// Opens the existing panel in explicit request-preparation mode.
+    /// Retained for legacy draft compatibility and offline tooling.
+    /// The app exposes no menu, footer or keyboard entry to this mode.
     pub fn open_workbench(&mut self) {
         if self.cat_picker.is_some() { self.close_cat_picker(); }
         if !self.panel.open {
@@ -1479,7 +1476,6 @@ impl Pet {
             MenuAction::TogglePanel,
             self.panel.open,
         ));
-        m.push(MenuItem::leaf(crate::i18n::ai(lang, crate::i18n::AiText::Entry), MenuAction::OpenWorkbench, self.workbench.open));
         m.push(MenuItem::leaf(
             t(lang, Msg::MenuCapturePause),
             MenuAction::ToggleCapture,
@@ -1563,7 +1559,6 @@ impl Pet {
     pub fn apply_menu_action(&mut self, action: MenuAction) -> MenuOutcome {
         match action {
             MenuAction::TogglePanel => self.toggle_panel(),
-            MenuAction::OpenWorkbench => self.open_workbench(),
             MenuAction::ToggleCapture => {
                 self.run_action(PanelAction::ToggleCapture);
             }

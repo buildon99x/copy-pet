@@ -175,7 +175,7 @@ pub enum PanelAction {
 /// Keyboard navigation keys forwarded by the backends while the panel is open.
 #[derive(Clone, Copy, PartialEq)]
 pub enum NavKey {
-    /// Open the explicit local AI request workbench (Ctrl/Cmd+B).
+    /// Legacy workbench navigation for offline tooling; no app shortcut binds it.
     Workbench,
     Up,
     Down,

@@ -32,5 +32,5 @@ No new runtime network or bundled font dependency is introduced. The existing
 optional GitHub update request is the only network functionality.
 
 Detailed contracts:[companions](cat-companions.md),[clipboard tags/images](clipboard-tags-images.md),
-[AI workbench](ai-request-workbench.md),[approved design](../superpowers/specs/2026-10-30-private-companionship-design.md),
+[former AI workbench (UI removed)](ai-request-workbench.md),[approved design](../superpowers/specs/2026-10-30-private-companionship-design.md),
 [ADR-0021](../../.context/kb/adr/0021-local-affection-and-private-companionship.md).

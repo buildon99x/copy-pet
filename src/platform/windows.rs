@@ -80,7 +80,6 @@ const CMD_LANG_EN: usize = 50;
 const CMD_LANG_KO: usize = 51;
 const CMD_WINLEVEL0: usize = 52; // 52 top, 53 normal, 54 hide
 const CMD_HOTKEY: usize = 55;
-const CMD_WORKBENCH: usize = 56;
 
 fn wz(s: &str) -> Vec<u16> {
     s.encode_utf16().chain(std::iter::once(0)).collect()
@@ -1473,8 +1472,6 @@ unsafe fn show_menu(hwnd: HWND, ms: &MenuSnapshot) -> usize {
         CMD_AUTOCLOSE,
         wz(t(lang, Msg::MenuAutoClose)).as_ptr(),
     );
-    AppendMenuW(menu, MF_STRING, CMD_WORKBENCH,
-        wz(i18n::ai(lang, i18n::AiText::Entry)).as_ptr());
     // Panel hotkey: one click cycles to the next preset (no rebind dialog).
     AppendMenuW(
         menu,
@@ -1653,13 +1650,6 @@ unsafe fn open_menu(hwnd: HWND) {
                     a.pet.dirty = true;
                 });
             }
-            CMD_WORKBENCH => {
-                with_app(|a| {
-                    a.pet.show_window();
-                    a.apply_window_level();
-                    a.pet.open_workbench();
-                });
-            }
             CMD_PANEL => {
                 with_app(|a| a.pet.toggle_panel());
             }
@@ -1756,7 +1746,6 @@ fn map_nav_key(vk: u16, ctrl: bool) -> Option<NavKey> {
         0x1B => Some(NavKey::Esc),       // VK_ESCAPE
         0x09 => Some(NavKey::Tab),       // VK_TAB: source filter
         0x41 if ctrl => Some(NavKey::SelectAll),
-        0x42 if ctrl => Some(NavKey::Workbench),
         0x54 if ctrl => Some(NavKey::Tags), // Ctrl+T: edit tags
         0x50 if ctrl => Some(NavKey::Pin),  // Ctrl+P: pin clip
         0x5A if ctrl => Some(NavKey::Undo), // Ctrl+Z: undo delete
