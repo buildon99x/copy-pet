@@ -18,7 +18,7 @@ ASSETS = ('clipcat-windows-x86_64.exe', 'clipcat-macos-arm64.tar.gz')
 def command(*args):
     result = subprocess.run(args, cwd=ROOT, capture_output=True, text=True)
     if result.returncode:
-        raise RuntimeError(f'{args[0]} failed: {result.stderr.strip()}')
+        raise RuntimeError(f'{" ".join(args)} failed: {result.stderr.strip()}')
     return result.stdout.strip()
 
 
@@ -27,7 +27,9 @@ def git(*args):
 
 
 def refresh():
-    git('fetch', 'origin', '+refs/heads/main:refs/remotes/origin/main',
+    # checkout can materialize an annotated tag as a local lightweight ref.
+    # Refresh local mirrors forcibly; the event-commit guard still rejects a moved tag.
+    git('fetch', '--force', 'origin', '+refs/heads/main:refs/remotes/origin/main',
         '+refs/heads/production:refs/remotes/origin/production', '--tags')
 
 
@@ -122,4 +124,7 @@ if __name__ == '__main__':
         elif args.action == 'ready':ready(args.tag)
         else:promote(args.tag)
     except (RuntimeError, KeyError, ValueError, IndexError) as error:
-        parser.exit(1, f'::error::production: {error}\n')
+        if os.environ.get('GITHUB_ACTIONS'):
+            escaped = str(error).replace('%', '%25').replace('\r', '%0D').replace('\n', '%0A')
+            print(f'::error::production: {escaped}')
+        parser.exit(1, f'production: {error}\n')

@@ -92,6 +92,14 @@ class ProductionTests(unittest.TestCase):
         with patch.dict(os.environ, {'GITHUB_REF_TYPE':'tag', 'GITHUB_SHA':self.git('rev-parse','v1.1.0-annotated')}):
             self.module.check('v1.1.0')
 
+    def test_refresh_handles_checkout_lightweight_ref_for_remote_annotated_tag(self):
+        self.git('tag','-f','-a','v1.1.0','-m','release annotation',self.new)
+        self.git('push','-q','--force','origin','refs/tags/v1.1.0')
+        # actions/checkout may materialize a tag as the event commit locally.
+        self.git('tag','-f','v1.1.0',self.new)
+        self.git('checkout','--detach',self.new)
+        self.module.check('v1.1.0')
+
     def test_concurrent_ref_change_is_not_overwritten(self):
         def competing_promotion(tag):
             self.git('push', '-q', 'origin', self.new+':refs/heads/production')
