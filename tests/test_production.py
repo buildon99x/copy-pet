@@ -87,6 +87,11 @@ class ProductionTests(unittest.TestCase):
             with self.assertRaises(RuntimeError):self.module.check('v1.1.0')
         self.assertEqual(self.production(), self.old)
 
+    def test_annotated_workflow_sha_resolves_to_the_build_commit(self):
+        self.git('tag', '-a', 'v1.1.0-annotated', '-m', 'annotated workflow event', self.new)
+        with patch.dict(os.environ, {'GITHUB_REF_TYPE':'tag', 'GITHUB_SHA':self.git('rev-parse','v1.1.0-annotated')}):
+            self.module.check('v1.1.0')
+
     def test_concurrent_ref_change_is_not_overwritten(self):
         def competing_promotion(tag):
             self.git('push', '-q', 'origin', self.new+':refs/heads/production')

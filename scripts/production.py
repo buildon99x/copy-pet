@@ -45,7 +45,7 @@ def check(tag):
         raise RuntimeError('release tag must be vX.Y.Z')
     refresh()
     commit = git('rev-parse', f'refs/tags/{tag}^{{commit}}')
-    if os.environ.get('GITHUB_REF_TYPE') == 'tag' and os.environ.get('GITHUB_SHA') != commit:
+    if os.environ.get('GITHUB_REF_TYPE') == 'tag' and git('rev-parse', os.environ.get('GITHUB_SHA', '') + '^{commit}') != commit:
         raise RuntimeError('workflow build commit differs from the release tag')
     previous = git('rev-parse', 'refs/remotes/origin/production')
     git('merge-base', '--is-ancestor', commit, 'refs/remotes/origin/main')
@@ -122,4 +122,4 @@ if __name__ == '__main__':
         elif args.action == 'ready':ready(args.tag)
         else:promote(args.tag)
     except (RuntimeError, KeyError, ValueError, IndexError) as error:
-        parser.exit(1, f'production: {error}\n')
+        parser.exit(1, f'::error::production: {error}\n')
