@@ -1,0 +1,29 @@
+{
+  "schema_version": 1,
+  "asset_id": "affection-02",
+  "generator_tool": "image_gen.imagegen",
+  "prompt_path": "art/prompts/affection-02.prompt.txt",
+  "prompt_source": "tool-recorded revisedPrompt, verbatim",
+  "transparent_background": true,
+  "reference_asset_ids": [
+    "reference-copy16-birman",
+    "reference-copy16-ragamuffin",
+    "reference-copy16-persian",
+    "reference-copy16-turkish-angora"
+  ],
+  "original_reference_paths": [
+    "/workspace/copy-pet/assets/cats/birman.png",
+    "/workspace/copy-pet/assets/cats/ragamuffin.png",
+    "/workspace/copy-pet/assets/cats/persian.png",
+    "/workspace/copy-pet/assets/cats/turkish-angora.png"
+  ],
+  "reference_snapshot_commit": "0fffd4c201aacabe3462cce1d9ce9048f9dc5576",
+  "provider_model": null,
+  "seed": null,
+  "generation_item_id": "exec-daf4b0a9-08de-4dee-9ceb-90f9f164c712",
+  "unknown_parameters": [
+    "provider_model",
+    "seed"
+  ],
+  "parameter_evidence": "explicit tool invocation in current conversation; image bytes snapshot restored from Git"
+}

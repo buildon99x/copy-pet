@@ -151,6 +151,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         format!("{dest}/affection-source.json"),
         serde_json::to_vec_pretty(&metadata)?,
     )?;
-    review.save_png("/tmp/clipcat-affection-review.png")?;
+    review.save_png(std::env::temp_dir().join("clipcat-affection-review.png"))?;
     Ok(())
 }

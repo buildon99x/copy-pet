@@ -1,0 +1,39 @@
+{
+  "sources": [
+    {
+      "file": "affection-01.png",
+      "rows": [
+        "ragdoll",
+        "siamese",
+        "bombay",
+        "british-shorthair"
+      ]
+    },
+    {
+      "file": "affection-02.png",
+      "rows": [
+        "birman",
+        "ragamuffin",
+        "persian",
+        "turkish-angora"
+      ]
+    },
+    {
+      "file": "affection-03.png",
+      "rows": [
+        "american-curl",
+        "munchkin",
+        "russian-blue",
+        "tuxedo"
+      ]
+    }
+  ],
+  "roles": [
+    "eye-contact",
+    "gesture",
+    "contentment",
+    "settle"
+  ],
+  "instructions": "Four columns per row; source gutters are irregular. Measure rectangles and retain connected silhouette, preserve coat and anatomy. Normalize all four frames for a breed together; align scale to the corresponding existing idle pose, not independently per frame. Keep existing16 unchanged. Visually compare seam from idle to affection; do not exaggerate British tail. These generated original source sheets live outside repo; normalized release art belongs in assets/cats. More poses may be requested from root if art is insufficient.",
+  "review": "Root visually reviewed all three generated sheets and compared all twelve original atlases; dedicated affection gestures preserve reference coats, silhouettes and British slim tail. Clear-row cuts supplied in *.cuts.json; packager must still inspect normalized idle-to-affection scale/baseline seam at actual size."
+}

@@ -28,3 +28,4 @@ rather than rewrite.
 | [0019](0019-logical-ui-and-system-font-faces.md) | Logical macOS UI geometry, native-density text and explicit Regular faces | Accepted |
 | [0020](0020-registered-shortcuts-without-input-monitoring.md) | Registered shortcuts without input monitoring | Accepted |
 | [0021](0021-local-affection-and-private-companionship.md) | Local silhouette affection, dedicated breed poses and bounded private motion | Accepted |
+| [0022](0022-art-source-and-prompt-provenance.md) | Versioned artwork originals, prompt provenance and frozen generation inputs | Accepted |

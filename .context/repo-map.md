@@ -79,6 +79,11 @@ CHANGELOG.md           user-facing changes only — see policy in its header
 assets/clipcat.ico     the embedded app icon — generated, not hand-edited
 assets/cottonball-hunter.png  selected illustrated ragdoll atlas (ADR-0017)
 assets/cats/*.png      twelve normalized release atlases (ADR-0018)
+art/catalog.json      original/revision/prompt/reference/runtime asset graph and SHA-256
+art/originals/         byte-preserved generated source sheets (development only)
+art/references/        frozen sixteen-frame generation inputs from Git
+art/prompts/           verbatim recovered prompts, known arguments and explicit gaps
+art/tools/assets.py    standard-library asset verification and temporary atlas rebuild
 assets/screenshot.png  README screenshot
 docs/specs/            product & technical specs
 .claude/skills/release/  project skill that drives scripts/release.sh

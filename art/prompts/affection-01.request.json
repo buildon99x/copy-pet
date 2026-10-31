@@ -1,0 +1,29 @@
+{
+  "schema_version": 1,
+  "asset_id": "affection-01",
+  "generator_tool": "image_gen.imagegen",
+  "prompt_path": "art/prompts/affection-01.prompt.txt",
+  "prompt_source": "tool-recorded revisedPrompt, verbatim",
+  "transparent_background": true,
+  "reference_asset_ids": [
+    "reference-copy16-ragdoll",
+    "reference-copy16-siamese",
+    "reference-copy16-bombay",
+    "reference-copy16-british-shorthair"
+  ],
+  "original_reference_paths": [
+    "/workspace/copy-pet/assets/cats/ragdoll.png",
+    "/workspace/copy-pet/assets/cats/siamese.png",
+    "/workspace/copy-pet/assets/cats/bombay.png",
+    "/workspace/copy-pet/assets/cats/british-shorthair.png"
+  ],
+  "reference_snapshot_commit": "0fffd4c201aacabe3462cce1d9ce9048f9dc5576",
+  "provider_model": null,
+  "seed": null,
+  "generation_item_id": "exec-3ef4503e-fb53-4f5c-9cfa-c91794d12526",
+  "unknown_parameters": [
+    "provider_model",
+    "seed"
+  ],
+  "parameter_evidence": "explicit tool invocation in current conversation; image bytes snapshot restored from Git"
+}

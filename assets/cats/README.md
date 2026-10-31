@@ -11,7 +11,7 @@ not a requirement to reuse poses or timing. `src/cat.rs` contains independent
 copy timelines and measured per-frame mouths (canvas y includes a 56px offset).
 Birman and Munchkin capture on open frame 7; others on frame 6.
 
-Original larger art stays in the task's source-art artifacts, rather than being
+Original larger art is versioned under `art/originals/`, rather than being
 decoded in the app. Ragdoll derives from the previously reviewed
 `../cottonball-hunter.png`; other cats have independently authored sheets.
 `source-rects.json` records measured extraction rectangles and source filenames.
@@ -48,3 +48,19 @@ frames, and appends4 poses. Unused RGB beneath alpha0 canonicalizes during the
 premultiplied PNG roundtrip; visible/premultiplied art is unchanged. The runtime
 accepts20–24 complete frames, bounded below4MiB; gallery previews retain
 only their existing16 reduced frames and decode thumbnails sequentially.
+
+The original sheets and available generation prompts now live in the repository's
+[art source archive](../../art/README.md), with checksums and explicit prompt gaps.
+`art/catalog.json` maps legacy generated filenames to stable paths. The exact
+sixteen-frame generation inputs are frozen under `art/references/copy-atlases-16/`.
+Rebuild all twelve current atlases in a temporary directory without changing
+runtime assets:
+
+```bash
+python3 art/tools/assets.py verify
+python3 art/tools/assets.py rebuild
+```
+
+The three affection originals, manifest and measured cuts are available directly
+at `art/originals/affection/`. Three verbatim tool-recorded generation prompts are
+preserved; the 31 older prompts remain explicitly unrecovered, not reconstructed.

@@ -1,0 +1,29 @@
+{
+  "schema_version": 1,
+  "asset_id": "affection-03",
+  "generator_tool": "image_gen.imagegen",
+  "prompt_path": "art/prompts/affection-03.prompt.txt",
+  "prompt_source": "tool-recorded revisedPrompt, verbatim",
+  "transparent_background": true,
+  "reference_asset_ids": [
+    "reference-copy16-american-curl",
+    "reference-copy16-munchkin",
+    "reference-copy16-russian-blue",
+    "reference-copy16-tuxedo"
+  ],
+  "original_reference_paths": [
+    "/workspace/copy-pet/assets/cats/american-curl.png",
+    "/workspace/copy-pet/assets/cats/munchkin.png",
+    "/workspace/copy-pet/assets/cats/russian-blue.png",
+    "/workspace/copy-pet/assets/cats/tuxedo.png"
+  ],
+  "reference_snapshot_commit": "0fffd4c201aacabe3462cce1d9ce9048f9dc5576",
+  "provider_model": null,
+  "seed": null,
+  "generation_item_id": "exec-dd9f1c04-649d-4fcf-a0d1-eba4d2d34fa0",
+  "unknown_parameters": [
+    "provider_model",
+    "seed"
+  ],
+  "parameter_evidence": "explicit tool invocation in current conversation; image bytes snapshot restored from Git"
+}

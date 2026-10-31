@@ -14,6 +14,8 @@ Windows; a portable build sharing the same core on macOS/Linux.
 
 ![ClipCat](assets/screenshot.png)
 
+[Original artwork & generation prompts / 원화·프롬프트 보관소](art/README.md)
+
 ## Features
 
 - **Twelve cat companions** — choose a breed with its own silhouette, copy

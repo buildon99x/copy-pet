@@ -1,0 +1,1716 @@
+{
+  "schema_version": 1,
+  "archived_on": "2026-10-31",
+  "scope": "All34 generated character originals in this task,6 pre-existing code-render previews,12 historical generation-input snapshots and12 current runtime atlases. App screenshots/diagnostic renders are not image-generation sources.",
+  "coverage": {
+    "generated_originals": 34,
+    "historical_code_previews": 6,
+    "recorded_generation_prompts": 3,
+    "unrecovered_generation_prompts": 31,
+    "reference_snapshots": 12,
+    "runtime_atlases": 12
+  },
+  "provenance_policy": {
+    "recorded": "Verbatim imageGeneration.revisedPrompt recovered via current-task history. No claim that a provider model/seed is known.",
+    "unrecovered": "History API rejects an oversized older turn even with one turn, outputs disabled and reduced per-output limit. No guessed prompt is presented as original.",
+    "not_applicable": "Code render previews, not outputs of an image-generation tool.",
+    "derived": "A deterministic packaging/reference artifact, with its parent source assets identified."
+  },
+  "rebuild": {
+    "copy_rects": "assets/cats/source-rects.json",
+    "affection_manifest": "art/originals/affection/manifest.json",
+    "affection_metadata": "assets/cats/affection-source.json"
+  },
+  "assets": [
+    {
+      "id": "concept-exploration",
+      "label": "캐릭터 첫 탐색",
+      "kind": "generated-original",
+      "phase": "concept",
+      "status": "historical",
+      "file": {
+        "path": "art/originals/concepts/01-exploration.png",
+        "sha256": "10f7a395b9e8cfffc22dffe5f7e66ea392e2e8f3c573bc92bc813b95581b31e3",
+        "bytes": 1909913,
+        "width": 1536,
+        "height": 1024,
+        "color_type": 6
+      },
+      "original_filename": "exec-d5a30a9f-0d8f-49e7-8418-2d56052ed59e.png",
+      "prompt": {
+        "status": "unrecovered",
+        "reason_code": "conversation_history_single_turn_size_limit",
+        "prompt_path": null
+      },
+      "source_asset_ids": []
+    },
+    {
+      "id": "concept-cutout",
+      "label": "외곽선·누끼 정리 시안",
+      "kind": "generated-original",
+      "phase": "concept",
+      "status": "historical",
+      "file": {
+        "path": "art/originals/concepts/02-clean-cutout.png",
+        "sha256": "a0d624aed93d26a7beb6e4e8f1a8743b48d88b979a442b704bb1db0250c79e08",
+        "bytes": 1810981,
+        "width": 1536,
+        "height": 1024,
+        "color_type": 6
+      },
+      "original_filename": "exec-47bfbe23-b90e-4c38-b16a-5731bdef1f47.png",
+      "prompt": {
+        "status": "unrecovered",
+        "reason_code": "conversation_history_single_turn_size_limit",
+        "prompt_path": null
+      },
+      "source_asset_ids": []
+    },
+    {
+      "id": "concept-ragdoll",
+      "label": "랙돌 엉뚱함·귀여움 시안",
+      "kind": "generated-original",
+      "phase": "concept",
+      "status": "historical",
+      "file": {
+        "path": "art/originals/concepts/03-ragdoll-exploration.png",
+        "sha256": "e52564508aacfe0c9ded7f873dcaab3a19e7de4dd0142ab678c2f3481a484bd9",
+        "bytes": 1894745,
+        "width": 1536,
+        "height": 1024,
+        "color_type": 6
+      },
+      "original_filename": "exec-dd162c64-1efb-49ae-89a7-f3658cdf5e79.png",
+      "prompt": {
+        "status": "unrecovered",
+        "reason_code": "conversation_history_single_turn_size_limit",
+        "prompt_path": null
+      },
+      "source_asset_ids": []
+    },
+    {
+      "id": "concept-cottonball",
+      "label": "선택된 솜뭉치 사냥꾼 상태 시안",
+      "kind": "generated-original",
+      "phase": "concept",
+      "status": "selected-design",
+      "file": {
+        "path": "art/originals/concepts/04-cottonball-states.png",
+        "sha256": "add1f1601f88c80e835b9d6be6790a3c462b77affa30771e02f526539c188086",
+        "bytes": 1925635,
+        "width": 1536,
+        "height": 1024,
+        "color_type": 6
+      },
+      "original_filename": "exec-159d3f74-a1cd-44bc-a522-bca9b24c05dd.png",
+      "prompt": {
+        "status": "unrecovered",
+        "reason_code": "conversation_history_single_turn_size_limit",
+        "prompt_path": null
+      },
+      "source_asset_ids": []
+    },
+    {
+      "id": "concept-costumes",
+      "label": "폐기된 코스튬 개선 시안",
+      "kind": "generated-original",
+      "phase": "concept",
+      "status": "historical",
+      "file": {
+        "path": "art/originals/concepts/05-costume-exploration.png",
+        "sha256": "e49d064dc00d707617788d879bb75b52d92a4263e9a2247e014131b099efa2b2",
+        "bytes": 2003779,
+        "width": 1536,
+        "height": 1024,
+        "color_type": 6
+      },
+      "original_filename": "exec-86634a81-2132-4778-8761-e0a4ab5f9782.png",
+      "prompt": {
+        "status": "unrecovered",
+        "reason_code": "conversation_history_single_turn_size_limit",
+        "prompt_path": null
+      },
+      "source_asset_ids": []
+    },
+    {
+      "id": "appearance-ragdoll",
+      "label": "랙돌 외형 3면 시트",
+      "kind": "generated-original",
+      "phase": "appearance",
+      "status": "selected-reference",
+      "file": {
+        "path": "art/originals/breeds/ragdoll/appearance.png",
+        "sha256": "a0be52d5b5524e61c3170b322dee61b3dce767bbf1170272061beb8e729f67d0",
+        "bytes": 1761709,
+        "width": 2048,
+        "height": 768,
+        "color_type": 6
+      },
+      "original_filename": "exec-5dea45a7-6c94-4c98-b6dd-a4c7f561e20f.png",
+      "prompt": {
+        "status": "unrecovered",
+        "reason_code": "conversation_history_single_turn_size_limit",
+        "prompt_path": null
+      },
+      "source_asset_ids": [],
+      "cat_id": "ragdoll"
+    },
+    {
+      "id": "appearance-birman",
+      "label": "버만 외형 3면 시트",
+      "kind": "generated-original",
+      "phase": "appearance",
+      "status": "selected-reference",
+      "file": {
+        "path": "art/originals/breeds/birman/appearance.png",
+        "sha256": "77537e1393866ad083876cef03736c0596691d41852db26af9ad09a31d4f8006",
+        "bytes": 1807574,
+        "width": 2048,
+        "height": 768,
+        "color_type": 6
+      },
+      "original_filename": "exec-7a0b8903-337f-445b-8e85-1cd37f40889c.png",
+      "prompt": {
+        "status": "unrecovered",
+        "reason_code": "conversation_history_single_turn_size_limit",
+        "prompt_path": null
+      },
+      "source_asset_ids": [],
+      "cat_id": "birman"
+    },
+    {
+      "id": "appearance-siamese",
+      "label": "샴 외형 3면 시트",
+      "kind": "generated-original",
+      "phase": "appearance",
+      "status": "selected-reference",
+      "file": {
+        "path": "art/originals/breeds/siamese/appearance.png",
+        "sha256": "b1bc519063b7a0b683a14ac1519bc7caa4cd50510a8fc774b7ec4c7b39a6ed58",
+        "bytes": 1652665,
+        "width": 2048,
+        "height": 768,
+        "color_type": 6
+      },
+      "original_filename": "exec-77a9f357-cef7-49ba-8f60-9ff4e257bc7d.png",
+      "prompt": {
+        "status": "unrecovered",
+        "reason_code": "conversation_history_single_turn_size_limit",
+        "prompt_path": null
+      },
+      "source_asset_ids": [],
+      "cat_id": "siamese"
+    },
+    {
+      "id": "appearance-bombay",
+      "label": "봄베이 외형 3면 시트",
+      "kind": "generated-original",
+      "phase": "appearance",
+      "status": "selected-reference",
+      "file": {
+        "path": "art/originals/breeds/bombay/appearance.png",
+        "sha256": "f2b86ba016fb25db4fd5f43344a96d5966c51b3c8f78ad67743576e7a7471d13",
+        "bytes": 1456244,
+        "width": 2048,
+        "height": 768,
+        "color_type": 6
+      },
+      "original_filename": "exec-b53b7325-2517-4608-af73-fafbf826f541.png",
+      "prompt": {
+        "status": "unrecovered",
+        "reason_code": "conversation_history_single_turn_size_limit",
+        "prompt_path": null
+      },
+      "source_asset_ids": [],
+      "cat_id": "bombay"
+    },
+    {
+      "id": "appearance-ragamuffin",
+      "label": "라가머핀 외형 3면 시트",
+      "kind": "generated-original",
+      "phase": "appearance",
+      "status": "selected-reference",
+      "file": {
+        "path": "art/originals/breeds/ragamuffin/appearance.png",
+        "sha256": "b71c51f9d8dff2ab05c6815950dadff12b8b461fea5a99d99e15d0630caa8757",
+        "bytes": 1993190,
+        "width": 2048,
+        "height": 768,
+        "color_type": 6
+      },
+      "original_filename": "exec-23148906-dcdc-4277-9c74-2ed59a418f70.png",
+      "prompt": {
+        "status": "unrecovered",
+        "reason_code": "conversation_history_single_turn_size_limit",
+        "prompt_path": null
+      },
+      "source_asset_ids": [],
+      "cat_id": "ragamuffin"
+    },
+    {
+      "id": "appearance-persian",
+      "label": "페르시안 외형 3면 시트",
+      "kind": "generated-original",
+      "phase": "appearance",
+      "status": "selected-reference",
+      "file": {
+        "path": "art/originals/breeds/persian/appearance.png",
+        "sha256": "62eb5040c85e13a36d224763b1d2e1f13654d1ad66c53d12c3a8c60a54ad4f11",
+        "bytes": 1791724,
+        "width": 2048,
+        "height": 768,
+        "color_type": 6
+      },
+      "original_filename": "exec-a5b31d77-5101-426b-b709-7078c48185c0.png",
+      "prompt": {
+        "status": "unrecovered",
+        "reason_code": "conversation_history_single_turn_size_limit",
+        "prompt_path": null
+      },
+      "source_asset_ids": [],
+      "cat_id": "persian"
+    },
+    {
+      "id": "appearance-turkish-angora",
+      "label": "터키시 앙고라 외형 3면 시트",
+      "kind": "generated-original",
+      "phase": "appearance",
+      "status": "selected-reference",
+      "file": {
+        "path": "art/originals/breeds/turkish-angora/appearance.png",
+        "sha256": "ac15697f08a5b31d8623dc5498781cb90ed2fb1cb012e9028d110b9e5388f926",
+        "bytes": 1872186,
+        "width": 2048,
+        "height": 768,
+        "color_type": 6
+      },
+      "original_filename": "exec-900c11d5-de87-4c4b-a572-40e9d9e6677a.png",
+      "prompt": {
+        "status": "unrecovered",
+        "reason_code": "conversation_history_single_turn_size_limit",
+        "prompt_path": null
+      },
+      "source_asset_ids": [],
+      "cat_id": "turkish-angora"
+    },
+    {
+      "id": "appearance-american-curl",
+      "label": "아메리칸 컬 외형 3면 시트",
+      "kind": "generated-original",
+      "phase": "appearance",
+      "status": "selected-reference",
+      "file": {
+        "path": "art/originals/breeds/american-curl/appearance.png",
+        "sha256": "2963d50afec765e04e1ead5a8fa3fccc79f7a9d2ce5f577d007dbbb8640a9972",
+        "bytes": 2246782,
+        "width": 2048,
+        "height": 768,
+        "color_type": 6
+      },
+      "original_filename": "exec-3c654864-db17-424d-a14b-54a0e3fb0beb.png",
+      "prompt": {
+        "status": "unrecovered",
+        "reason_code": "conversation_history_single_turn_size_limit",
+        "prompt_path": null
+      },
+      "source_asset_ids": [],
+      "cat_id": "american-curl"
+    },
+    {
+      "id": "appearance-munchkin",
+      "label": "먼치킨 외형 3면 시트",
+      "kind": "generated-original",
+      "phase": "appearance",
+      "status": "selected-reference",
+      "file": {
+        "path": "art/originals/breeds/munchkin/appearance.png",
+        "sha256": "ddfbbe6dd6d219c01ce93a25b25df0c9beb0cdfd27b386832c769e6706a174f8",
+        "bytes": 1953439,
+        "width": 2048,
+        "height": 768,
+        "color_type": 6
+      },
+      "original_filename": "exec-67c87815-c1fc-4f91-a9e3-ee9ab8bddb8f.png",
+      "prompt": {
+        "status": "unrecovered",
+        "reason_code": "conversation_history_single_turn_size_limit",
+        "prompt_path": null
+      },
+      "source_asset_ids": [],
+      "cat_id": "munchkin"
+    },
+    {
+      "id": "appearance-british-shorthair",
+      "label": "브리티시 쇼트헤어 외형 3면 시트",
+      "kind": "generated-original",
+      "phase": "appearance",
+      "status": "selected-reference",
+      "file": {
+        "path": "art/originals/breeds/british-shorthair/appearance.png",
+        "sha256": "bfcfe4c6ce012b17957fc10bbcf3d0caf110f8535a10d09a954a046dc60a0f3c",
+        "bytes": 1652433,
+        "width": 2048,
+        "height": 768,
+        "color_type": 6
+      },
+      "original_filename": "exec-81bb4072-5177-4b74-8e3b-2d8e2ea5a875.png",
+      "prompt": {
+        "status": "unrecovered",
+        "reason_code": "conversation_history_single_turn_size_limit",
+        "prompt_path": null
+      },
+      "source_asset_ids": [],
+      "cat_id": "british-shorthair",
+      "supersedes": "appearance-british-tail-revision"
+    },
+    {
+      "id": "appearance-russian-blue",
+      "label": "러시안 블루 외형 3면 시트",
+      "kind": "generated-original",
+      "phase": "appearance",
+      "status": "selected-reference",
+      "file": {
+        "path": "art/originals/breeds/russian-blue/appearance.png",
+        "sha256": "d4f99b4bfd6ec8f72bf69bce5c3ba5ada8c1eabf55251537c5445ac3d5698c94",
+        "bytes": 1744798,
+        "width": 2048,
+        "height": 768,
+        "color_type": 6
+      },
+      "original_filename": "exec-b9eb2dfa-25c9-4d94-885c-9378f76ae63f.png",
+      "prompt": {
+        "status": "unrecovered",
+        "reason_code": "conversation_history_single_turn_size_limit",
+        "prompt_path": null
+      },
+      "source_asset_ids": [],
+      "cat_id": "russian-blue"
+    },
+    {
+      "id": "appearance-tuxedo",
+      "label": "턱시도 무늬 외형 3면 시트",
+      "kind": "generated-original",
+      "phase": "appearance",
+      "status": "selected-reference",
+      "file": {
+        "path": "art/originals/breeds/tuxedo/appearance.png",
+        "sha256": "f9254137ae7d29d5d2d095a1982a9ef3dd06727fbae769f9d1cb8ba2788d8a66",
+        "bytes": 1592021,
+        "width": 2048,
+        "height": 768,
+        "color_type": 6
+      },
+      "original_filename": "exec-272d3759-6af6-485c-b4cc-99a27035bd72.png",
+      "prompt": {
+        "status": "unrecovered",
+        "reason_code": "conversation_history_single_turn_size_limit",
+        "prompt_path": null
+      },
+      "source_asset_ids": [],
+      "cat_id": "tuxedo"
+    },
+    {
+      "id": "appearance-british-original",
+      "label": "브리티시 꼬리 수정 전",
+      "kind": "generated-original",
+      "phase": "appearance-revision",
+      "status": "superseded",
+      "file": {
+        "path": "art/originals/breeds/british-shorthair/appearance-v1-original-tail.png",
+        "sha256": "a24d0ec6da6da858d46c9c7b516f814f9077e214014582c228950a49d39fc56e",
+        "bytes": 1828193,
+        "width": 2048,
+        "height": 768,
+        "color_type": 6
+      },
+      "original_filename": "exec-8e27f8fc-9c19-4ec9-b511-b4ee9fa54880.png",
+      "prompt": {
+        "status": "unrecovered",
+        "reason_code": "conversation_history_single_turn_size_limit",
+        "prompt_path": null
+      },
+      "source_asset_ids": [],
+      "cat_id": "british-shorthair"
+    },
+    {
+      "id": "appearance-british-tail-revision",
+      "label": "브리티시 꼬리 두께 수정",
+      "kind": "generated-original",
+      "phase": "appearance-revision",
+      "status": "superseded",
+      "file": {
+        "path": "art/originals/breeds/british-shorthair/appearance-v2-slim-tail.png",
+        "sha256": "e9b9b2473cc9e383dfc5228281cc4c180b85ac387be4de9d92814817c10535e2",
+        "bytes": 1662487,
+        "width": 2048,
+        "height": 768,
+        "color_type": 6
+      },
+      "original_filename": "exec-35342670-6c74-4f10-b934-f44dc5caddc4.png",
+      "prompt": {
+        "status": "unrecovered",
+        "reason_code": "conversation_history_single_turn_size_limit",
+        "prompt_path": null
+      },
+      "source_asset_ids": [],
+      "cat_id": "british-shorthair",
+      "supersedes": "appearance-british-original"
+    },
+    {
+      "id": "motion-copy-ragdoll",
+      "label": "랙돌 복사·대기·수면 원화",
+      "kind": "generated-original",
+      "phase": "copy-motion",
+      "status": "runtime-source",
+      "file": {
+        "path": "art/originals/motion/ragdoll-copy.png",
+        "sha256": "5aeec126e2901800f1288d5a8ab4b1a22b04aa3cbbe5b5334116983e0011811f",
+        "bytes": 2218460,
+        "width": 1536,
+        "height": 1024,
+        "color_type": 6
+      },
+      "original_filename": "exec-29f315ca-8000-497f-b042-aab3e56196e5.png",
+      "prompt": {
+        "status": "unrecovered",
+        "reason_code": "conversation_history_single_turn_size_limit",
+        "prompt_path": null
+      },
+      "source_asset_ids": [],
+      "cat_id": "ragdoll",
+      "design_reference_ids": [
+        "concept-cottonball"
+      ],
+      "extraction_metadata": "assets/cats/source-rects.json",
+      "repository_aliases": [
+        "assets/cottonball-hunter.png"
+      ]
+    },
+    {
+      "id": "motion-copy-birman",
+      "label": "버만 복사·대기·수면 원화",
+      "kind": "generated-original",
+      "phase": "copy-motion",
+      "status": "runtime-source",
+      "file": {
+        "path": "art/originals/motion/birman-copy.png",
+        "sha256": "ede9fd0cd9df20e27e1ce0e3e0e2bb7e45dbbd70761fdd4d7cf65cca833a408d",
+        "bytes": 2284685,
+        "width": 1536,
+        "height": 1024,
+        "color_type": 6
+      },
+      "original_filename": "exec-634f1f52-603c-4da0-aa6f-b8dc4b34738e.png",
+      "prompt": {
+        "status": "unrecovered",
+        "reason_code": "conversation_history_single_turn_size_limit",
+        "prompt_path": null
+      },
+      "source_asset_ids": [],
+      "cat_id": "birman",
+      "design_reference_ids": [
+        "appearance-birman"
+      ],
+      "extraction_metadata": "assets/cats/source-rects.json"
+    },
+    {
+      "id": "motion-copy-siamese",
+      "label": "샴 복사·대기·수면 원화",
+      "kind": "generated-original",
+      "phase": "copy-motion",
+      "status": "runtime-source",
+      "file": {
+        "path": "art/originals/motion/siamese-copy.png",
+        "sha256": "66aea5e7b4b1686073a2ac977931b3360052c487d4e610ec2fb9d4ddd37005ff",
+        "bytes": 1903037,
+        "width": 1536,
+        "height": 1024,
+        "color_type": 6
+      },
+      "original_filename": "exec-2a68de0e-7554-4a5f-98ce-2c84204ea981.png",
+      "prompt": {
+        "status": "unrecovered",
+        "reason_code": "conversation_history_single_turn_size_limit",
+        "prompt_path": null
+      },
+      "source_asset_ids": [],
+      "cat_id": "siamese",
+      "design_reference_ids": [
+        "appearance-siamese"
+      ],
+      "extraction_metadata": "assets/cats/source-rects.json"
+    },
+    {
+      "id": "motion-copy-bombay",
+      "label": "봄베이 복사·대기·수면 원화",
+      "kind": "generated-original",
+      "phase": "copy-motion",
+      "status": "runtime-source",
+      "file": {
+        "path": "art/originals/motion/bombay-copy.png",
+        "sha256": "9751decbe7a6d0fd5a9ee60d67c520825729054303bb41547a74d8d94a65ae02",
+        "bytes": 1701349,
+        "width": 1536,
+        "height": 1024,
+        "color_type": 6
+      },
+      "original_filename": "exec-97eefba5-4826-49f6-a0ae-7e38a683e547.png",
+      "prompt": {
+        "status": "unrecovered",
+        "reason_code": "conversation_history_single_turn_size_limit",
+        "prompt_path": null
+      },
+      "source_asset_ids": [],
+      "cat_id": "bombay",
+      "design_reference_ids": [
+        "appearance-bombay"
+      ],
+      "extraction_metadata": "assets/cats/source-rects.json"
+    },
+    {
+      "id": "motion-copy-ragamuffin",
+      "label": "라가머핀 복사·대기·수면 원화",
+      "kind": "generated-original",
+      "phase": "copy-motion",
+      "status": "runtime-source",
+      "file": {
+        "path": "art/originals/motion/ragamuffin-copy.png",
+        "sha256": "ba95609819671e98fe43010a1eeb528f5995227c40bb67a4ac205dda4b7afec0",
+        "bytes": 2459927,
+        "width": 1536,
+        "height": 1024,
+        "color_type": 6
+      },
+      "original_filename": "exec-b9e8ef2a-55c1-49d8-bd8c-9537ab9ba7b4.png",
+      "prompt": {
+        "status": "unrecovered",
+        "reason_code": "conversation_history_single_turn_size_limit",
+        "prompt_path": null
+      },
+      "source_asset_ids": [],
+      "cat_id": "ragamuffin",
+      "design_reference_ids": [
+        "appearance-ragamuffin"
+      ],
+      "extraction_metadata": "assets/cats/source-rects.json"
+    },
+    {
+      "id": "motion-copy-persian",
+      "label": "페르시안 복사·대기·수면 원화",
+      "kind": "generated-original",
+      "phase": "copy-motion",
+      "status": "runtime-source",
+      "file": {
+        "path": "art/originals/motion/persian-copy.png",
+        "sha256": "380efa3145faa83fadd76361be095b37278f4dd2d6710fca53f92e0be4de287b",
+        "bytes": 2256114,
+        "width": 1536,
+        "height": 1024,
+        "color_type": 6
+      },
+      "original_filename": "exec-4468ab0a-b0b9-4638-abff-f2a7aadef02e.png",
+      "prompt": {
+        "status": "unrecovered",
+        "reason_code": "conversation_history_single_turn_size_limit",
+        "prompt_path": null
+      },
+      "source_asset_ids": [],
+      "cat_id": "persian",
+      "design_reference_ids": [
+        "appearance-persian"
+      ],
+      "extraction_metadata": "assets/cats/source-rects.json"
+    },
+    {
+      "id": "motion-copy-turkish-angora",
+      "label": "터키시 앙고라 복사·대기·수면 원화",
+      "kind": "generated-original",
+      "phase": "copy-motion",
+      "status": "runtime-source",
+      "file": {
+        "path": "art/originals/motion/turkish-angora-copy.png",
+        "sha256": "bf57f30c0cd0ea4f9c62afd5f7c441f073400f154b9d3f340cdb9b18eb17f7bb",
+        "bytes": 2088569,
+        "width": 1536,
+        "height": 1024,
+        "color_type": 6
+      },
+      "original_filename": "exec-bf24c3ef-803b-42d7-9337-ff89379b2e90.png",
+      "prompt": {
+        "status": "unrecovered",
+        "reason_code": "conversation_history_single_turn_size_limit",
+        "prompt_path": null
+      },
+      "source_asset_ids": [],
+      "cat_id": "turkish-angora",
+      "design_reference_ids": [
+        "appearance-turkish-angora"
+      ],
+      "extraction_metadata": "assets/cats/source-rects.json"
+    },
+    {
+      "id": "motion-copy-american-curl",
+      "label": "아메리칸 컬 복사·대기·수면 원화",
+      "kind": "generated-original",
+      "phase": "copy-motion",
+      "status": "runtime-source",
+      "file": {
+        "path": "art/originals/motion/american-curl-copy.png",
+        "sha256": "f10eaf2caa1b324f23b6dd22f59b8513192f730d1c41ed2417ede6b71c07b9c8",
+        "bytes": 2466824,
+        "width": 1536,
+        "height": 1024,
+        "color_type": 6
+      },
+      "original_filename": "exec-f79ffad5-436b-40aa-b3c2-475df3f983c5.png",
+      "prompt": {
+        "status": "unrecovered",
+        "reason_code": "conversation_history_single_turn_size_limit",
+        "prompt_path": null
+      },
+      "source_asset_ids": [],
+      "cat_id": "american-curl",
+      "design_reference_ids": [
+        "appearance-american-curl"
+      ],
+      "extraction_metadata": "assets/cats/source-rects.json"
+    },
+    {
+      "id": "motion-copy-munchkin",
+      "label": "먼치킨 복사·대기·수면 원화",
+      "kind": "generated-original",
+      "phase": "copy-motion",
+      "status": "runtime-source",
+      "file": {
+        "path": "art/originals/motion/munchkin-copy.png",
+        "sha256": "12b02ec6f17d48d885b404fcc693cbe5c7c9852f14e455f496ad5a7db891161d",
+        "bytes": 2342607,
+        "width": 1536,
+        "height": 1024,
+        "color_type": 6
+      },
+      "original_filename": "exec-db0f80b8-9e81-41ed-9269-f4b28cc48c50.png",
+      "prompt": {
+        "status": "unrecovered",
+        "reason_code": "conversation_history_single_turn_size_limit",
+        "prompt_path": null
+      },
+      "source_asset_ids": [],
+      "cat_id": "munchkin",
+      "design_reference_ids": [
+        "appearance-munchkin"
+      ],
+      "extraction_metadata": "assets/cats/source-rects.json"
+    },
+    {
+      "id": "motion-copy-british-shorthair",
+      "label": "브리티시 쇼트헤어 복사·대기·수면 원화",
+      "kind": "generated-original",
+      "phase": "copy-motion",
+      "status": "runtime-source",
+      "file": {
+        "path": "art/originals/motion/british-shorthair-copy.png",
+        "sha256": "b563afe5af547391fb83282a25c2002f1759c32da71455e9d4ca009487098e3d",
+        "bytes": 2002933,
+        "width": 1536,
+        "height": 1024,
+        "color_type": 6
+      },
+      "original_filename": "exec-96f78ea8-724f-4c9c-bc3a-8c845b9da7bf.png",
+      "prompt": {
+        "status": "unrecovered",
+        "reason_code": "conversation_history_single_turn_size_limit",
+        "prompt_path": null
+      },
+      "source_asset_ids": [],
+      "cat_id": "british-shorthair",
+      "design_reference_ids": [
+        "appearance-british-shorthair"
+      ],
+      "extraction_metadata": "assets/cats/source-rects.json"
+    },
+    {
+      "id": "motion-copy-russian-blue",
+      "label": "러시안 블루 복사·대기·수면 원화",
+      "kind": "generated-original",
+      "phase": "copy-motion",
+      "status": "runtime-source",
+      "file": {
+        "path": "art/originals/motion/russian-blue-copy.png",
+        "sha256": "9ab42d79dec26df80831d391bc3b17668591f2627de32ffe2c354ba2f926a147",
+        "bytes": 1956632,
+        "width": 1536,
+        "height": 1024,
+        "color_type": 6
+      },
+      "original_filename": "exec-54b3b69f-cdba-4f99-8ef8-9dc301cce15d.png",
+      "prompt": {
+        "status": "unrecovered",
+        "reason_code": "conversation_history_single_turn_size_limit",
+        "prompt_path": null
+      },
+      "source_asset_ids": [],
+      "cat_id": "russian-blue",
+      "design_reference_ids": [
+        "appearance-russian-blue"
+      ],
+      "extraction_metadata": "assets/cats/source-rects.json"
+    },
+    {
+      "id": "motion-copy-tuxedo",
+      "label": "턱시도 무늬 복사·대기·수면 원화",
+      "kind": "generated-original",
+      "phase": "copy-motion",
+      "status": "runtime-source",
+      "file": {
+        "path": "art/originals/motion/tuxedo-copy.png",
+        "sha256": "5a024886f216032fcfd5e2d2c688436180eebdf9f368cb6359441b0e176ef022",
+        "bytes": 1960770,
+        "width": 1536,
+        "height": 1024,
+        "color_type": 6
+      },
+      "original_filename": "exec-43d20bed-a2d8-43c4-ba2f-b5543286a8dc.png",
+      "prompt": {
+        "status": "unrecovered",
+        "reason_code": "conversation_history_single_turn_size_limit",
+        "prompt_path": null
+      },
+      "source_asset_ids": [],
+      "cat_id": "tuxedo",
+      "design_reference_ids": [
+        "appearance-tuxedo"
+      ],
+      "extraction_metadata": "assets/cats/source-rects.json"
+    },
+    {
+      "id": "affection-01",
+      "label": "교감 전용 4종×4포즈 묶음 1",
+      "kind": "generated-original",
+      "phase": "affection",
+      "status": "runtime-source",
+      "file": {
+        "path": "art/originals/affection/affection-01.png",
+        "sha256": "17d33c4a535a903d3052c632d328c0761f41e05c4f47938efc1d53e57b5fd3d7",
+        "bytes": 1540512,
+        "width": 1448,
+        "height": 1086,
+        "color_type": 6
+      },
+      "original_filename": "exec-3ef4503e-fb53-4f5c-9cfa-c91794d12526.png",
+      "prompt": {
+        "status": "recorded",
+        "prompt_path": "art/prompts/affection-01.prompt.txt",
+        "sha256": "0d443aba6aa16d7eb2ddbc9817cc5a40c70c893748b1eaf0c1ee09263106140b",
+        "source_field": "Codex imageGeneration.revisedPrompt",
+        "generation_item_id": "exec-3ef4503e-fb53-4f5c-9cfa-c91794d12526",
+        "request_path": "art/prompts/affection-01.request.json",
+        "request_sha256": "8843553ed4b38bf95405c2d83217d1297aac0309dd5ce22c40fa35e05d2cbc56"
+      },
+      "source_asset_ids": [
+        "reference-copy16-ragdoll",
+        "reference-copy16-siamese",
+        "reference-copy16-bombay",
+        "reference-copy16-british-shorthair"
+      ],
+      "cat_ids": [
+        "ragdoll",
+        "siamese",
+        "bombay",
+        "british-shorthair"
+      ]
+    },
+    {
+      "id": "affection-02",
+      "label": "교감 전용 4종×4포즈 묶음 2",
+      "kind": "generated-original",
+      "phase": "affection",
+      "status": "runtime-source",
+      "file": {
+        "path": "art/originals/affection/affection-02.png",
+        "sha256": "05cf3506eb60853cc8465eb3a85f1f99734b8630f0b918b4f850a8a0fd5ff863",
+        "bytes": 1975525,
+        "width": 1448,
+        "height": 1086,
+        "color_type": 6
+      },
+      "original_filename": "exec-daf4b0a9-08de-4dee-9ceb-90f9f164c712.png",
+      "prompt": {
+        "status": "recorded",
+        "prompt_path": "art/prompts/affection-02.prompt.txt",
+        "sha256": "069178a9f77b2799601b3fc339bdf9eac73504ea04526424a83d698f4420043b",
+        "source_field": "Codex imageGeneration.revisedPrompt",
+        "generation_item_id": "exec-daf4b0a9-08de-4dee-9ceb-90f9f164c712",
+        "request_path": "art/prompts/affection-02.request.json",
+        "request_sha256": "edd1b0163088ba860694663c90bf88c3a184c069b9c6b5c288f47258453b8c22"
+      },
+      "source_asset_ids": [
+        "reference-copy16-birman",
+        "reference-copy16-ragamuffin",
+        "reference-copy16-persian",
+        "reference-copy16-turkish-angora"
+      ],
+      "cat_ids": [
+        "birman",
+        "ragamuffin",
+        "persian",
+        "turkish-angora"
+      ]
+    },
+    {
+      "id": "affection-03",
+      "label": "교감 전용 4종×4포즈 묶음 3",
+      "kind": "generated-original",
+      "phase": "affection",
+      "status": "runtime-source",
+      "file": {
+        "path": "art/originals/affection/affection-03.png",
+        "sha256": "0dfe51025a63a1fe115dc44a54ba9d2e39d34ab025527ab20386a976b749bb4b",
+        "bytes": 1690647,
+        "width": 1448,
+        "height": 1086,
+        "color_type": 6
+      },
+      "original_filename": "exec-dd9f1c04-649d-4fcf-a0d1-eba4d2d34fa0.png",
+      "prompt": {
+        "status": "recorded",
+        "prompt_path": "art/prompts/affection-03.prompt.txt",
+        "sha256": "307cccb365bc285aeded2020bde7df73d45b4056f159f127efd09e5b8c43fbc0",
+        "source_field": "Codex imageGeneration.revisedPrompt",
+        "generation_item_id": "exec-dd9f1c04-649d-4fcf-a0d1-eba4d2d34fa0",
+        "request_path": "art/prompts/affection-03.request.json",
+        "request_sha256": "425d0ca5a038d52b0b96bb87639311cc2b95f99472ac5fa987d8ce581b4b280b"
+      },
+      "source_asset_ids": [
+        "reference-copy16-american-curl",
+        "reference-copy16-munchkin",
+        "reference-copy16-russian-blue",
+        "reference-copy16-tuxedo"
+      ],
+      "cat_ids": [
+        "american-curl",
+        "munchkin",
+        "russian-blue",
+        "tuxedo"
+      ]
+    },
+    {
+      "id": "legacy-accessory-clover",
+      "label": "역사적 악세사리 렌더: clover",
+      "kind": "code-render-preview",
+      "phase": "legacy-accessory",
+      "status": "historical",
+      "file": {
+        "path": "docs/specs/directions/assets/accessories/clover.png",
+        "sha256": "002db84b07f1331a38970ce15a781963132b297b06a0b1b97f14ab3c3638e4d2",
+        "bytes": 66613,
+        "width": 480,
+        "height": 512,
+        "color_type": 6
+      },
+      "source_asset_ids": [],
+      "prompt": {
+        "status": "not_applicable",
+        "reason_code": "rendered_from_code_not_image_generation",
+        "prompt_path": null
+      },
+      "provenance": {
+        "git_commit": "90cc23ccf9037019b81f263133c56dcea5dc1377",
+        "evidence": "git commit message identifies these as accessory render records"
+      }
+    },
+    {
+      "id": "legacy-accessory-collection",
+      "label": "역사적 악세사리 렌더: collection",
+      "kind": "code-render-preview",
+      "phase": "legacy-accessory",
+      "status": "historical",
+      "file": {
+        "path": "docs/specs/directions/assets/accessories/collection.png",
+        "sha256": "02204fa70e12f81fe6f75d9e646a88341ffd0a1bb5650746f170aae10ff709f6",
+        "bytes": 576260,
+        "width": 1440,
+        "height": 1024,
+        "color_type": 6
+      },
+      "source_asset_ids": [],
+      "prompt": {
+        "status": "not_applicable",
+        "reason_code": "rendered_from_code_not_image_generation",
+        "prompt_path": null
+      },
+      "provenance": {
+        "git_commit": "90cc23ccf9037019b81f263133c56dcea5dc1377",
+        "evidence": "git commit message identifies these as accessory render records"
+      }
+    },
+    {
+      "id": "legacy-accessory-explore-batch-1",
+      "label": "역사적 악세사리 렌더: explore-batch-1",
+      "kind": "code-render-preview",
+      "phase": "legacy-accessory",
+      "status": "historical",
+      "file": {
+        "path": "docs/specs/directions/assets/accessories/explore-batch-1.png",
+        "sha256": "0f2a455e241d508483154a365e8c245955732c7ebfb3d4505f4137d8b49cce3d",
+        "bytes": 421421,
+        "width": 960,
+        "height": 1024,
+        "color_type": 6
+      },
+      "source_asset_ids": [],
+      "prompt": {
+        "status": "not_applicable",
+        "reason_code": "rendered_from_code_not_image_generation",
+        "prompt_path": null
+      },
+      "provenance": {
+        "git_commit": "90cc23ccf9037019b81f263133c56dcea5dc1377",
+        "evidence": "git commit message identifies these as accessory render records"
+      }
+    },
+    {
+      "id": "legacy-accessory-explore-candidates-a",
+      "label": "역사적 악세사리 렌더: explore-candidates-a",
+      "kind": "code-render-preview",
+      "phase": "legacy-accessory",
+      "status": "historical",
+      "file": {
+        "path": "docs/specs/directions/assets/accessories/explore-candidates-a.png",
+        "sha256": "865434448695ea79be8d4e4416704789ee7a9eb939ea2f65ea5d26278d40a505",
+        "bytes": 179597,
+        "width": 720,
+        "height": 512,
+        "color_type": 6
+      },
+      "source_asset_ids": [],
+      "prompt": {
+        "status": "not_applicable",
+        "reason_code": "rendered_from_code_not_image_generation",
+        "prompt_path": null
+      },
+      "provenance": {
+        "git_commit": "90cc23ccf9037019b81f263133c56dcea5dc1377",
+        "evidence": "git commit message identifies these as accessory render records"
+      }
+    },
+    {
+      "id": "legacy-accessory-explore-candidates-b",
+      "label": "역사적 악세사리 렌더: explore-candidates-b",
+      "kind": "code-render-preview",
+      "phase": "legacy-accessory",
+      "status": "historical",
+      "file": {
+        "path": "docs/specs/directions/assets/accessories/explore-candidates-b.png",
+        "sha256": "03f3df21083dec7d94bd4a29dec53d015ba38e88cd3c42c45583d063d2e3e948",
+        "bytes": 178749,
+        "width": 720,
+        "height": 512,
+        "color_type": 6
+      },
+      "source_asset_ids": [],
+      "prompt": {
+        "status": "not_applicable",
+        "reason_code": "rendered_from_code_not_image_generation",
+        "prompt_path": null
+      },
+      "provenance": {
+        "git_commit": "90cc23ccf9037019b81f263133c56dcea5dc1377",
+        "evidence": "git commit message identifies these as accessory render records"
+      }
+    },
+    {
+      "id": "legacy-accessory-explore-cute-trio",
+      "label": "역사적 악세사리 렌더: explore-cute-trio",
+      "kind": "code-render-preview",
+      "phase": "legacy-accessory",
+      "status": "historical",
+      "file": {
+        "path": "docs/specs/directions/assets/accessories/explore-cute-trio.png",
+        "sha256": "c68f3dce23b6a328ffc80d270ea87ff16e62af4a62f985320d3e209d19139e6a",
+        "bytes": 90939,
+        "width": 720,
+        "height": 256,
+        "color_type": 6
+      },
+      "source_asset_ids": [],
+      "prompt": {
+        "status": "not_applicable",
+        "reason_code": "rendered_from_code_not_image_generation",
+        "prompt_path": null
+      },
+      "provenance": {
+        "git_commit": "90cc23ccf9037019b81f263133c56dcea5dc1377",
+        "evidence": "git commit message identifies these as accessory render records"
+      }
+    },
+    {
+      "id": "reference-copy16-ragdoll",
+      "label": "랙돌 16프레임 참조 스냅샷",
+      "kind": "reference-snapshot",
+      "phase": "reference",
+      "status": "generation-input",
+      "cat_id": "ragdoll",
+      "file": {
+        "path": "art/references/copy-atlases-16/ragdoll.png",
+        "sha256": "79259fdcdcb30fb14766527e09694de599ebe545e9458c78bd300be662d116ae",
+        "bytes": 804238,
+        "width": 960,
+        "height": 720,
+        "color_type": 6
+      },
+      "source_asset_ids": [
+        "motion-copy-ragdoll"
+      ],
+      "prompt": {
+        "status": "derived",
+        "prompt_path": null
+      },
+      "provenance": {
+        "git_commit": "0fffd4c201aacabe3462cce1d9ce9048f9dc5576",
+        "git_path": "assets/cats/ragdoll.png"
+      },
+      "extraction_metadata": "assets/cats/source-rects.json"
+    },
+    {
+      "id": "reference-copy16-birman",
+      "label": "버만 16프레임 참조 스냅샷",
+      "kind": "reference-snapshot",
+      "phase": "reference",
+      "status": "generation-input",
+      "cat_id": "birman",
+      "file": {
+        "path": "art/references/copy-atlases-16/birman.png",
+        "sha256": "723b7099f0d8a8f8d71fed53d13f429d321535870e046c9eb8d862d0cc6706f1",
+        "bytes": 749383,
+        "width": 960,
+        "height": 720,
+        "color_type": 6
+      },
+      "source_asset_ids": [
+        "motion-copy-birman"
+      ],
+      "prompt": {
+        "status": "derived",
+        "prompt_path": null
+      },
+      "provenance": {
+        "git_commit": "0fffd4c201aacabe3462cce1d9ce9048f9dc5576",
+        "git_path": "assets/cats/birman.png"
+      },
+      "extraction_metadata": "assets/cats/source-rects.json"
+    },
+    {
+      "id": "reference-copy16-siamese",
+      "label": "샴 16프레임 참조 스냅샷",
+      "kind": "reference-snapshot",
+      "phase": "reference",
+      "status": "generation-input",
+      "cat_id": "siamese",
+      "file": {
+        "path": "art/references/copy-atlases-16/siamese.png",
+        "sha256": "409649a32acc8eab73fefc45261487c2b4c989972fecfcffb4e7bce1b72fbda8",
+        "bytes": 499689,
+        "width": 960,
+        "height": 720,
+        "color_type": 6
+      },
+      "source_asset_ids": [
+        "motion-copy-siamese"
+      ],
+      "prompt": {
+        "status": "derived",
+        "prompt_path": null
+      },
+      "provenance": {
+        "git_commit": "0fffd4c201aacabe3462cce1d9ce9048f9dc5576",
+        "git_path": "assets/cats/siamese.png"
+      },
+      "extraction_metadata": "assets/cats/source-rects.json"
+    },
+    {
+      "id": "reference-copy16-bombay",
+      "label": "봄베이 16프레임 참조 스냅샷",
+      "kind": "reference-snapshot",
+      "phase": "reference",
+      "status": "generation-input",
+      "cat_id": "bombay",
+      "file": {
+        "path": "art/references/copy-atlases-16/bombay.png",
+        "sha256": "78fbf205b22c31fe62d675447df723703ff9ec79fbd9f0dc3967b5719074cd59",
+        "bytes": 493360,
+        "width": 960,
+        "height": 720,
+        "color_type": 6
+      },
+      "source_asset_ids": [
+        "motion-copy-bombay"
+      ],
+      "prompt": {
+        "status": "derived",
+        "prompt_path": null
+      },
+      "provenance": {
+        "git_commit": "0fffd4c201aacabe3462cce1d9ce9048f9dc5576",
+        "git_path": "assets/cats/bombay.png"
+      },
+      "extraction_metadata": "assets/cats/source-rects.json"
+    },
+    {
+      "id": "reference-copy16-ragamuffin",
+      "label": "라가머핀 16프레임 참조 스냅샷",
+      "kind": "reference-snapshot",
+      "phase": "reference",
+      "status": "generation-input",
+      "cat_id": "ragamuffin",
+      "file": {
+        "path": "art/references/copy-atlases-16/ragamuffin.png",
+        "sha256": "50cd7541118cd16a9b12adcbe7563e9dff7c1c735ec0a047e3ff85d6965093c4",
+        "bytes": 785913,
+        "width": 960,
+        "height": 720,
+        "color_type": 6
+      },
+      "source_asset_ids": [
+        "motion-copy-ragamuffin"
+      ],
+      "prompt": {
+        "status": "derived",
+        "prompt_path": null
+      },
+      "provenance": {
+        "git_commit": "0fffd4c201aacabe3462cce1d9ce9048f9dc5576",
+        "git_path": "assets/cats/ragamuffin.png"
+      },
+      "extraction_metadata": "assets/cats/source-rects.json"
+    },
+    {
+      "id": "reference-copy16-persian",
+      "label": "페르시안 16프레임 참조 스냅샷",
+      "kind": "reference-snapshot",
+      "phase": "reference",
+      "status": "generation-input",
+      "cat_id": "persian",
+      "file": {
+        "path": "art/references/copy-atlases-16/persian.png",
+        "sha256": "47acc94962b9e4b012d858f72b00a8defce82881e736ee81db2f7665a56967c4",
+        "bytes": 747307,
+        "width": 960,
+        "height": 720,
+        "color_type": 6
+      },
+      "source_asset_ids": [
+        "motion-copy-persian"
+      ],
+      "prompt": {
+        "status": "derived",
+        "prompt_path": null
+      },
+      "provenance": {
+        "git_commit": "0fffd4c201aacabe3462cce1d9ce9048f9dc5576",
+        "git_path": "assets/cats/persian.png"
+      },
+      "extraction_metadata": "assets/cats/source-rects.json"
+    },
+    {
+      "id": "reference-copy16-turkish-angora",
+      "label": "터키시 앙고라 16프레임 참조 스냅샷",
+      "kind": "reference-snapshot",
+      "phase": "reference",
+      "status": "generation-input",
+      "cat_id": "turkish-angora",
+      "file": {
+        "path": "art/references/copy-atlases-16/turkish-angora.png",
+        "sha256": "66713811ad1a9783d5dd8a968d5140d9a9f6edfc03aef3a9fd49622604bef2b1",
+        "bytes": 797126,
+        "width": 960,
+        "height": 720,
+        "color_type": 6
+      },
+      "source_asset_ids": [
+        "motion-copy-turkish-angora"
+      ],
+      "prompt": {
+        "status": "derived",
+        "prompt_path": null
+      },
+      "provenance": {
+        "git_commit": "0fffd4c201aacabe3462cce1d9ce9048f9dc5576",
+        "git_path": "assets/cats/turkish-angora.png"
+      },
+      "extraction_metadata": "assets/cats/source-rects.json"
+    },
+    {
+      "id": "reference-copy16-american-curl",
+      "label": "아메리칸 컬 16프레임 참조 스냅샷",
+      "kind": "reference-snapshot",
+      "phase": "reference",
+      "status": "generation-input",
+      "cat_id": "american-curl",
+      "file": {
+        "path": "art/references/copy-atlases-16/american-curl.png",
+        "sha256": "3f34316287ffe6035eb740610918f55a7d687429f9890c9c965a48ae4eccb0bc",
+        "bytes": 848647,
+        "width": 960,
+        "height": 720,
+        "color_type": 6
+      },
+      "source_asset_ids": [
+        "motion-copy-american-curl"
+      ],
+      "prompt": {
+        "status": "derived",
+        "prompt_path": null
+      },
+      "provenance": {
+        "git_commit": "0fffd4c201aacabe3462cce1d9ce9048f9dc5576",
+        "git_path": "assets/cats/american-curl.png"
+      },
+      "extraction_metadata": "assets/cats/source-rects.json"
+    },
+    {
+      "id": "reference-copy16-munchkin",
+      "label": "먼치킨 16프레임 참조 스냅샷",
+      "kind": "reference-snapshot",
+      "phase": "reference",
+      "status": "generation-input",
+      "cat_id": "munchkin",
+      "file": {
+        "path": "art/references/copy-atlases-16/munchkin.png",
+        "sha256": "67396f21db72534d1fbfdd49d9849d9de49eac45e57d95ce2bddf60d4e47256e",
+        "bytes": 799851,
+        "width": 960,
+        "height": 720,
+        "color_type": 6
+      },
+      "source_asset_ids": [
+        "motion-copy-munchkin"
+      ],
+      "prompt": {
+        "status": "derived",
+        "prompt_path": null
+      },
+      "provenance": {
+        "git_commit": "0fffd4c201aacabe3462cce1d9ce9048f9dc5576",
+        "git_path": "assets/cats/munchkin.png"
+      },
+      "extraction_metadata": "assets/cats/source-rects.json"
+    },
+    {
+      "id": "reference-copy16-british-shorthair",
+      "label": "브리티시 쇼트헤어 16프레임 참조 스냅샷",
+      "kind": "reference-snapshot",
+      "phase": "reference",
+      "status": "generation-input",
+      "cat_id": "british-shorthair",
+      "file": {
+        "path": "art/references/copy-atlases-16/british-shorthair.png",
+        "sha256": "6979eccfa6bddce5eb7260af43865e5916e153d7b0cb0f5cba0c0b2ffaba8f37",
+        "bytes": 639395,
+        "width": 960,
+        "height": 720,
+        "color_type": 6
+      },
+      "source_asset_ids": [
+        "motion-copy-british-shorthair"
+      ],
+      "prompt": {
+        "status": "derived",
+        "prompt_path": null
+      },
+      "provenance": {
+        "git_commit": "0fffd4c201aacabe3462cce1d9ce9048f9dc5576",
+        "git_path": "assets/cats/british-shorthair.png"
+      },
+      "extraction_metadata": "assets/cats/source-rects.json"
+    },
+    {
+      "id": "reference-copy16-russian-blue",
+      "label": "러시안 블루 16프레임 참조 스냅샷",
+      "kind": "reference-snapshot",
+      "phase": "reference",
+      "status": "generation-input",
+      "cat_id": "russian-blue",
+      "file": {
+        "path": "art/references/copy-atlases-16/russian-blue.png",
+        "sha256": "02697dd33863e6bf0f6baf39f1b3554f8cd11288870083c2d532e31f69fa96a6",
+        "bytes": 518082,
+        "width": 960,
+        "height": 720,
+        "color_type": 6
+      },
+      "source_asset_ids": [
+        "motion-copy-russian-blue"
+      ],
+      "prompt": {
+        "status": "derived",
+        "prompt_path": null
+      },
+      "provenance": {
+        "git_commit": "0fffd4c201aacabe3462cce1d9ce9048f9dc5576",
+        "git_path": "assets/cats/russian-blue.png"
+      },
+      "extraction_metadata": "assets/cats/source-rects.json"
+    },
+    {
+      "id": "reference-copy16-tuxedo",
+      "label": "턱시도 무늬 16프레임 참조 스냅샷",
+      "kind": "reference-snapshot",
+      "phase": "reference",
+      "status": "generation-input",
+      "cat_id": "tuxedo",
+      "file": {
+        "path": "art/references/copy-atlases-16/tuxedo.png",
+        "sha256": "3f303298517181785612eb9a8ba57e7ca1ff362ec5104b81d751460eca8162f1",
+        "bytes": 639966,
+        "width": 960,
+        "height": 720,
+        "color_type": 6
+      },
+      "source_asset_ids": [
+        "motion-copy-tuxedo"
+      ],
+      "prompt": {
+        "status": "derived",
+        "prompt_path": null
+      },
+      "provenance": {
+        "git_commit": "0fffd4c201aacabe3462cce1d9ce9048f9dc5576",
+        "git_path": "assets/cats/tuxedo.png"
+      },
+      "extraction_metadata": "assets/cats/source-rects.json"
+    },
+    {
+      "id": "runtime-ragdoll",
+      "label": "랙돌 현재 앱 아틀라스",
+      "kind": "runtime-atlas",
+      "phase": "runtime",
+      "status": "active",
+      "cat_id": "ragdoll",
+      "file": {
+        "path": "assets/cats/ragdoll.png",
+        "sha256": "0a57e19db2cadeb8081808a5de1b1102b18a10aace0293166dbe47e13bbe8b87",
+        "bytes": 1023774,
+        "width": 960,
+        "height": 900,
+        "color_type": 6
+      },
+      "source_asset_ids": [
+        "reference-copy16-ragdoll",
+        "affection-01"
+      ],
+      "prompt": {
+        "status": "derived",
+        "prompt_path": null
+      },
+      "extraction_metadata": "assets/cats/affection-source.json"
+    },
+    {
+      "id": "runtime-birman",
+      "label": "버만 현재 앱 아틀라스",
+      "kind": "runtime-atlas",
+      "phase": "runtime",
+      "status": "active",
+      "cat_id": "birman",
+      "file": {
+        "path": "assets/cats/birman.png",
+        "sha256": "85c7f65e1ecd704cf6df3eb02c4e87990657c903cd4730b8ff9cfe12bb300110",
+        "bytes": 912795,
+        "width": 960,
+        "height": 900,
+        "color_type": 6
+      },
+      "source_asset_ids": [
+        "reference-copy16-birman",
+        "affection-02"
+      ],
+      "prompt": {
+        "status": "derived",
+        "prompt_path": null
+      },
+      "extraction_metadata": "assets/cats/affection-source.json"
+    },
+    {
+      "id": "runtime-siamese",
+      "label": "샴 현재 앱 아틀라스",
+      "kind": "runtime-atlas",
+      "phase": "runtime",
+      "status": "active",
+      "cat_id": "siamese",
+      "file": {
+        "path": "assets/cats/siamese.png",
+        "sha256": "e9cf47cb8936bde23e782c39e36e02d8a099ea5a5430ec388b7d121136387967",
+        "bytes": 626806,
+        "width": 960,
+        "height": 900,
+        "color_type": 6
+      },
+      "source_asset_ids": [
+        "reference-copy16-siamese",
+        "affection-01"
+      ],
+      "prompt": {
+        "status": "derived",
+        "prompt_path": null
+      },
+      "extraction_metadata": "assets/cats/affection-source.json"
+    },
+    {
+      "id": "runtime-bombay",
+      "label": "봄베이 현재 앱 아틀라스",
+      "kind": "runtime-atlas",
+      "phase": "runtime",
+      "status": "active",
+      "cat_id": "bombay",
+      "file": {
+        "path": "assets/cats/bombay.png",
+        "sha256": "f137f9dc88ca33c1029220c1e2e4b3f408c1e35964219102b2649f3b5f99141d",
+        "bytes": 617304,
+        "width": 960,
+        "height": 900,
+        "color_type": 6
+      },
+      "source_asset_ids": [
+        "reference-copy16-bombay",
+        "affection-01"
+      ],
+      "prompt": {
+        "status": "derived",
+        "prompt_path": null
+      },
+      "extraction_metadata": "assets/cats/affection-source.json"
+    },
+    {
+      "id": "runtime-ragamuffin",
+      "label": "라가머핀 현재 앱 아틀라스",
+      "kind": "runtime-atlas",
+      "phase": "runtime",
+      "status": "active",
+      "cat_id": "ragamuffin",
+      "file": {
+        "path": "assets/cats/ragamuffin.png",
+        "sha256": "3d3334a4d9cd0eae424136d5e9f7d6ccecc6d741bf67e35500abcf88e5e3bd46",
+        "bytes": 968238,
+        "width": 960,
+        "height": 900,
+        "color_type": 6
+      },
+      "source_asset_ids": [
+        "reference-copy16-ragamuffin",
+        "affection-02"
+      ],
+      "prompt": {
+        "status": "derived",
+        "prompt_path": null
+      },
+      "extraction_metadata": "assets/cats/affection-source.json"
+    },
+    {
+      "id": "runtime-persian",
+      "label": "페르시안 현재 앱 아틀라스",
+      "kind": "runtime-atlas",
+      "phase": "runtime",
+      "status": "active",
+      "cat_id": "persian",
+      "file": {
+        "path": "assets/cats/persian.png",
+        "sha256": "3773459e1e70e4bf5edaa743976500e84b004ee8e1d0e39f72fb1805aaa10934",
+        "bytes": 931001,
+        "width": 960,
+        "height": 900,
+        "color_type": 6
+      },
+      "source_asset_ids": [
+        "reference-copy16-persian",
+        "affection-02"
+      ],
+      "prompt": {
+        "status": "derived",
+        "prompt_path": null
+      },
+      "extraction_metadata": "assets/cats/affection-source.json"
+    },
+    {
+      "id": "runtime-turkish-angora",
+      "label": "터키시 앙고라 현재 앱 아틀라스",
+      "kind": "runtime-atlas",
+      "phase": "runtime",
+      "status": "active",
+      "cat_id": "turkish-angora",
+      "file": {
+        "path": "assets/cats/turkish-angora.png",
+        "sha256": "7b298be8482a9f4a41454e06e5175ec4a4b9a11b1628f81a2863c9cec193e8a8",
+        "bytes": 999511,
+        "width": 960,
+        "height": 900,
+        "color_type": 6
+      },
+      "source_asset_ids": [
+        "reference-copy16-turkish-angora",
+        "affection-02"
+      ],
+      "prompt": {
+        "status": "derived",
+        "prompt_path": null
+      },
+      "extraction_metadata": "assets/cats/affection-source.json"
+    },
+    {
+      "id": "runtime-american-curl",
+      "label": "아메리칸 컬 현재 앱 아틀라스",
+      "kind": "runtime-atlas",
+      "phase": "runtime",
+      "status": "active",
+      "cat_id": "american-curl",
+      "file": {
+        "path": "assets/cats/american-curl.png",
+        "sha256": "97e4a13ac44305251766d6674b442ea1aa27644096b11230b661299206d30c6e",
+        "bytes": 1053887,
+        "width": 960,
+        "height": 900,
+        "color_type": 6
+      },
+      "source_asset_ids": [
+        "reference-copy16-american-curl",
+        "affection-03"
+      ],
+      "prompt": {
+        "status": "derived",
+        "prompt_path": null
+      },
+      "extraction_metadata": "assets/cats/affection-source.json"
+    },
+    {
+      "id": "runtime-munchkin",
+      "label": "먼치킨 현재 앱 아틀라스",
+      "kind": "runtime-atlas",
+      "phase": "runtime",
+      "status": "active",
+      "cat_id": "munchkin",
+      "file": {
+        "path": "assets/cats/munchkin.png",
+        "sha256": "b81dfd131ed535949825e4700d397c2742070aee7157f33e75af73b27a38616d",
+        "bytes": 1010967,
+        "width": 960,
+        "height": 900,
+        "color_type": 6
+      },
+      "source_asset_ids": [
+        "reference-copy16-munchkin",
+        "affection-03"
+      ],
+      "prompt": {
+        "status": "derived",
+        "prompt_path": null
+      },
+      "extraction_metadata": "assets/cats/affection-source.json"
+    },
+    {
+      "id": "runtime-british-shorthair",
+      "label": "브리티시 쇼트헤어 현재 앱 아틀라스",
+      "kind": "runtime-atlas",
+      "phase": "runtime",
+      "status": "active",
+      "cat_id": "british-shorthair",
+      "file": {
+        "path": "assets/cats/british-shorthair.png",
+        "sha256": "498ac11121bae4707463e3cd81173510c3d8f8d29bd870456b24fa9a930b617f",
+        "bytes": 784115,
+        "width": 960,
+        "height": 900,
+        "color_type": 6
+      },
+      "source_asset_ids": [
+        "reference-copy16-british-shorthair",
+        "affection-01"
+      ],
+      "prompt": {
+        "status": "derived",
+        "prompt_path": null
+      },
+      "extraction_metadata": "assets/cats/affection-source.json"
+    },
+    {
+      "id": "runtime-russian-blue",
+      "label": "러시안 블루 현재 앱 아틀라스",
+      "kind": "runtime-atlas",
+      "phase": "runtime",
+      "status": "active",
+      "cat_id": "russian-blue",
+      "file": {
+        "path": "assets/cats/russian-blue.png",
+        "sha256": "a8210e402f7232386baaf1b502423022782d0d1f837c27a256ff59c57c11cb42",
+        "bytes": 649926,
+        "width": 960,
+        "height": 900,
+        "color_type": 6
+      },
+      "source_asset_ids": [
+        "reference-copy16-russian-blue",
+        "affection-03"
+      ],
+      "prompt": {
+        "status": "derived",
+        "prompt_path": null
+      },
+      "extraction_metadata": "assets/cats/affection-source.json"
+    },
+    {
+      "id": "runtime-tuxedo",
+      "label": "턱시도 무늬 현재 앱 아틀라스",
+      "kind": "runtime-atlas",
+      "phase": "runtime",
+      "status": "active",
+      "cat_id": "tuxedo",
+      "file": {
+        "path": "assets/cats/tuxedo.png",
+        "sha256": "159c3f108a0867d9cc52b8d9231d2e0c56b58d9270f913096a20b643b67cb058",
+        "bytes": 814924,
+        "width": 960,
+        "height": 900,
+        "color_type": 6
+      },
+      "source_asset_ids": [
+        "reference-copy16-tuxedo",
+        "affection-03"
+      ],
+      "prompt": {
+        "status": "derived",
+        "prompt_path": null
+      },
+      "extraction_metadata": "assets/cats/affection-source.json"
+    }
+  ],
+  "metadata_files": [
+    {
+      "path": "art/originals/affection/manifest.json",
+      "sha256": "901015b4b47356125fd53e909a54ba29c742c9d3f3fba0aa427573699e71f740",
+      "bytes": 1457
+    },
+    {
+      "path": "art/originals/affection/affection-01.cuts.json",
+      "sha256": "6dc8dd66faeff842842fa88899354bd0fe417273b1c7eb4dfa9af016fefaa4b7",
+      "bytes": 1021
+    },
+    {
+      "path": "art/originals/affection/affection-02.cuts.json",
+      "sha256": "ae87b081d29410a05dd4c1c33a7e7fcb062b216b976db9d444f9d279bcc014c4",
+      "bytes": 1021
+    },
+    {
+      "path": "art/originals/affection/affection-03.cuts.json",
+      "sha256": "c339ad61c0f4fe307882a572dd1a399f3e31b35f18a64de69b546148f3d44d28",
+      "bytes": 1021
+    },
+    {
+      "path": "assets/cats/source-rects.json",
+      "sha256": "4ee72e95c2e2da769c7fd0925ca7f7e8bee1a28a80f518de4d589fc1da7ac649",
+      "bytes": 14590
+    },
+    {
+      "path": "assets/cats/affection-source.json",
+      "sha256": "3f136fcd55f8eaf022e9683f27d2f54db5fb6e093d0807f8891f0d1ba30913e9",
+      "bytes": 6724
+    }
+  ]
+}
