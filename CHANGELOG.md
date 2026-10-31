@@ -16,6 +16,8 @@ versions follow [SemVer](https://semver.org/). Maintenance rules:
 
 ## [Unreleased]
 
+## [2.5.0] - 2026-10-31
+
 ### Added
 - **Local affection** — click the cat without dragging for a brief breed-specific
   eye-contact, gesture and contented settle, including while locked or paused.
