@@ -1,349 +1,269 @@
-# 🐱 ClipCat — the desktop cat that eats your clipboard
+# ClipCat
 
-*[한국어는 아래에 ↓](#-clipcat--클립보드를-먹는-데스크탑-고양이)*
+**복사한 내용을 모으고, 곁에서 조용히 반응하는 데스크톱 고양이.**
 
-A clipboard manager with a heartbeat. A small cat sits at the bottom of your
-screen and quietly keeps you company — and **every time you copy
-something, anywhere, it eats a fish badged with the app you copied from** and
-files the clip into its history. Pick a clip to paste it back **with its
-original formatting** (or as plain text). Pin, search, delete — all inside one
-small native binary.
+ClipCat은 고양이 캐릭터와 클립보드 관리자를 하나로 묶은 데스크톱 앱입니다.
+텍스트를 복사하면 고양이가 생선을 받아먹고, 내용은 로컬 히스토리에 저장됩니다.
+필요할 때 검색하거나 태그로 찾아 다시 복사하고 붙여넣으세요.
+고양이를 직접 클릭하면 종류마다 다른 짧은 몸짓으로 반응합니다.
 
-**Windows · macOS · Linux** — fully transparent click-through native build on
-Windows; a portable build sharing the same core on macOS/Linux.
+[다운로드](https://github.com/buildon99x/copy-pet/releases/latest) ·
+[개발 빌드](https://github.com/buildon99x/copy-pet/actions/workflows/ci.yml) ·
+[변경 이력](CHANGELOG.md) · [English](#english)
 
-![ClipCat](assets/screenshot.png)
+> 이 README는 현재 개발 브랜치 `feat/cat-breeds-motion`을 기준으로 합니다. 공개 릴리스에는
+> 아직 포함되지 않은 변경이 있을 수 있습니다. 차이는 [Unreleased](CHANGELOG.md#unreleased)를 확인하세요.
 
-[Original artwork & generation prompts / 원화·프롬프트 보관소](art/README.md)
+## 만나볼 고양이
 
-## Features
+| 랙돌 · Ragdoll | 샴 · Siamese | 봄베이 · Bombay | 먼치킨 · Munchkin |
+| :---: | :---: | :---: | :---: |
+| <img src="docs/images/cats/ragdoll.png" alt="실제 ClipCat 앱의 랙돌 고양이" width="180"> | <img src="docs/images/cats/siamese.png" alt="실제 ClipCat 앱의 샴 고양이" width="180"> | <img src="docs/images/cats/bombay.png" alt="실제 ClipCat 앱의 봄베이 고양이" width="180"> | <img src="docs/images/cats/munchkin.png" alt="실제 ClipCat 앱의 먼치킨 고양이" width="180"> |
+| 푸른 눈과 풍성한 털 | 큰 귀와 날씬한 체형 | 검은 털과 구릿빛 눈 | 짧은 다리와 주황 줄무늬 |
 
-- **Twelve cat companions** — choose a breed with its own silhouette, copy
-  reaction, expression and sleeping pose. Every cat is available from the start;
-  changing cats keeps your history and projects. Open the cat
-  gallery from the settings menu (`A` on portable), preview, then apply.
-  [Characters, quiet behavior and performance](docs/specs/cat-companions.md).
+위 이미지는 **최신 앱을 Linux에서 실제 실행해 캡처한 화면**입니다.
+Linux는 배경 카드가 표시되며, Windows 네이티브와 macOS는 투명 배경을 사용합니다.
+[촬영 정보](docs/images/README.md)를 함께 보관합니다.
 
-- **Tags** — use a clip's **... → #** action or `Ctrl/Cmd+T` to edit tags;
-  search text, apps, or partial tags with ordinary words, or use `#tag` for an
-  exact tag match. Combine tags with `#work #reference` (both required) and
-  text with `#work report`. Searches ignore case. Tags are saved with the clip.
-- **Image history (Windows native)** — copied screenshots and images appear
-  with thumbnails and can be copied/pasted back. Images support tags and pins.
-  See [usage and limits](docs/specs/clipboard-tags-images.md).
+처음부터 **12종을 자유롭게 선택**할 수 있습니다. 랙돌, 버만, 샴, 봄베이,
+라가머핀, 페르시안, 터키시 앙고라, 아메리칸 컬, 먼치킨,
+브리티시 쇼트헤어, 러시안 블루, 턱시도 무늬 고양이를 제공합니다.
+턱시도는 품종이 아닌 털 무늬입니다.
 
-- **Clipboard history** — every text copy is captured system-wide and stored
-  locally (up to 100 clips + pinned clips that never expire). Rich text keeps
-  its original formatting (bold, colors, links) on Windows and macOS.
-- **The fish** 🐟 — each copy sends a fish flying into the cat's mouth, tinted
-  and badged with the source app (its real icon on Windows, an initial
-  elsewhere). Clips save immediately while decorative reactions stay bounded.
-- **Panel** — `Win+Shift+V` on Windows (configurable; auto-falls back to
-  `Ctrl+Shift+V` if taken), `Control+Shift+V` on macOS, `Super+Shift+V` on
-  Linux — or middle-click / the tray / `C`. The hotkey pops the list up **at
-  your text caret** in the app you're typing in (Win+V parity); middle-click
-  shows it by the cat. Type to search (Korean included), pick a clip to paste
-  it back, ★ to pin, **...** for per-clip actions, 🗑 to clear, ⏸ to pause
-  capture (privacy pause). Clips show as roomy **cards** by default; toggle the
-  compact **list** view from the header (your choice is remembered).
-- **Paste as text** — each row's **...** menu (or selecting the row and pressing
-  **→**) reveals **Paste as text** and **Delete**; "Paste as text" strips the
-  formatting and pastes the clean text. `Ctrl/Cmd+Enter` does the same for the
-  selected clip.
-- **Auto-paste on select** (off by default) — turn on "Paste on select" and
-  picking a clip pastes it straight into the app you were just in, instead of
-  only copying it (Windows returns focus and sends Ctrl+V; macOS/Linux are
-  best-effort).
-- **Filter by app** — the funnel button (or `Tab`) cycles through the apps
-  you copied from; the active app shows as a chip in the search box and
-  combines with the (multi-word, relevance-ranked) text search.
-- **Arrange the panel your way** — drag its header to move it (the cat
-  stays put), drag the bottom-right grip to resize it; both persist.
-  **Ctrl+0–9** instantly copies one of the badged top ten rows, and
-  "Close panel after copy" can be switched off to grab several clips.
-- **Window modes** — **Always on top** (default), **Normal** (the pet can sit
-  behind other windows) or **Hide** (it returns from the tray icon or the
-  clipboard hotkey).
-- **Stay up to date** — once a day ClipCat checks GitHub for a newer release
-  and toasts when one exists. On Windows pick "Update to vX.Y.Z and restart";
-  on macOS/Linux press `U` to open the download page. On by default, switchable
-  off ("Check for updates automatically" / `auto_update`); it sends nothing but
-  the request.
-- **English + Korean** — full UI in both, switchable at runtime. All text
-  renders in your **system font** (Segoe UI / Malgun Gothic on Windows —
-  read from the OS, never bundled).
-- **Local affection** — click and release on the cat's silhouette without dragging
-  for a quiet breed-specific response (0.6–1.2 seconds), even while position-locked
-  or collection is paused. Typing, other apps' mouse activity and hovering stay quiet.
-  The cat sleeps after75 seconds without a copy or intentional affection.
-- **Unobtrusive & light** — always-on-top without stealing focus, transparent
-  pixels click through (Windows), single exe, no installer, bounded cached art.
+메뉴의 **고양이 선택**에서 미리 보고 **함께하기**를 누르세요.
+macOS·Linux에서는 고양이 창에 포커스를 준 뒤 `A`로도 열 수 있습니다.
+외형뿐 아니라 복사 반응·쓰다듬기·표정·수면 자세가 다르며,
+종류를 바꾸어도 클립보드 기록과 태그는 유지됩니다.
+[고양이별 특징](docs/specs/cat-companions.md)
 
-## Controls
+## 시작하기
 
-| Gesture | Effect |
-|---------|--------|
-| Copy anywhere (Ctrl+C) | Cat eats a fish; clip saved to history (formatting kept) |
-| `Win+Shift+V` (`Control+Shift+V` on macOS) | Open the panel at your text caret |
-| Middle-click | Open the panel by the cat |
-| Pick a clip (click / Enter) | Paste it back (keeps formatting; or auto-paste if enabled) |
-| `Ctrl/Cmd+Enter` (panel open) | Paste the selected clip as plain text |
-| `Ctrl/Cmd+0`–`9` (panel open) | Quick-copy the row with that digit badge |
-| ★ on a row / `Ctrl/Cmd+P` | Pin / unpin the clip |
-| Row **...** menu (or `→`/`←`) | Reveal/hide **Paste as text** + **Delete** |
-| `Del` / `Ctrl+Z` (panel open) | Delete the selected clip / undo a delete |
-| Funnel button / `Tab` (panel open) | Cycle the source-app filter |
-| Type while panel is open | Search (arrows, Home/End, Enter; Esc clears query → filter → closes) |
-| Drag the panel header / corner grip | Move / resize the panel (cat stays put) |
-| Drag | Move the pet (unless position-locked) |
-| Cat gallery / `A` (portable) | Preview and choose a cat |
-| Click the cat without dragging | Brief affectionate gesture; wakes the cat |
-| Right-click (Windows tray / macOS) | Settings menu (see below) |
-| Tray icon click (Windows) | Hide/show the cat |
+### Windows
 
-The settings menu (Windows tray, macOS right-click) holds: clipboard panel,
-pause capture, close-after-copy, paste-on-select, panel hotkey (cycles through
-safe presets), cat gallery, Size / Sound / Window submenus, lock
-position, language, run at login, automatic updates, About,
-GitHub, quit.
+[Releases](https://github.com/buildon99x/copy-pet/releases/latest)에서
+`clipcat-windows-x86_64.exe`를 받아 실행합니다. 별도 설치 과정은 없습니다.
+트레이 아이콘에서 설정과 종료 메뉴를 사용할 수 있습니다.
 
-### Portable build (macOS / Linux) keyboard shortcuts
+### macOS
 
-Global (works everywhere): `Control+Shift+V` (macOS) / `Super+Shift+V` (Linux)
-opens the clipboard panel. With the window focused (and the panel closed):
-`C` clipboard panel · `V` list/card view · `O` close-after-copy · `K` panel
-hotkey preset · `S` size · `A` cat gallery · `M` sound ·
-`L` lock · `G` language · `U` update page (when one is found) · `Q`/`Esc` quit.
-(macOS also has the full right-click menu.)
+최신 개발 버전을 직접 테스트하려면
+[CI 실행 목록](https://github.com/buildon99x/copy-pet/actions/workflows/ci.yml)에서
+사용할 브랜치의 **macOS 빌드가 성공한 실행**을 선택하세요.
 
-## Platform differences
+1. **Artifacts → `clipcat-macos-universal-test`**를 다운로드합니다.
+2. 내려받은 ZIP과 그 안의 `ClipCat-macos-universal-test.zip`을 차례로 풉니다.
+3. 실행 중인 ClipCat을 종료한 뒤 `ClipCat.app`을 엽니다.
 
-| | Windows (native) | macOS / Linux (portable) |
-|---|---|---|
-| Window | fully transparent, click-through | transparent CALayer (macOS) · opaque softbuffer card (Linux) |
-| Clipboard watch | `WM_CLIPBOARDUPDATE` listener | `arboard` polling (~0.4 s) |
-| Fish badge | real app icon | colored initial |
-| Paste-back format | rich formats kept | kept on macOS · plain text on Linux |
-| Panel hotkey | global `Win+Shift+V`, opens at caret (configurable, `Ctrl+Shift+V` fallback) | registered `Control+Shift+V` / `Super+Shift+V`; caret flyout on macOS, embedded panel on Linux |
-| Settings UI | tray menu | right-click NSMenu (macOS) · keyboard shortcuts (Linux) |
-| Sound | winmm synth | silent |
-| Shortcuts | OS `RegisterHotKey` | Carbon registered hotkey (macOS) · X11 `XGrabKey` (Linux); Wayland reports unavailable |
+Apple Silicon·Intel을 모두 지원하는 macOS 11 이상용 테스트 앱입니다.
+GitHub 로그인이 필요할 수 있으며 아티팩트 보관 기간은 30일입니다.
+빌드가 생략된 실행에는 패키지가 없으므로 macOS 빌드가 포함된 이전 성공 실행을 선택하세요.
+패키지의 `build-info.json`에서 소스 커밋을 확인할 수 있습니다.
 
-Design history lives in [`.context/kb/adr/`](.context/kb/adr/), the spec in
-[`docs/specs/clipcat-spec.md`](docs/specs/clipcat-spec.md).
+테스트 앱은 ad-hoc 서명이며 Apple 공증을 받지 않았습니다.
+첫 실행이 차단되면 시스템 설정 → 개인정보 보호 및 보안에서 해당 앱의 열기를 허용하세요.
+기존 ClipCat과 같은 로컬 기록·설정을 사용합니다.
 
-## Build
+### 첫 사용
 
-```bash
-# default backend (Windows=native, macOS/Linux=portable)
-cargo build --release          # binary: target/release/clipcat[.exe]
+1. 다른 앱에서 텍스트를 복사합니다. 고양이가 반응하고 기록이 저장됩니다.
+2. 아래 OS별 단축키 또는 고양이 **가운데 클릭(휠클릭)**으로 클립보드를 엽니다.
+3. 검색어를 입력하고 원하는 항목을 선택합니다.
 
-# test the portable backend on Windows
-cargo build --release --features portable
+| OS | 기본 전역 단축키 | 열리는 위치 |
+| --- | --- | --- |
+| Windows 네이티브 | `Win+Shift+V` | 입력 커서 부근의 별도 창. 등록 충돌 시 `Ctrl+Shift+V`로 대체 |
+| macOS | **`Control+Shift+V`** | 입력 커서 부근의 별도 창. 위치를 얻지 못하면 마우스 커서 부근 |
+| Linux X11 | `Super+Shift+V` | 고양이 창의 내장 패널 |
 
-# regenerate the icon / preview frames after art changes
-cargo run --bin gen_icon
-cargo run --release --example preview
-```
+macOS 기본 단축키는 **Command가 아닌 Control**입니다.
+메뉴에서 준비된 단축키 조합을 순환해 변경할 수 있습니다.
+Linux Wayland에서는 전역 단축키를 등록하지 못할 수 있으며,
+가운데 클릭이나 고양이 창에 포커스를 준 뒤 `C`를 사용하세요.
 
-Requires Rust (MSVC toolchain on Windows). Linux needs system libraries for
-the portable stack — on Debian/Ubuntu: `apt-get install libx11-dev libxi-dev
-libxtst-dev libxkbcommon-dev libxkbcommon-x11-dev pkg-config`. CI builds
-Windows and macOS.
+**선택 동작은 여는 방법에 따라 다릅니다.** Windows 네이티브·macOS의 전역
+단축키 창에서는 항목 선택 시 원래 앱으로 붙여넣습니다.
+가운데 클릭으로 연 내장 패널은 기본적으로 클립보드에 **다시 복사**합니다.
+내장 패널에서도 바로 붙여넣으려면 **선택 시 붙여넣기**를 켜세요.
+자동 붙여넣기는 대상 앱과 OS 권한에 따라 제한될 수 있습니다.
 
-## Data & privacy
+## 클립보드 사용법
 
-Everything stays on your machine. ClipCat makes **no network connection except
-one**: a once-a-day update check to github.com releases (ADR-0009), which sends
-nothing beyond the request and can be turned off ("Check for updates
-automatically" / `auto_update` in `state.json`). There is no other network code.
+<img src="docs/images/clipboard-ko.png" alt="AI 작업대 링크가 제거된 최신 ClipCat 클립보드 패널과 랙돌 실제 실행 화면" width="360">
 
-- No broad keyboard/mouse hooks, event taps, activity statistics, XP or levels.
-  Shortcuts use OS registration; no Input Monitoring permission is requested.
-  Optional automatic paste may need output permission on macOS. On shortcut
-  registration failure a visible explanation preserves middle-click/menu access.
-  The old macOS default migrates once to Control+Shift+V; other custom chords stay.
-- Clipboard history is stored locally in `clips.json`; capture can be paused
-  any time (⏸ in the panel / tray menu), clips > 256 KB are ignored, and
-  settings live in `state.json` next to it:
-  Windows `%APPDATA%\ClipCat`, macOS `~/Library/Application Support/ClipCat`,
-  Linux `$XDG_CONFIG_HOME/ClipCat`. A pre-2.0 `DeskCat` config dir is
-  migrated automatically.
+*Linux 실제 실행 화면. 위 목록은 설명용 합성 데이터입니다.*
 
-## Tech notes
+- **기록과 고정** — 최근 일반 항목 100개와 고정 항목 최대 100개를 로컬에 보관합니다.
+  별표로 고정하고, 필요 없는 항목은 삭제하거나 삭제를 취소할 수 있습니다.
+- **텍스트와 앱 검색** — 내용·출처 앱·태그를 검색합니다. 깔때기 버튼으로
+  출처 앱 필터를 함께 적용할 수 있습니다.
+- **태그** — 항목의 `… → #` 또는 `Ctrl/Cmd+T`로 편집합니다.
+  공백이나 쉼표로 구분해 입력하고 `Enter`로 저장합니다. 항목당 최대 8개, 태그당 최대 24자입니다.
+- **서식 유지와 일반 텍스트** — Windows·macOS에서는 HTML/RTF 서식을 보존합니다.
+  서식을 빼려면 항목의 텍스트 붙여넣기 동작 또는 `Ctrl/Cmd+Enter`를 사용하세요.
+- **이미지 기록** — **Windows 네이티브 전용**입니다. 복사한 PNG·지원 DIB 이미지를
+  썸네일로 보고 다시 복사·붙여넣기합니다. 이미지에도 고정·태그를 적용할 수 있습니다.
+  파일 탐색기의 파일 복사나 OCR은 지원하지 않습니다.
+- **보기와 크기** — 카드/목록 보기를 전환하고 패널 헤더를 드래그해 이동하거나
+  오른쪽 아래 모서리로 크기를 조절합니다. 설정은 다음 실행에도 유지됩니다.
+- **수집 일시정지** — 패널의 일시정지 버튼이나 설정 메뉴에서 수집을 멈춥니다.
 
-- No GUI framework — [tiny-skia](https://github.com/linebender/tiny-skia)
-  cached illustrated pet frames, vector UI and direct OS APIs per backend.
-- One platform-agnostic core (`pet`, `clipboard`, `panel`, `render`, `state`,
-  `i18n`, `menu`, `update`) + two backends: native Win32 (layered window, tray,
-  clipboard listener, caret-anchored flyout) and portable (`winit` +
-  `softbuffer` + OS 단축키 등록 + `arboard`; `rdev`는 선택적 붙여넣기 출력 전용).
-- Icon and sounds are generated from code — no bundled assets, single
-  binary. All text renders in the OS's own fonts (loaded at runtime via
-  `ab_glyph`, ADR-0007/0011).
-- User-facing changes are tracked in [CHANGELOG.md](CHANGELOG.md); releases
-  are cut with `scripts/release.sh`.
+| 검색 예시 | 결과 |
+| --- | --- |
+| `보고서` | 내용·앱 이름·태그에 해당 단어가 포함된 항목 |
+| `#업무` | `업무` 태그가 정확히 일치하는 항목 |
+| `#업무 #참고` | 두 태그를 모두 가진 항목 |
+| `#업무 보고서` | `업무` 태그와 검색어 `보고서`가 모두 일치하는 항목 |
 
----
+영문 대소문자는 구분하지 않습니다. 일반 검색은 태그 일부에도 일치하지만,
+`#tag`는 태그 전체가 일치해야 합니다.
+[태그·이미지 지원 형식과 저장 한도](docs/specs/clipboard-tags-images.md)
 
-# 🐱 ClipCat — 클립보드를 먹는 데스크탑 고양이
+### 자주 쓰는 조작
 
-살아있는 클립보드 매니저. 화면 아래의 느긋한 랙돌이 작업을 지켜보다가 —
-**어디서든 복사(Ctrl+C)할 때마다 복사한 앱의 뱃지가 붙은 생선을 냠**
-하고 먹으며 클립을 히스토리에 저장합니다. 클립을 고르면 **원래 서식 그대로**
-(또는 일반 텍스트로) 다시 붙여넣어지고, 고정·검색·삭제까지 — 전부 하나의
-네이티브 바이너리로.
+아래 `Ctrl/Cmd`는 Windows·Linux에서는 Ctrl, macOS에서는 Command입니다.
+전역 패널 단축키의 macOS **Control**과 구분하세요.
 
-## 특징
+| 조작 | 동작 |
+| --- | --- |
+| 고양이 몸을 누르고 드래그 없이 놓기 | 종류별 짧은 교감 모션과 기상 |
+| 고양이 드래그 | 위치 이동. 위치 잠금 중에는 이동하지 않음 |
+| 가운데 클릭 | 내장 클립보드 패널 열기/닫기 |
+| 패널에서 타이핑 / 방향키 / `Enter` | 검색 / 항목 이동 / 선택 |
+| `Esc` | 검색어·필터를 해제한 뒤 패널 닫기 |
+| `Ctrl/Cmd+T` | 선택한 항목의 태그 편집 |
+| `Ctrl/Cmd+P` | 고정/해제 |
+| `Ctrl/Cmd+0`–`9` | 숫자 배지가 붙은 행 바로 선택 |
+| `Ctrl/Cmd+Enter` | 선택한 텍스트를 서식 없이 붙여넣기 |
+| `Delete` / `Ctrl/Cmd+Z` | 선택 항목 삭제 / 삭제 취소 |
+| `Tab` | 출처 앱 필터 순환 |
 
-- **12종의 고양이 동료** — 종류마다 체형·자세·복사 반응·표정·수면 모습이
-  다릅니다. 처음부터 모두 자유롭게 선택하고 기록·프로젝트는 함께
-  유지합니다. 메뉴의 고양이 선택(portable: `A`)에서 미리 본 뒤 함께하기를 누르세요.
-  [종류별 특징과 조용한 동작](docs/specs/cat-companions.md).
+Windows는 트레이 메뉴, macOS는 고양이 우클릭 메뉴에서 설정합니다.
+크기·위치 잠금·항상 위/일반/숨김 창 모드·자동 실행·자동 업데이트 등을 바꿀 수 있습니다.
+macOS·Linux에서 **패널이 닫히고 고양이 창에 포커스가 있을 때**는
+`C` 패널 · `A` 고양이 선택 · `S` 크기 · `L` 위치 잠금 · `G` 언어 ·
+`K` 전역 단축키 변경 · `V` 카드/목록 · `O` 복사 후 닫기 · `Q` 종료를 사용할 수 있습니다.
 
-- **태그** — 클립의 **... → #** 또는 `Ctrl/Cmd+T`로 태그를 편집하고
-  일반 검색어로 내용·앱·태그 일부를 찾거나 `#태그`로 정확히 일치하는 태그를
-  검색합니다. `#업무 #참고`는 두 태그 모두, `#업무 보고서`는 태그와 검색어
-  모두를 요구하며 대소문자를 구분하지 않습니다. 태그는 클립과 함께 저장됩니다.
-- **이미지 히스토리 (Windows 네이티브)** — 복사한 스크린샷·이미지를 썸네일로
-  확인하고 다시 복사·붙여넣기합니다. 이미지에도 태그와 고정을 적용할 수 있습니다.
-  [사용 방법과 제한](docs/specs/clipboard-tags-images.md)을 참고하세요.
+## 조용한 동료와 개인정보
 
-- **클립보드 히스토리** — 시스템 전역의 텍스트 복사를 감지해 로컬에 저장
-  (히스토리 100개 + 만료되지 않는 고정 클립). Windows·macOS에서는 리치
-  텍스트의 서식(굵게·색·링크)이 그대로 보존됩니다.
-- **생선** 🐟 — 복사할 때마다 출처 앱의 아이콘(Windows) 또는 이니셜 뱃지가
-  붙은 생선이 고양이 입으로 날아갑니다. 클립은 연출 대기와 관계없이 즉시 저장합니다.
-- **패널** — `Win+Shift+V`(Windows 기본, 변경 가능 — 다른 앱이 선점하면
-  `Ctrl+Shift+V`로 자동 대체), macOS `Control+Shift+V`, Linux `Super+Shift+V`,
-  또는 휠클릭·트레이 메뉴·`C` 키로 열기. 핫키를 누르면 **입력 중인 텍스트
-  커서 위치**에 목록이 뜨고(Win+V와 동일), 휠클릭은 고양이 옆에 띄웁니다.
-  타이핑으로 검색(한글 지원), 클릭으로 재붙여넣기, ★ 고정, **...** 행별
-  동작, 🗑 비우기, ⏸ 수집 일시정지(프라이버시 모드). 클립은 기본적으로
-  넉넉한 **카드**로 보이며, 헤더에서 **리스트** 보기로 전환할 수 있습니다
-  (선택은 기억됩니다).
-- **텍스트로 붙여넣기** — 각 행의 **...** 메뉴(또는 행 선택 후 **→**)에서
-  **텍스트로 붙여넣기**·**삭제**가 펼쳐집니다. "텍스트로 붙여넣기"는 서식을
-  벗기고 깔끔한 텍스트만 붙여넣습니다. 선택한 클립에는 `Ctrl/Cmd+Enter`도
-  동일하게 동작합니다.
-- **선택 시 자동 붙여넣기**(기본 꺼짐) — "선택 시 붙여넣기"를 켜면 클립을
-  고를 때 방금 쓰던 앱에 바로 붙여넣어집니다(Windows는 포커스를 되돌려
-  Ctrl+V 전송, macOS·Linux는 최선 노력).
-- **출처 앱 필터** — 깔때기 버튼(또는 `Tab`)으로 복사해 온 앱별로 클립을
-  걸러 봅니다. 활성 필터는 검색창의 칩으로 표시되고, 여러 단어·관련도 순으로
-  정렬되는 텍스트 검색과 함께 적용됩니다.
-- **패널을 내 마음대로** — 헤더를 드래그해 패널만 이동(고양이는 제자리),
-  오른쪽 아래 그립을 드래그해 크기 조절 — 둘 다 기억됩니다. **Ctrl+0~9**로
-  뱃지가 붙은 상위 10개 클립을 즉시 복사하고, "복사 후 패널 자동 닫기"를
-  꺼서 여러 클립을 연달아 가져올 수도 있습니다.
-- **창 모드** — **항상 위**(기본), **일반**(다른 창 뒤에 놓일 수 있음),
-  **숨김**(트레이 아이콘이나 클립보드 핫키로 복귀).
-- **자동 업데이트** — 하루에 한 번 GitHub에서 새 릴리스를 확인하고 있으면
-  토스트로 알립니다. Windows는 "vX.Y.Z로 업데이트 후 재시작", macOS·Linux는
-  `U` 키로 다운로드 페이지를 엽니다. 기본 켜짐이며 끌 수 있고("자동 업데이트
-  확인" / `auto_update`), 요청 외에는 아무것도 전송하지 않습니다.
-- **영어 + 한국어** — 런타임에 전환 가능한 완전한 양국어 UI.
-  모든 텍스트가 **시스템 폰트**(Windows: 맑은 고딕/Segoe UI — OS에서
-  읽어 오며 번들하지 않음)로 렌더링됩니다.
-- **직접 쓰다듬기** — 고양이 몸을 누른 뒤 드래그 없이 놓으면 품종별로
-  짧게 반응합니다. 위치 잠금·수집 일시정지 중에도 동작하며 패널·투명 영역은
-  제외합니다. 다른 앱 입력·호버는 반응이나 기상을 유발하지 않습니다.
-- **프라이버시** — 입력 통계·XP·레벨·활동 시간과 전역 입력 관찰을 제거했습니다.
-  복사나 직접 쓰다듬기 없이75초가 지나면 잠듭니다.
-- **가벼움** — 포커스를 훔치지 않는 항상 위 창, 투명 부분 클릭 통과(Windows),
-  단일 exe, 설치 불필요, 크기가 제한된 캐릭터 이미지 캐시.
+복사하거나 고양이를 직접 쓰다듬을 때 반응합니다. 다른 앱에서 타이핑하거나
+마우스를 클릭·스크롤하거나 고양이 위에 커서를 올리는 것으로는 반응하거나 깨지 않습니다.
+복사나 직접 교감 없이 약 75초가 지나면 잠들며, 잠든 동안에도 클립 수집은 계속됩니다.
+위치 잠금·수집 일시정지 중에도 직접 쓰다듬을 수 있습니다.
+정지된 대기·수면 프레임은 다시 그리지 않으며 상세 이미지 캐시는 선택한 한 마리만 유지합니다.
 
-## 조작법
+- 전역 키·마우스 입력 감시와 입력 횟수 통계를 사용하지 않습니다. XP·레벨·액세서리도 없습니다.
+- 전역 단축키는 OS에 조합을 등록하는 방식이며 **입력 모니터링 권한을 요청하지 않습니다**.
+  macOS에서 커서 위치 조회나 자동 붙여넣기는 접근성 권한에 따라 제한될 수 있습니다.
+- 기록과 태그·설정은 로컬 JSON 파일에 저장합니다. 저장 파일 자체는 암호화하지 않습니다.
+  민감한 내용을 기록하고 싶지 않을 때는 수집 일시정지를 사용하세요.
+- 앱의 네트워크 기능은 **GitHub 릴리스 업데이트 확인·다운로드**뿐입니다.
+  자동 확인은 기본으로 켜져 있으며 설정에서 끌 수 있습니다. 클립 내용은 전송하지 않습니다.
+- AI 작업대 메뉴·하단 링크·`Ctrl/Cmd+B`는 제거했습니다.
+  기존 `requests.json` 프로젝트 파일은 보존합니다.
 
-| 동작 | 효과 |
-|------|------|
-| 어디서든 복사 (Ctrl+C) | 고양이가 생선을 먹고 클립 저장 (서식 유지) |
-| `Win+Shift+V` (macOS `Control+Shift+V`) | 텍스트 커서 위치에 패널 열기 |
-| 휠클릭 | 고양이 옆에 패널 열기 |
-| 클립 선택 (클릭 / Enter) | 재붙여넣기 (서식 유지, 자동 붙여넣기 켜면 바로 붙여넣기) |
-| `Ctrl/Cmd+Enter` (패널 열림) | 선택한 클립을 일반 텍스트로 붙여넣기 |
-| `Ctrl/Cmd+0`~`9` (패널 열림) | 해당 숫자 뱃지 행을 바로 복사 |
-| 행의 ★ / `Ctrl/Cmd+P` | 고정 / 고정 해제 |
-| 행의 **...** 메뉴 (또는 `→`/`←`) | **텍스트로 붙여넣기** + **삭제** 펼치기/접기 |
-| `Del` / `Ctrl+Z` (패널 열림) | 선택 클립 삭제 / 삭제 취소 |
-| 깔때기 버튼 / `Tab` (패널 열림) | 출처 앱 필터 순환 |
-| 패널 열고 타이핑 | 검색 (방향키·Home/End·Enter, Esc는 검색어 → 필터 → 닫기 순) |
-| 패널 헤더 / 모서리 그립 드래그 | 패널만 이동 / 크기 조절 (고양이는 제자리) |
-| 드래그 | 위치 이동 (잠금 시 제외) |
-| 고양이 선택 / `A` (portable) | 고양이별 미리보기와 선택 |
-| 고양이 몸을 클릭 (드래그 없이) | 짧은 교감과 기상 |
-| 우클릭 (Windows 트레이 / macOS) | 설정 메뉴 (아래 참조) |
-| 트레이 아이콘 클릭 (Windows) | 고양이 숨기기/보이기 |
+| OS | 데이터 폴더 |
+| --- | --- |
+| Windows | `%APPDATA%\ClipCat` |
+| macOS | `~/Library/Application Support/ClipCat` |
+| Linux | `$XDG_CONFIG_HOME/ClipCat` 또는 `~/.config/ClipCat` |
 
-설정 메뉴(Windows 트레이, macOS 우클릭)에는 다음이 들어 있습니다: 클립보드
-패널, 수집 일시정지, 복사 후 자동 닫기, 선택 시 붙여넣기, 패널 핫키(안전한
-프리셋 순환), 고양이 선택, 크기 / 소리 / 창 모드 하위 메뉴, 위치
-잠금, 언어, 자동 실행, 자동 업데이트, 정보, GitHub, 종료.
+`clips.json`은 기록·태그·이미지, `state.json`은 설정입니다.
+텍스트 항목은 256 KiB까지 저장하며 고정되지 않은 오래된 항목은 개수 한도에 따라 정리됩니다.
 
-### portable 빌드 (macOS / Linux) 단축키
+## OS별 지원 범위
 
-전역(어디서나): macOS `Control+Shift+V` / Linux `Super+Shift+V`로 패널 열기.
-창에 포커스를 준 뒤 (패널이 닫힌 상태에서):
-`C` 클립보드 패널 · `V` 리스트/카드 보기 · `O` 복사 후 자동 닫기 ·
-`K` 패널 핫키 프리셋 · `S` 크기 · `A` 고양이 선택 · `M` 소리 ·
-`L` 위치 잠금 · `G` 언어 · `U` 업데이트 페이지(새 버전이 있을 때) ·
-`Q`/`Esc` 종료. (macOS는 우클릭 메뉴도 제공합니다.)
+| 기능 | Windows 네이티브 | macOS | Linux |
+| --- | --- | --- | --- |
+| 고양이 12종·교감·태그·검색 | 지원 | 지원 | 지원 |
+| 배경 | 투명, 투명 영역 클릭 통과 | 투명 | 불투명 카드 |
+| 텍스트 기록 | 지원 | 지원 | 지원 |
+| HTML/RTF 보존 | 지원 | 지원 | 일반 텍스트 |
+| 이미지 기록·재복사 | 지원 | 미지원 | 미지원 |
+| 단축키 창 | 별도 플라이아웃 | 별도 플라이아웃 | 내장 패널, X11 전역 단축키 |
+| 설정 | 트레이 메뉴 | 우클릭 메뉴·로컬 단축키 | 로컬 단축키 |
+| 이벤트 소리 | 지원, 끌 수 있음 | 무음 | 무음 |
 
-## 플랫폼 차이
+Windows의 `--features portable` 빌드는 macOS·Linux와 같은 portable 백엔드를 사용하므로
+Windows 네이티브 이미지 기록 기능을 제공하지 않습니다.
+macOS는 Retina 배율에 맞춰 논리 크기와 시스템 글꼴을 렌더링합니다.
+UI 언어는 한국어·영어를 전환할 수 있습니다.
 
-| | Windows (네이티브) | macOS / Linux (portable) |
-|---|---|---|
-| 창 | 완전 투명, 클릭 통과 | macOS CALayer 투명 · Linux softbuffer 불투명 카드 |
-| 클립보드 감지 | `WM_CLIPBOARDUPDATE` 리스너 | `arboard` 폴링 (~0.4초) |
-| 생선 뱃지 | 실제 앱 아이콘 | 색상 이니셜 |
-| 재붙여넣기 서식 | 서식 유지 | macOS 유지 · Linux 일반 텍스트 |
-| 패널 핫키 | 전역 `Win+Shift+V`, 커서 위치에 열림 (변경 가능, `Ctrl+Shift+V` 대체) | OS 등록 `Control+Shift+V` / `Super+Shift+V`; macOS는 커서 플라이아웃, Linux는 내장 패널 |
-| 설정 UI | 트레이 메뉴 | 우클릭 NSMenu (macOS) · 키보드 단축키 (Linux) |
-| 소리 | winmm 합성 | 무음 |
-| 단축키 | OS `RegisterHotKey` | macOS Carbon 등록 · Linux X11 `XGrabKey`; Wayland 등록 불가 안내 |
+## 소스에서 빌드
 
-설계 기록은 [`.context/kb/adr/`](.context/kb/adr/)에, 스펙은
-[`docs/specs/clipcat-spec.md`](docs/specs/clipcat-spec.md)에 있습니다.
-
-## 데이터 & 프라이버시
-
-모든 데이터는 이 PC에만 저장됩니다. ClipCat은 **단 하나의 예외만 제외하면
-네트워크 연결을 하지 않습니다**: 하루 한 번 github.com 릴리스로 보내는 업데이트
-확인(ADR-0009)으로, 요청 외에는 아무것도 전송하지 않으며 끌 수 있습니다("자동
-업데이트 확인" / `state.json`의 `auto_update`). 그 외 네트워크 코드는 없습니다.
-
-- 전역 입력 훅·이벤트 탭·통계 카운터를 사용하지 않습니다. 단축키는 OS 등록으로
-  처리하며 입력 모니터링 권한이 필요하지 않습니다. macOS 자동 붙여넣기 출력은
-  별도 권한이 필요할 수 있습니다. 등록 실패 시 안내와 대체 조작을 제공합니다.
-  이전 macOS 기본값만 한 번 이관하고 사용자 지정 조합은 유지합니다.
-- 클립 히스토리는 로컬 `clips.json`에 저장되며 언제든 수집을 일시정지할 수
-  있습니다 (패널 ⏸ / 트레이 메뉴). 256KB 초과 텍스트는 무시됩니다.
-  저장 위치: Windows `%APPDATA%\ClipCat`, macOS
-  `~/Library/Application Support/ClipCat`, Linux `$XDG_CONFIG_HOME/ClipCat`.
-  기존 DeskCat(1.x) 설정은 자동 마이그레이션됩니다.
-
-## 기술 노트
-
-- GUI 프레임워크 없음 — [tiny-skia](https://github.com/linebender/tiny-skia)
-  캐시한 캐릭터 이미지·벡터 UI + 백엔드별 직접 OS API.
-- 하나의 플랫폼 독립 코어 (`pet`, `clipboard`, `panel`, `render`, `state`,
-  `i18n`, `menu`, `update`) + 두 백엔드: 네이티브 Win32(레이어드 창, 트레이,
-  클립보드 리스너, 커서 플라이아웃)와 portable(`winit` + `softbuffer` +
-  OS 단축키 등록 + `arboard`; `rdev`는 선택적 붙여넣기 출력 전용).
-- 아이콘과 소리는 코드로 생성 — 번들 에셋 없는 단일 바이너리. 모든 텍스트는
-  OS의 폰트를 런타임에 읽어 렌더링합니다 (`ab_glyph`, ADR-0007/0011).
-- 사용자 대상 변경은 [CHANGELOG.md](CHANGELOG.md)에 기록되며, 릴리스는
-  `scripts/release.sh`로 생성합니다.
-
-## 빌드
+Rust stable이 필요하며 Windows는 MSVC 도구 체인을 사용합니다.
+Linux는 아래 시스템 라이브러리를 먼저 설치하세요.
 
 ```bash
-cargo build --release                       # 실행 파일: target/release/clipcat[.exe]
-cargo build --release --features portable   # Windows에서 portable 백엔드 테스트
-cargo run --bin gen_icon                    # 아트 변경 후 아이콘 재생성
-cargo run --release --example preview       # 렌더링 프리뷰 PNG 생성
+# Debian / Ubuntu
+sudo apt-get install libx11-dev libxi-dev libxtst-dev libxkbcommon-dev libxkbcommon-x11-dev pkg-config
 ```
 
-요구 사항: Rust (Windows는 MSVC). Linux는 portable 스택용 시스템 라이브러리가
-필요합니다 — Debian/Ubuntu: `apt-get install libx11-dev libxi-dev libxtst-dev
-libxkbcommon-dev libxkbcommon-x11-dev pkg-config`.
+```bash
+git clone --branch feat/cat-breeds-motion https://github.com/buildon99x/copy-pet.git
+cd copy-pet
+cargo build --locked --release
+cargo run --locked --release --bin clipcat
+```
+
+실행 파일은 `target/release/clipcat` 또는 `target/release/clipcat.exe`입니다.
+Windows에서 portable 백엔드를 확인하려면 `cargo build --locked --release --features portable`을 사용합니다.
+
+```bash
+cargo test --locked --release
+cargo clippy --locked --release
+bash scripts/release.sh verify
+```
+
+Rust 공통 코어와 Win32 / winit·softbuffer 백엔드를 사용합니다.
+캐릭터 아틀라스는 바이너리에 포함하며 UI 글꼴은 OS에서 읽습니다.
+
+- [제품 동작 명세](docs/specs/clipcat-spec.md)
+- [캐릭터와 모션](docs/specs/cat-companions.md)
+- [원화·생성 프롬프트 보관소](art/README.md)
+- [설계 결정](.context/kb/adr/README.md) · [기여 작업 가이드](AGENTS.md)
+
+## English
+
+**A quiet desktop cat that keeps your clipboard close.** Copy text to feed your
+cat and save it locally. Search history, pin useful clips, add tags and copy them
+back. Pick from twelve companions, with distinct illustrations, copy reactions,
+affection gestures and sleeping poses. The four images above are unmodified
+screenshots of the current Linux app, not concept art.
+
+This README describes the current development source. Published releases may
+lag behind it; see [Unreleased](CHANGELOG.md#unreleased).
+
+- **Get it:** [Releases](https://github.com/buildon99x/copy-pet/releases/latest)
+  for published binaries. Universal macOS test apps are available from successful
+  macOS runs in [CI](https://github.com/buildon99x/copy-pet/actions/workflows/ci.yml):
+  download `clipcat-macos-universal-test`, unpack both ZIP layers, quit an existing
+  copy and open `ClipCat.app`. Supports Apple Silicon and Intel, macOS 11+.
+  Artifacts expire after 30 days and may require GitHub sign-in. Test apps are
+  ad-hoc signed, not notarized; if blocked, allow this app in Privacy & Security.
+- **Open history:** `Win+Shift+V` on Windows, **`Control+Shift+V` on macOS**, or
+  `Super+Shift+V` on Linux X11. Middle-click opens the embedded panel. On portable,
+  focus the cat and press `C`; `A` opens the cat gallery.
+- **Copy vs paste:** selecting a clip in the Windows native/macOS hotkey flyout
+  pastes into the previous app. The embedded panel copies by default; enable
+  **Paste on select** for automatic paste there. Target apps and OS permissions
+  can limit paste simulation.
+- **Tags:** use `… → #` or `Ctrl/Cmd+T`, then Enter to save. Search `#work` for
+  an exact tag, `#work #reference` for both, or `#work report` for tag plus text.
+  Plain words also match partial tags; searches ignore case.
+- **Formats:** Windows native/macOS preserve HTML/RTF; Linux uses plain text.
+  `Ctrl/Cmd+Enter` pastes text without formatting. Image capture and copy-back
+  are **Windows native only**. See [format limits](docs/specs/clipboard-tags-images.md).
+- **Quiet by design:** click and release on the cat without dragging for a brief
+  response. Typing, unrelated mouse activity and hovering stay quiet. No activity
+  counters, XP, levels or global input listeners. Hotkeys use OS registration;
+  macOS does not request Input Monitoring. Accessibility permissions can affect
+  caret positioning and automatic paste.
+- **Local data:** JSON settings/history remain on your machine, unencrypted.
+  Pause capture whenever needed. The only in-app network feature is GitHub
+  release checking/downloading; automatic checks can be disabled. No clip content
+  is uploaded. AI workbench entry points were removed; existing drafts are retained.
+- **Build:** `cargo build --locked --release`; Linux needs the X11 development
+  packages listed above. Tests: `cargo test --locked --release`.
+
+Tuxedo is a coat pattern rather than a breed. Character personalities describe
+these fictional companions, not every real cat of a breed.
