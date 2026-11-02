@@ -349,7 +349,9 @@ fn install_macos_app(app: &std::path::Path, exe: &std::path::Path, version: &str
         .arg(app.join("Contents/Info.plist")).output().ok()?;
     (info.status.success() && String::from_utf8_lossy(&info.stdout).trim() == version).then_some(())?;
     let arch = if cfg!(target_arch = "aarch64") { "arm64" } else { "x86_64" };
-    command("/usr/bin/lipo").args(["-verify_arch", arch]).arg(&binary)
+    // Apple lipo consumes every argument after -verify_arch as a CPU name.
+    // Put the input first (also accepted by LLVM lipo).
+    command("/usr/bin/lipo").arg(&binary).args(["-verify_arch", arch])
         .status().ok()?.success().then_some(())?;
     let (source, destination) = if let Some(bundle) = macos_bundle(exe) {
         (app, bundle)

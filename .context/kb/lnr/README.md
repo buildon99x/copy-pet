@@ -16,3 +16,5 @@ before touching the related area.
 | [0008](0008-flyout-paste-hide-before-paste-race.md) | Win+V flyout paste dropped intermittently: hid the flyout before restoring foreground; held Shift corrupted Ctrl+V | Windows backend (auto-paste) |
 
 | [0009](0009-macos-flyout-initial-focus.md) | Initial Cocoa focus loss dismissed flyout before Enter; native paste needs explicit Command flags | macOS clipboard |
+
+| [0010](0010-apple-lipo-argument-order.md) | Put the input before `-verify_arch` for strict Apple lipo parsing | macOS updater / CI |

@@ -16,6 +16,13 @@ versions follow [SemVer](https://semver.org/). Maintenance rules:
 
 ## [Unreleased]
 
+### Fixed
+- macOS clipboard flyouts accept Enter on first open and after reopening, and
+  restore selected clips to the clipboard for pasting into the original app.
+- macOS update actions now install the universal release and restart ClipCat
+  instead of opening a browser, for both bundled and standalone installations.
+- macOS update installation no longer fails CPU compatibility verification on some systems.
+
 ## [2.5.1] - 2026-11-02
 
 ### Fixed
