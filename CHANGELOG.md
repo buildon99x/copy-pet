@@ -16,6 +16,8 @@ versions follow [SemVer](https://semver.org/). Maintenance rules:
 
 ## [Unreleased]
 
+## [2.5.2] - 2026-11-02
+
 ### Fixed
 - macOS clipboard flyouts accept Enter on first open and after reopening, and
   restore selected clips to the clipboard for pasting into the original app.
