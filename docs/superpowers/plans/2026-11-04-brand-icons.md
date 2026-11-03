@@ -42,3 +42,21 @@ ICO/ICNS sizes, and bundle resources included before codesigning.
   Exported Finder preview: /private/tmp/clipcat-icon-native/finder-icon.png.
 - Native Windows shell display was not manually inspected; the size review is a
   render preview. Existing Store submission remains the previous icon/version.
+
+## Release follow-up (2026-11-04)
+
+- The user subsequently authorized checking CI and releasing the selected C icon
+  through Microsoft Store. The earlier icon-only scope above is historical.
+- Source CI 41664590099 completed successfully on Windows and macOS.
+- Prepared v2.5.4 at 10aa9df8344c07b47d92600b094efe5aa4da7bfc with the
+  release script's full local checks. The tag CI's first macOS native paste probe
+  failed after Return passed; the same commit's main CI 41666431759 passed all
+  three paste probes. Failed tag jobs were rerun without weakening checks.
+- Tag CI attempt 2 and Store package CI 41671442148 succeeded. v2.5.4 is
+  public and production equals its exact commit. Windows decoded the packaged
+  executable's C icon successfully; the MSIX tile hash matches the C export.
+- Replaced the v2.5.3 draft package with validated v2.5.4.0 and saved C app
+  tiles in both Store languages. Resubmission was accepted: In certification,
+  Pre-processing step 2/4 at 2026-11-04 01:24 KST; automatic publish on pass.
+  Public Store availability remains pending. See the sanitized receipt at
+  ../../releases/msstore-c-icon-2026-11-04/README.md.

@@ -1,0 +1,49 @@
+{
+  "observed_at_kst": "2026-11-04T01:24:24+09:00",
+  "product_name": "ClipCat",
+  "product_id": "9NZBR8X5T677",
+  "future_store_url": "https://apps.microsoft.com/detail/9NZBR8X5T677",
+  "observed_status": "In certification",
+  "observed_stage": "Pre-processing, step 2 of 4; Certification and Publishing not started",
+  "public_store_availability_verified": false,
+  "publishing": "Automatically after certification passes",
+  "price": "Free",
+  "markets": "All worldwide markets (240 in Partner Center at configuration time)",
+  "device_family": "Windows.Desktop",
+  "architecture": "x64",
+  "minimum_windows": "10.0.19041.0",
+  "package_version": "2.5.4.0",
+  "package_name": "clipcat-store-x64-2.5.4.msix",
+  "package_sha256": "77bf05a313657250e563f7102207dbf663d4543410e883dad794db79d9d39dbc",
+  "source_tag": "v2.5.4",
+  "source_commit": "10aa9df8344c07b47d92600b094efe5aa4da7bfc",
+  "source_production_tag_match_verified": true,
+  "release_ci": "https://github.com/buildon99x/copy-pet/actions/runs/41666431372",
+  "store_package_ci": "https://github.com/buildon99x/copy-pet/actions/runs/41671442148",
+  "clean_screenshot_ci": "https://github.com/buildon99x/copy-pet/actions/runs/41671442148",
+  "package_acceptance": "Validated; Packages Complete",
+  "required_sections_before_submit": "Pricing, Properties, Age ratings, Packages, Store listings, Submission options all Complete",
+  "listings": [
+    "en-US",
+    "ko-KR"
+  ],
+  "screenshots": "Existing actual Windows native screenshots retained in both listings; current exact-release native screenshot archived with this receipt",
+  "privacy_policy": "https://github.com/buildon99x/copy-pet/blob/main/docs/privacy-policy.md",
+  "restricted_capability": "runFullTrust justification submitted for Microsoft review",
+  "verification": {
+    "local_macos": "Release build, default/Store Clippy, 218 tests in each mode; 13 production-policy tests; visual preview/icon inspection",
+    "release_ci": "Tag CI attempt 2 passed Windows/macOS checks, native macOS smoke and all three paste probes; GitHub v2.5.4 public and remote production/tag commit equality verified",
+    "store_ci": "Store-feature Clippy/tests; Windows SDK MakeAppx; native app launch, synthetic clipboard persistence, clean panel screenshot and Windows shell extraction of the embedded C icon passed",
+    "limits": "No MSIX installation/uninstallation, Store update, or WACK execution was performed by this task. Certification approval and public Store availability remain pending.",
+    "icon": "MSIX 300x300 logo hash matches the prepared C icon; Windows-extracted shell icon and actual native screenshot visually inspected; English tile visually inspected before save; both listing saves returned Complete"
+  },
+  "icon": "Selected C: Ragdoll in terracotta document pocket; Windows ICO, macOS ICNS, MSIX logos and explicit 300x300 Store tile in en-US and ko-KR",
+  "store_tile_sha256": "fded99876c8d8248fda766110369117771582e46596b486e2174311e091d60db",
+  "previous_submission_action": "Cancelled v2.5.3 certification after v2.5.4 package CI passed; replaced the draft package and resubmitted",
+  "ci_retry_evidence": {
+    "release_attempt_1": "Return passed; reopen/keypad Enter and Command+Return paste failed. App launch and synthetic clipboard collection passed.",
+    "same_commit_main_ci": "41666431759 passed all three native paste probes.",
+    "control_workflow_main_ci": "41666778241 failed only Command+Return native paste; its workflow-only commit did not change the released application source.",
+    "release_attempt_2": "Failed tag jobs rerun without code changes or weaker checks; all three paste probes passed. Intermittent native paste-probe failures remain a follow-up concern; retry success does not establish their root cause."
+  }
+}
