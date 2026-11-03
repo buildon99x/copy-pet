@@ -30,3 +30,4 @@ rather than rewrite.
 | [0021](0021-local-affection-and-private-companionship.md) | Local silhouette affection, dedicated breed poses and bounded private motion | Accepted |
 | [0022](0022-art-source-and-prompt-provenance.md) | Versioned artwork originals, prompt provenance and frozen generation inputs | Accepted |
 | [0023](0023-production-release-promotion.md) | main development and verified published-release promotion to production | Accepted |
+| [0024](0024-selected-illustrated-brand-icon.md) | User-selected illustrated app icon with code-owned native packaging | Accepted |

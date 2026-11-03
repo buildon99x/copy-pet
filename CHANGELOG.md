@@ -16,6 +16,10 @@ versions follow [SemVer](https://semver.org/). Maintenance rules:
 
 ## [Unreleased]
 
+### Changed
+- A Ragdoll in a terracotta document pocket now identifies ClipCat on Windows and
+  macOS, with size-specific shell assets and a dedicated Finder/Dock icon.
+
 ## [2.5.3] - 2026-11-03
 
 ### Added

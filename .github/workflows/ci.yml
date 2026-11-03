@@ -97,6 +97,9 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
 
+      - name: Validate Windows and macOS icon resources
+        run: python -m unittest discover -s tests -p test_brand_icons.py
+
       # Default backend: native Win32 on Windows, portable elsewhere.
       - name: Build
         run: cargo build --release

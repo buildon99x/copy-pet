@@ -1,11 +1,11 @@
 {
   "schema_version": 1,
   "archived_on": "2026-10-31",
-  "scope": "All34 generated character originals in this task,6 pre-existing code-render previews,12 historical generation-input snapshots and12 current runtime atlases. App screenshots/diagnostic renders are not image-generation sources.",
+  "scope": "All34 generated character originals in this task,6 pre-existing code-render previews,12 historical generation-input snapshots and12 current runtime atlases. App screenshots/diagnostic renders are not image-generation sources. Includes the 2026-11-04 icon direction comparison; user selected C.",
   "coverage": {
-    "generated_originals": 34,
+    "generated_originals": 36,
     "historical_code_previews": 6,
-    "recorded_generation_prompts": 3,
+    "recorded_generation_prompts": 5,
     "unrecovered_generation_prompts": 31,
     "reference_snapshots": 12,
     "runtime_atlases": 12
@@ -1679,6 +1679,126 @@
         "prompt_path": null
       },
       "extraction_metadata": "assets/cats/affection-source.json"
+    },
+    {
+      "id": "icon-brand-alternatives-20261104",
+      "label": "앱 아이콘 대안 A/B/C — 사용자가 C 선택",
+      "kind": "generated-original",
+      "phase": "icon-brand",
+      "status": "selected-reference",
+      "file": {
+        "path": "art/originals/icon-brand-2026-11-04/alternatives-abc.png",
+        "sha256": "375d7ab2be649e187af4e60f0d1d51f8f66392e7a2695aa45ae9b885ce76d26c",
+        "bytes": 1901114,
+        "width": 1774,
+        "height": 887,
+        "color_type": 2
+      },
+      "original_filename": "exec-4f28c598-e7de-42c4-9a15-bf2d954a1a9c.png",
+      "prompt": {
+        "status": "recorded",
+        "prompt_path": "art/prompts/icon-brand-2026-11-04/alternatives.prompt.txt",
+        "sha256": "76ba75520a9d21c6f5b5622cc2d62505e11a57ce424463df3e18a84a7a80705e",
+        "source_field": "image_gen.imagegen arguments.prompt, saved before invocation",
+        "generation_item_id": "exec-4f28c598-e7de-42c4-9a15-bf2d954a1a9c",
+        "request_path": "art/prompts/icon-brand-2026-11-04/alternatives.request.json",
+        "request_sha256": "85fba2449f0edcd52389b395b5a8de47241b0021a11efa5d7d23221b5146ef4a"
+      },
+      "source_asset_ids": []
+    },
+    {
+      "id": "icon-brand-selected-c-20261104",
+      "label": "사용자가 선택한 C: 서류 주머니 속 랙돌 — 투명 마스터",
+      "kind": "generated-original",
+      "phase": "icon-brand",
+      "status": "selected-design",
+      "file": {
+        "path": "art/originals/icon-brand-2026-11-04/selected-c.png",
+        "sha256": "3c427d7711c05c818af14f50fb07f97e07d58fb2fd43386cf4ed27c5b204c901",
+        "bytes": 1997698,
+        "width": 1254,
+        "height": 1254,
+        "color_type": 6
+      },
+      "original_filename": "exec-cdaea3fc-a891-4619-ba3f-099bedfd6b57.png",
+      "prompt": {
+        "status": "recorded",
+        "prompt_path": "art/prompts/icon-brand-2026-11-04/selected-c.prompt.txt",
+        "sha256": "bbf75d4f720d844aaf4f3dc574d7fa9f425caecb1b10ed9d8e9cb0c367b38872",
+        "source_field": "image_gen.imagegen arguments.prompt, saved before invocation",
+        "generation_item_id": "exec-cdaea3fc-a891-4619-ba3f-099bedfd6b57",
+        "request_path": "art/prompts/icon-brand-2026-11-04/selected-c.request.json",
+        "request_sha256": "7ec483cd62c06a941ce437865e3403f0eba01da0ee217453068683b2643616d8"
+      },
+      "source_asset_ids": [
+        "icon-brand-alternatives-20261104"
+      ]
+    },
+    {
+      "id": "icon-runtime-c-256",
+      "label": "icon-runtime-c-256",
+      "kind": "runtime-icon",
+      "phase": "icon-brand",
+      "status": "exported",
+      "file": {
+        "path": "assets/brand/selected-c-256.png",
+        "sha256": "2b80df702572a61fe77f1de350b8a2936e722243ba8f75d09d95a9df4b02eb01",
+        "bytes": 98623,
+        "width": 256,
+        "height": 256,
+        "color_type": 6
+      },
+      "prompt": {
+        "status": "derived",
+        "source": "src/brand_icon.rs + src/bin/gen_icon.rs"
+      },
+      "source_asset_ids": [
+        "icon-brand-selected-c-20261104"
+      ]
+    },
+    {
+      "id": "icon-windows-c-master",
+      "label": "icon-windows-c-master",
+      "kind": "icon-export",
+      "phase": "icon-brand",
+      "status": "exported",
+      "file": {
+        "path": "assets/brand/windows-1024.png",
+        "sha256": "3d958e5b3ec74e0fa287c21f4cdfb9598e9ff70ca5ceb03720e74d95d23ab3f9",
+        "bytes": 1286921,
+        "width": 1024,
+        "height": 1024,
+        "color_type": 6
+      },
+      "prompt": {
+        "status": "derived",
+        "source": "src/brand_icon.rs + src/bin/gen_icon.rs"
+      },
+      "source_asset_ids": [
+        "icon-brand-selected-c-20261104"
+      ]
+    },
+    {
+      "id": "icon-macos-c-master",
+      "label": "icon-macos-c-master",
+      "kind": "icon-export",
+      "phase": "icon-brand",
+      "status": "exported",
+      "file": {
+        "path": "assets/brand/macos-1024.png",
+        "sha256": "361cae57d8d49fb3fa1c96c1d283133c254f3cc06e34584677d489c077b3336a",
+        "bytes": 907944,
+        "width": 1024,
+        "height": 1024,
+        "color_type": 6
+      },
+      "prompt": {
+        "status": "derived",
+        "source": "src/brand_icon.rs + src/bin/gen_icon.rs"
+      },
+      "source_asset_ids": [
+        "icon-brand-selected-c-20261104"
+      ]
     }
   ],
   "metadata_files": [
@@ -1711,6 +1831,22 @@
       "path": "assets/cats/affection-source.json",
       "sha256": "3f136fcd55f8eaf022e9683f27d2f54db5fb6e093d0807f8891f0d1ba30913e9",
       "bytes": 6724
+    },
+    {
+      "path": "assets/clipcat.ico",
+      "sha256": "c09ee90c41e66a2b9aa13f5256ce8de2268997d9a6d34e77a25f7a979fb0ea06",
+      "bytes": 209285,
+      "source_asset_ids": [
+        "icon-brand-selected-c-20261104"
+      ]
+    },
+    {
+      "path": "assets/clipcat.icns",
+      "sha256": "746362ce5d5b71c08d0e849ad1672ad14424ee8c7db84a07649fd121881fc83b",
+      "bytes": 1606082,
+      "source_asset_ids": [
+        "icon-brand-selected-c-20261104"
+      ]
     }
   ]
 }

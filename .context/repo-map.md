@@ -8,6 +8,7 @@ context on every turn. Read it when you need to find where something lives; the
 ```
 src/
   main.rs              thin entry → clipcat::platform::run()
+  brand_icon.rs        selected C icon foreground composition; embedded 256px derivative
   lib.rs               module wiring
   pet.rs               Pet: platform-agnostic simulation, fish animation,
                        clip/panel orchestration + scene building
@@ -65,7 +66,7 @@ src/
     mac_caret.rs       macOS-only text-caret read for the flyout (ADR-0013):
                        Accessibility API (AXBoundsForRange), geometry only —
                        never element text; falls back to the mouse cursor.
-  bin/gen_icon.rs      regenerates assets/clipcat.ico from render::draw_icon_scaled
+  bin/gen_icon.rs      exports Windows ICO, macOS iconset/ICNS, masters and size review
 examples/preview.rs    renders representative frames to PNGs (headless review)
 examples/font_diagnostics.rs  selected font face/weight/coverage inventory and samples
 examples/review_at_density.rs  actual renderer 1x/2x clipboard/gallery previews
@@ -80,6 +81,8 @@ tests/test_production.py  real Git remote promotion/recovery regression tests
 docs/releasing.md     main/production contract and failed-release recovery
 CHANGELOG.md           user-facing changes only — see policy in its header
 assets/clipcat.ico     the embedded app icon — generated, not hand-edited
+assets/clipcat.icns    macOS Finder/Dock icon, copied into Resources before signing
+assets/brand/          selected C derivative, platform masters, native sizes and review
 assets/cottonball-hunter.png  selected illustrated ragdoll atlas (ADR-0017)
 assets/cats/*.png      twelve normalized release atlases (ADR-0018)
 art/catalog.json      original/revision/prompt/reference/runtime asset graph and SHA-256

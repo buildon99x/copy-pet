@@ -1,0 +1,18 @@
+{
+  "asset_id": "icon-brand-selected-c-20261104",
+  "tool": "image_gen.imagegen",
+  "prompt_path": "art/prompts/icon-brand-2026-11-04/selected-c.prompt.txt",
+  "reference_asset_ids": [
+    "icon-brand-alternatives-20261104"
+  ],
+  "arguments": {
+    "prompt": "Use case: logo-brand, precise-object-edit.\nThe input is a three-column ClipCat app-icon concept board. The user selected C, the RIGHTMOST icon. Use ONLY concept C as the identity reference. Produce a single large production-quality app icon foreground, isolated on a genuinely transparent background. No icon tile, no rounded-square backdrop, no letters A B C, no presentation board, no text, no watermark, no ground plane or outside drop shadow.\nPreserve C's specific warm bicolor ragdoll identity and composition: plush cream-white face and paw, seal-brown ears and facial mask with a white inverted V, gentle bright blue eyes looking slightly sideways, small pink nose and relaxed slightly mischievous expression. The cat leans comfortably out of a terracotta-orange softly rounded DOCUMENT POCKET with two clean ivory paper cards behind its head; one cream paw drapes over the FRONT upper edge near the center. A soft brown tail curves around the lower LEFT edge. Preserve the small desaturated dusty-blue curved corner panel at LOWER RIGHT of the terracotta pocket.\nRefine for real app-icon legibility: make the cat HEAD and front PAW 10-15% larger relative to the pocket compared with C, reduce the paper cards to two strong broad shapes, retain a clear broad pocket silhouette. Use shaped plush fur masses with sparse fine hair only at the cheek/ear silhouette, not photographic fur noise. Warm premium tactile 2.5D illustration with matte paper/ceramic material, elegant soft lighting and restrained detail. Original charming character, not generic emoji or stock cartoon. Crisp clean anti-aliased alpha edges, solid opaque interior. Nothing cut off at canvas edges. Center this one coherent freestanding cat-and-document-pocket emblem, filling approximately 86% of a square 1024x1024 canvas with balanced transparent margin on every side. There is no enclosing app tile: the colored shape at the bottom is the DOCUMENT POCKET itself.",
+    "referenced_image_paths": [
+      "/Users/john/repo/clipcat/art/originals/icon-brand-2026-11-04/alternatives-abc.png"
+    ],
+    "transparent_background": true
+  },
+  "provider_model": null,
+  "seed": null,
+  "purpose": "User selected concept C; extract and refine the foreground for Windows and macOS app icons"
+}

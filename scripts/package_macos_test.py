@@ -4,8 +4,18 @@ import json
 from pathlib import Path
 import plistlib
 import re
+import shutil
 import subprocess
 import sys
+
+
+def copy_bundle_icon(contents):
+    """Install the committed code-generated ICNS before the bundle is signed."""
+    resources = contents / "Resources"
+    resources.mkdir(parents=True, exist_ok=True)
+    name = "ClipCat.icns"
+    shutil.copy2(Path(__file__).resolve().parents[1] / "assets/clipcat.icns", resources / name)
+    return name
 
 
 def main():
@@ -24,6 +34,7 @@ def main():
     if set(architectures) != {"arm64", "x86_64"}:
         raise RuntimeError(f"Unexpected application architectures: {architectures}")
     executable.chmod(0o755)
+    icon_name = copy_bundle_icon(contents)
     commit = subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
     version = re.search(r'^version\s*=\s*"([^"]+)"', Path("Cargo.toml").read_text(), re.M).group(1)
     with (contents / "Info.plist").open("wb") as f:
@@ -33,6 +44,7 @@ def main():
             "CFBundleDisplayName": "ClipCat" if release else "ClipCat Preview",
             "CFBundleExecutable": "clipcat",
             "CFBundlePackageType": "APPL",
+            "CFBundleIconFile": icon_name,
             "CFBundleShortVersionString": version,
             "CFBundleVersion": version,
             "CFBundleGetInfoString": f"ClipCat {version} ({commit[:7]})" if release else f"Cat companions test build {commit[:7]}",

@@ -18,7 +18,6 @@ pub const CANVAS_H: f32 = 256.0;
 
 // palette
 const OUTLINE: (u8, u8, u8, u8) = (84, 72, 58, 255);
-const FUR: (u8, u8, u8, u8) = (250, 247, 242, 255);
 const TEXT: (u8, u8, u8, u8) = (84, 72, 58, 255);
 // Secondary copy remains readable on search, selected-row and card backgrounds.
 const TEXT_DIM: (u8, u8, u8, u8) = (105, 97, 87, 255);
@@ -1168,59 +1167,14 @@ fn draw_btn(cv: &mut Cv, bx: f32, by: f32, icon: BtnIcon) {
 
 // ---- tray icon -------------------------------------------------------------
 
-/// Draws a 32x32 cat face (with its little fish) for the tray/window icon.
+/// Draw the shared cat-shaped clipboard mark for the native tray/window.
 pub fn draw_icon(pm: &mut Pixmap) {
-    draw_icon_scaled(pm, 1.0);
+    crate::brand_icon::draw(pm, crate::brand_icon::Surface::Windows);
 }
 
-/// Same art at `k` times the base 32px size (for .ico generation).
-pub fn draw_icon_scaled(pm: &mut Pixmap, k: f32) {
-    pm.fill(tiny_skia::Color::TRANSPARENT);
-    let mut cv = Cv {
-        pm,
-        ts: Transform::from_scale(k, k),
-    };
-    // ears
-    let mut le = PathBuilder::new();
-    le.move_to(4.0, 14.0);
-    le.line_to(5.0, 2.0);
-    le.line_to(14.0, 8.0);
-    le.close();
-    let mut re = PathBuilder::new();
-    re.move_to(28.0, 14.0);
-    re.line_to(27.0, 2.0);
-    re.line_to(18.0, 8.0);
-    re.close();
-    let (le, re) = (le.finish(), re.finish());
-    let t = Transform::identity();
-    cv.filled(&le, FUR, OUTLINE, 2.0, t);
-    cv.filled(&re, FUR, OUTLINE, 2.0, t);
-    // head
-    let head = oval(16.0, 18.0, 13.5, 12.0);
-    cv.filled(&head, FUR, OUTLINE, 2.0, t);
-    // eyes
-    cv.fill(&oval(10.5, 17.0, 1.9, 1.9), OUTLINE);
-    cv.fill(&oval(21.5, 17.0, 1.9, 1.9), OUTLINE);
-    // mouth
-    let mut pb = PathBuilder::new();
-    pb.move_to(13.0, 22.0);
-    pb.quad_to(14.5, 24.0, 16.0, 22.3);
-    pb.quad_to(17.5, 24.0, 19.0, 22.0);
-    cv.stroke(&pb.finish(), OUTLINE, 1.4);
-    // the clipboard fish, held proudly at the bottom-right
-    {
-        let fc = (FISH_BLUE.0, FISH_BLUE.1, FISH_BLUE.2, 255);
-        let body = oval(24.0, 27.5, 6.0, 3.6);
-        cv.filled(&body, fc, OUTLINE, 1.6, t);
-        let mut tb = PathBuilder::new();
-        tb.move_to(28.5, 27.5);
-        tb.line_to(31.5, 24.8);
-        tb.line_to(31.5, 30.2);
-        tb.close();
-        let tail = tb.finish();
-        cv.filled(&tail, fc, OUTLINE, 1.4, t);
-        cv.fill(&oval(21.0, 26.8, 0.9, 0.9), OUTLINE);
-    }
+/// Compatibility entry point: rasterize at the destination density directly.
+pub fn draw_icon_scaled(pm: &mut Pixmap, _k: f32) {
+    draw_icon(pm);
 }
 
 #[cfg(test)]
