@@ -1462,7 +1462,7 @@ impl Pet {
         let mut m: Vec<MenuEntry> = Vec::new();
 
         // Update available (top, like the Windows tray).
-        if let Some(ver) = self.update_available() {
+        if let Some(ver) = self.update_available().filter(|_| !cfg!(feature = "store")) {
             m.push(MenuItem::leaf(
                 i18n::menu_update(lang, ver),
                 MenuAction::InstallUpdate,
@@ -1536,16 +1536,18 @@ impl Pet {
         m.push(MenuItem::parent(t(lang, Msg::MenuLanguage), lang_items));
 
         m.push(MenuEntry::Separator);
-        m.push(MenuItem::leaf(
-            t(lang, Msg::MenuLoginStart),
-            MenuAction::ToggleAutostart,
-            autostart,
-        ));
-        m.push(MenuItem::leaf(
-            t(lang, Msg::MenuAutoUpdate),
-            MenuAction::ToggleAutoUpdate,
-            self.st.auto_update,
-        ));
+        if !cfg!(feature = "store") {
+            m.push(MenuItem::leaf(
+                t(lang, Msg::MenuLoginStart),
+                MenuAction::ToggleAutostart,
+                autostart,
+            ));
+            m.push(MenuItem::leaf(
+                t(lang, Msg::MenuAutoUpdate),
+                MenuAction::ToggleAutoUpdate,
+                self.st.auto_update,
+            ));
+        }
         m.push(MenuItem::leaf(t(lang, Msg::MenuAbout), MenuAction::About, false));
         m.push(MenuItem::leaf(t(lang, Msg::MenuGithub), MenuAction::OpenGithub, false));
         m.push(MenuEntry::Separator);
@@ -1584,13 +1586,18 @@ impl Pet {
                 self.dirty = true;
             }
             MenuAction::ToggleAutoUpdate => {
+                if cfg!(feature = "store") { return MenuOutcome::Handled; }
                 self.st.auto_update = !self.st.auto_update;
                 crate::update::set_enabled(self.st.auto_update);
                 self.dirty = true;
             }
             MenuAction::CycleHotkey => return MenuOutcome::ReregisterHotkey(self.cycle_hotkey()),
-            MenuAction::ToggleAutostart => return MenuOutcome::ToggleAutostart,
-            MenuAction::InstallUpdate => return MenuOutcome::InstallUpdate,
+            MenuAction::ToggleAutostart => return if cfg!(feature = "store") {
+                MenuOutcome::Handled
+            } else { MenuOutcome::ToggleAutostart },
+            MenuAction::InstallUpdate => return if cfg!(feature = "store") {
+                MenuOutcome::Handled
+            } else { MenuOutcome::InstallUpdate },
             MenuAction::About => return MenuOutcome::ShowAbout,
             MenuAction::OpenGithub => return MenuOutcome::OpenGithub,
             MenuAction::Quit => return MenuOutcome::Quit,

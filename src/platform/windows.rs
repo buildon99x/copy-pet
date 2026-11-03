@@ -1444,7 +1444,7 @@ unsafe fn show_menu(hwnd: HWND, ms: &MenuSnapshot) -> usize {
     let chk = |on: bool| if on { MF_CHECKED } else { MF_UNCHECKED };
 
     // a found update goes on top, where it can't be missed
-    if let Some(ver) = &ms.update {
+    if let Some(ver) = ms.update.as_ref().filter(|_| !cfg!(feature = "store")) {
         AppendMenuW(
             menu,
             MF_STRING,
@@ -1543,18 +1543,20 @@ unsafe fn show_menu(hwnd: HWND, ms: &MenuSnapshot) -> usize {
     );
 
     AppendMenuW(menu, MF_SEPARATOR, 0, null());
-    AppendMenuW(
-        menu,
-        MF_STRING | chk(ms.autostart),
-        CMD_AUTOSTART,
-        wz(t(lang, Msg::MenuAutostart)).as_ptr(),
-    );
-    AppendMenuW(
-        menu,
-        MF_STRING | chk(ms.auto_update),
-        CMD_AUTOUPDATE,
-        wz(t(lang, Msg::MenuAutoUpdate)).as_ptr(),
-    );
+    if !cfg!(feature = "store") {
+        AppendMenuW(
+            menu,
+            MF_STRING | chk(ms.autostart),
+            CMD_AUTOSTART,
+            wz(t(lang, Msg::MenuAutostart)).as_ptr(),
+        );
+        AppendMenuW(
+            menu,
+            MF_STRING | chk(ms.auto_update),
+            CMD_AUTOUPDATE,
+            wz(t(lang, Msg::MenuAutoUpdate)).as_ptr(),
+        );
+    }
     AppendMenuW(
         menu,
         MF_STRING,
@@ -1633,9 +1635,10 @@ unsafe fn open_menu(hwnd: HWND) {
             }
             CMD_GITHUB => crate::update::open_github(),
             CMD_AUTOSTART => {
-                set_autostart(!ms.autostart);
+                if !cfg!(feature = "store") { set_autostart(!ms.autostart); }
             }
             CMD_UPDATE => {
+                if cfg!(feature = "store") { return; }
                 with_app(|a| {
                     if let Some(v) = a.pet.update_available().map(str::to_string) {
                         update::begin_install(&v);
@@ -1644,6 +1647,7 @@ unsafe fn open_menu(hwnd: HWND) {
                 });
             }
             CMD_AUTOUPDATE => {
+                if cfg!(feature = "store") { return; }
                 with_app(|a| {
                     a.pet.st.auto_update = !a.pet.st.auto_update;
                     update::set_enabled(a.pet.st.auto_update);
@@ -2239,7 +2243,7 @@ pub fn run() {
         SetProcessDpiAwarenessContext(-4 as _); // PER_MONITOR_AWARE_V2
         crate::sound::set_player(super::windows_sound::play);
         crate::sound::init();
-        migrate_autostart();
+        if !cfg!(feature = "store") { migrate_autostart(); }
 
         let hinst = GetModuleHandleW(null());
         let icon = make_icon();

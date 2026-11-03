@@ -16,6 +16,10 @@ versions follow [SemVer](https://semver.org/). Maintenance rules:
 
 ## [Unreleased]
 
+### Added
+- Microsoft Store builds keep application updates under Store control and omit
+  the standalone edition's self-update and registry startup controls.
+
 ## [2.5.2] - 2026-11-02
 
 ### Fixed

@@ -7,6 +7,8 @@ description = "ClipCat - a desktop cat clipboard manager: every copy feeds the c
 repository = "https://github.com/buildon99x/copy-pet"
 
 [features]
+# Microsoft Store distribution: updates are managed by Store, never by exe swap.
+store = []
 # Force the portable (winit/softbuffer/rdev/arboard) backend even on Windows,
 # so the cross-platform path can be exercised on the dev machine. On
 # macOS/Linux the portable backend is always used and these crates are pulled

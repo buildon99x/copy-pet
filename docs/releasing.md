@@ -8,6 +8,30 @@
 - MS Store 제출은 별도의 배포 채널이다. 이 자동화는 Store 제출이나 심사 완료를 의미하지 않는다.
   Store 패키지는 production의 정확한 태그/커밋에서 만들고 제출 기록에 남긴다.
 
+## Microsoft Store
+
+제품 ID는 `9NZBR8X5T677`, 패키지 이름은 `PIXO.ClipCat`, 게시자는
+`CN=62E0CEB7-8FB8-4E4C-BF40-5231FBBC83E0` (표시명 `PIXO`)이다.
+`store` Cargo 기능은 GitHub 업데이트와 레지스트리 자동 시작 메뉴를 제외한다.
+저장된 `auto_update=true`도 Store 빌드에서 자체 업데이트를 켤 수 없다.
+클립보드·설정 저장 형식은 바꾸지 않는다.
+
+`.github/workflows/store.yml`은 main에서 Store 빌드를 검사하고, 정식 릴리스
+CI 성공 후 production/공개 태그를 감사한 다음 Windows SDK MakeAppx로 x64
+MSIX를 생성한다. CRT는 정적으로 링크한다. 별도 유료 코드 서명 인증서 없이
+제출할 수 있도록 패키지는 unsigned이며 Microsoft가 심사 후 서명한다.
+`clipcat-store-x64-X.Y.Z.msix`, `build-info.json`, `clipcat-store-evidence.zip`을
+같은 GitHub 릴리스에 추가한다. build-info에는 원본 커밋과 SHA-256이 있다.
+기존 공개 바이너리를 교체하거나 production을 직접 갱신하지 않는다.
+
+검증 스크립트는 CI 데스크톱에서 패키징한 것과 같은 exe를 실행하고 합성
+클립보드 수집·저장을 확인한다. 이는 **MSIX 설치 시험이나 WACK 통과가 아니다**.
+패키지 설치·삭제·Store 업데이트는 별도 Windows 환경에서 확인해야 한다.
+제출은 Partner Center의 패키지·영문/한국어 설명·스크린샷·등급을 채우는 별도
+단계이며, 브라우저에서 실제 제출 상태를 확인하고 기록한다.
+
+개인정보처리방침: [privacy-policy.md](privacy-policy.md).
+
 ## 최초 생성
 
 기존 정식 릴리스 태그의 커밋에서 production을 만든다. 아직 출시하지 않은 main의

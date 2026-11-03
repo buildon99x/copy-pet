@@ -4,6 +4,18 @@
 use super::*;
 use crate::panel::PanelAction;
 
+#[cfg(feature = "store")]
+#[test]
+fn store_menu_omits_external_update_and_registry_autostart() {
+    use crate::menu::MenuAction;
+    let mut p = pet();
+    p.notify_update("99.0.0");
+    let menu = p.build_menu("HK", true);
+    assert!(find(&menu, MenuAction::InstallUpdate).is_none());
+    assert!(find(&menu, MenuAction::ToggleAutoUpdate).is_none());
+    assert!(find(&menu, MenuAction::ToggleAutostart).is_none());
+}
+
 fn pet() -> Pet {
     let mut p = Pet::new(Persist::default());
     p.clips = ClipStore::default(); // don't touch the real config dir
@@ -292,6 +304,7 @@ fn menu_toggle_paste_on_select() {
     assert!(find(&menu, MenuAction::TogglePasteOnSelect).unwrap().checked);
 }
 
+#[cfg(not(feature = "store"))]
 #[test]
 fn menu_autostart_check_reflects_param() {
     let p = pet();
@@ -315,6 +328,7 @@ fn menu_opens_free_cat_gallery() {
     assert_eq!(crate::cat::CatKind::ALL.len(), 12);
 }
 
+#[cfg(not(feature = "store"))]
 #[test]
 fn menu_update_item_appears_only_when_available() {
     let mut p = pet();

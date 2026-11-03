@@ -360,11 +360,12 @@ fn context_menu_drives_settings_end_to_end() {
     assert!(menu_find(&p.build_menu("HK", false), MenuAction::SetSound(1)).unwrap().checked);
     assert!(!menu_find(&p.build_menu("HK", false), MenuAction::SetSound(0)).unwrap().checked);
 
-    // lock / auto-update toggles flip the persisted flags
+    // Store updates stay managed externally even with an old saved flag.
     let (lock0, au0) = (p.st.locked, p.st.auto_update);
     p.apply_menu_action(MenuAction::ToggleLock);
     p.apply_menu_action(MenuAction::ToggleAutoUpdate);
-    assert_eq!((p.st.locked, p.st.auto_update), (!lock0, !au0));
+    assert_eq!((p.st.locked, p.st.auto_update),
+        (!lock0, if cfg!(feature = "store") { au0 } else { !au0 }));
 
     // language submenu switches the language
     let lang0 = p.lang();

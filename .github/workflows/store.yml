@@ -1,0 +1,92 @@
+name: Microsoft Store package
+
+on:
+  push:
+    branches: [main]
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+
+permissions:
+  contents: read
+
+jobs:
+  validate-store:
+    if: github.event_name == 'push'
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo build --locked --release --features store
+      - run: cargo clippy --locked --release --features store
+      - run: cargo test --locked --release --features store
+
+  package:
+    # The release CI must have completed and promoted production first.
+    if: >-
+      github.event_name == 'workflow_run' &&
+      github.event.workflow_run.event == 'push' &&
+      github.event.workflow_run.head_repository.full_name == github.repository &&
+      github.event.workflow_run.conclusion == 'success' &&
+      startsWith(github.event.workflow_run.head_branch, 'v')
+    runs-on: windows-latest
+    permissions:
+      contents: write
+    env:
+      RUSTFLAGS: -C target-feature=+crt-static
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+          fetch-depth: 0
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+      - name: Verify exact published production source
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $release = gh release view --json tagName,isDraft,isPrerelease | ConvertFrom-Json
+          if ($LASTEXITCODE -or $release.isDraft -or $release.isPrerelease -or $release.tagName -notmatch '^v[0-9]+\.[0-9]+\.[0-9]+$') { throw 'No valid public release' }
+          $published = git rev-parse "$($release.tagName)^{commit}"
+          $source = git rev-parse HEAD
+          $production = git rev-parse origin/production
+          if ($source -ne $published -or $source -ne $production) { throw 'Source is not the exact published production release' }
+          python scripts/production.py audit
+          if ($LASTEXITCODE) { throw 'Production audit failed' }
+      - run: cargo clippy --locked --release --features store
+      - run: cargo test --locked --release --features store
+      - name: Package with Windows SDK validation
+        shell: pwsh
+        run: |
+          $sdk = Get-ChildItem "${env:ProgramFiles(x86)}\Windows Kits\10\bin\*\x64\makeappx.exe" | Sort-Object FullName -Descending | Select-Object -First 1
+          if (!$sdk) { throw 'Windows SDK MakeAppx not found' }
+          python scripts/package_store.py $sdk.FullName
+          if ($LASTEXITCODE) { throw 'Store packaging failed' }
+      - name: Smoke test staged native app and synthetic clipboard
+        shell: pwsh
+        run: ./scripts/validate_windows_store.ps1
+      - uses: actions/upload-artifact@v4
+        with:
+          name: clipcat-store
+          path: |
+            target/store/*.msix
+            target/store/build-info.json
+            target/store/evidence/*
+          if-no-files-found: error
+      - name: Attach Store package to the same public release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $info = Get-Content target/store/build-info.json | ConvertFrom-Json
+          Compress-Archive -Path target/store/evidence/* -DestinationPath target/store/clipcat-store-evidence.zip
+          gh release upload $info.source_tag "target/store/$($info.package)" "target/store/build-info.json"
+          if ($LASTEXITCODE) { throw 'Store release asset upload failed' }
+          gh release upload $info.source_tag target/store/clipcat-store-evidence.zip
+          if ($LASTEXITCODE) { throw 'Store evidence upload failed' }

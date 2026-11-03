@@ -15,6 +15,8 @@
 //! update is always user-initiated: the native Windows backend downloads
 //! the released exe and swaps itself, macOS installs a universal app/binary and restarts; Linux opens the
 //! releases page in the browser.
+//! The `store` distribution leaves updates to Microsoft Store. Its entry
+//! points stay inert even when an older saved setting enables auto-update.
 
 use std::process::Command;
 use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
@@ -37,7 +39,7 @@ const CHECK_PERIOD: Duration = Duration::from_secs(24 * 60 * 60);
 const RETRY_PERIOD: Duration = Duration::from_secs(15 * 60);
 
 /// Mirrors `Persist::auto_update`; while false no network request is made.
-static ENABLED: AtomicBool = AtomicBool::new(true);
+static ENABLED: AtomicBool = AtomicBool::new(!cfg!(feature = "store"));
 /// Newer version found by the checker ("2.1.0"), until a backend takes it.
 static FOUND: Mutex<Option<String>> = Mutex::new(None);
 /// Install state machine (see [`Install`]); written by the install worker.
@@ -60,7 +62,7 @@ pub enum Install {
 }
 
 pub fn set_enabled(on: bool) {
-    ENABLED.store(on, Ordering::Relaxed);
+    ENABLED.store(on && !cfg!(feature = "store"), Ordering::Relaxed);
 }
 
 /// The version a background check found, handed out once (backends call
@@ -89,6 +91,7 @@ pub fn poll_install() -> Install {
 /// Spawns the daily release check. Call once at startup, after
 /// [`set_enabled`] has been fed the persisted setting.
 pub fn spawn_checker() {
+    if cfg!(feature = "store") { return; }
     std::thread::spawn(|| {
         // let startup (window, hooks, first paint) settle first
         std::thread::sleep(Duration::from_secs(10));
@@ -213,6 +216,7 @@ fn old_exe_path(exe: &std::path::Path) -> Option<std::path::PathBuf> {
 /// call once at startup).
 #[cfg(windows)]
 pub fn cleanup_old_exe() {
+    if cfg!(feature = "store") { return; }
     if let Ok(exe) = std::env::current_exe() {
         if let Some(old) = old_exe_path(&exe) {
             let _ = std::fs::remove_file(old);
@@ -224,6 +228,7 @@ pub fn cleanup_old_exe() {
 /// thread; progress lands in [`poll_install`]. User-initiated only.
 #[cfg(any(windows, target_os = "macos"))]
 pub fn begin_install(version: &str) {
+    if cfg!(feature = "store") { return; }
     if parse_version(version).is_none() { return; }
     if INSTALL
         .compare_exchange(
@@ -398,6 +403,13 @@ pub fn restart() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(feature = "store")]
+    #[test]
+    fn store_saved_setting_cannot_enable_github_updates() {
+        set_enabled(true);
+        assert!(!ENABLED.load(Ordering::Relaxed));
+    }
 
     #[cfg(target_os = "macos")]
     #[test]
