@@ -1,0 +1,53 @@
+name: Store screenshots
+
+on:
+  push:
+    branches: [main]
+    paths: [.github/workflows/store-screenshots.yml]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  capture:
+    runs-on: windows-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: production
+          fetch-depth: 0
+      - name: Use the exact published Store executable
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python scripts/production.py audit
+          if ($LASTEXITCODE) { throw 'Production audit failed' }
+          $release = gh release view --json tagName | ConvertFrom-Json
+          $version = $release.tagName.TrimStart('v')
+          New-Item -ItemType Directory -Force target/store | Out-Null
+          gh release download $release.tagName --pattern "clipcat-store-x64-$version.msix" --pattern build-info.json --dir target/store
+          if ($LASTEXITCODE) { throw 'Package download failed' }
+          $info = Get-Content target/store/build-info.json | ConvertFrom-Json
+          $hash = (Get-FileHash "target/store/$($info.package)" -Algorithm SHA256).Hash.ToLower()
+          if ($hash -ne $info.sha256 -or (git rev-parse HEAD) -ne $info.source_commit) { throw 'Published package mismatch' }
+          $sdk = Get-ChildItem "${env:ProgramFiles(x86)}\Windows Kits\10\bin\*\x64\makeappx.exe" | Sort-Object FullName -Descending | Select-Object -First 1
+          & $sdk.FullName unpack /p "target/store/$($info.package)" /d target/store/stage /o
+          if ($LASTEXITCODE) { throw 'MSIX unpack failed' }
+          # Minimize the CI host terminal before starting the topmost app.
+          (New-Object -ComObject Shell.Application).MinimizeAll()
+          Start-Sleep -Seconds 1
+          ./scripts/validate_windows_store.ps1
+          if ($LASTEXITCODE) { throw 'Native capture failed' }
+          Copy-Item target/store/build-info.json target/store/evidence/package-build-info.json
+          Compress-Archive -Path target/store/evidence/* -DestinationPath target/store/clipcat-store-screenshots.zip
+          gh release upload $release.tagName target/store/clipcat-store-screenshots.zip
+          if ($LASTEXITCODE) { throw 'Screenshot upload failed' }
+      - uses: actions/upload-artifact@v4
+        with:
+          name: store-screenshots
+          path: target/store/evidence/*
+          if-no-files-found: error
