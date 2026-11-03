@@ -5,3 +5,6 @@ shot_*.png
 
 # Python release tooling
 __pycache__/
+
+# Private submission receipts and account UI; never publish to the repository.
+/.local/

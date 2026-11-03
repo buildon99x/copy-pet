@@ -1,0 +1,39 @@
+{
+  "observed_at_kst": "2026-11-04T00:06:34+09:00",
+  "product_name": "ClipCat",
+  "product_id": "9NZBR8X5T677",
+  "future_store_url": "https://apps.microsoft.com/detail/9NZBR8X5T677",
+  "observed_status": "In certification",
+  "observed_stage": "Pre-processing, step 2 of 4; Certification and Publishing not started",
+  "public_store_availability_verified": false,
+  "publishing": "Automatically after certification passes",
+  "price": "Free",
+  "markets": "All worldwide markets (240 in Partner Center at configuration time)",
+  "device_family": "Windows.Desktop",
+  "architecture": "x64",
+  "minimum_windows": "10.0.19041.0",
+  "package_version": "2.5.3.0",
+  "package_name": "clipcat-store-x64-2.5.3.msix",
+  "package_sha256": "de3684acf9e2bc8ec2f695f91d7bbad8eeea986fb153cc3ffba5af55f3e43481",
+  "source_tag": "v2.5.3",
+  "source_commit": "b3fcf9280a6bde01f5cea55d66470ae7da69bd0f",
+  "source_production_tag_match_verified": true,
+  "release_ci": "https://github.com/buildon99x/copy-pet/actions/runs/41656805808",
+  "store_package_ci": "https://github.com/buildon99x/copy-pet/actions/runs/41657676435",
+  "clean_screenshot_ci": "https://github.com/buildon99x/copy-pet/actions/runs/41658759031",
+  "package_acceptance": "Validated; Packages Complete",
+  "required_sections_before_submit": "Pricing, Properties, Age ratings, Packages, Store listings, Submission options all Complete",
+  "listings": [
+    "en-US",
+    "ko-KR"
+  ],
+  "screenshots": "One actual Windows native screenshot per listing, captured from the exact published MSIX executable with synthetic clipboard data",
+  "privacy_policy": "https://github.com/buildon99x/copy-pet/blob/main/docs/privacy-policy.md",
+  "restricted_capability": "runFullTrust justification submitted for Microsoft review",
+  "verification": {
+    "local_macos": "Release build, default/Store Clippy, 218 tests in each mode; 13 production-policy tests; visual preview/icon inspection",
+    "release_ci": "Windows/macOS build, Clippy, tests and existing macOS smoke checks passed; public release and production promotion succeeded",
+    "store_ci": "Windows Store-feature Clippy/tests; validating Windows SDK MakeAppx; native app launch, synthetic clipboard collection/persistence, embedded panel screenshot passed",
+    "limits": "No MSIX installation/uninstallation, Store update, or WACK execution was performed by this task. Certification approval and public Store availability remain pending."
+  }
+}

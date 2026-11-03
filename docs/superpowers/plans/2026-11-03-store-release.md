@@ -34,19 +34,19 @@ were not run.
 - [x] Add the `store` Cargo feature and gate updater entry points and menus.
 - [x] Add exact-identity MSIX packaging and a Windows CI job, building only the
   published production commit, with package validation and launch smoke test.
-- [ ] Run release build, Clippy, existing tests, Store tests, release lint and
+- [x] Run release build, Clippy, existing tests, Store tests, release lint and
   packaging checks. Review the changes and commit/push over SSH.
-- [ ] Use scripts/release.sh to publish the required compatibility release;
+- [x] Use scripts/release.sh to publish the required compatibility release;
   wait for successful CI and audit production/tag equality.
-- [ ] Download the validated Store package, upload it through the in-app browser,
+- [x] Download the validated Store package, upload it through the in-app browser,
   and fill English/Korean listings with truthful screenshots and privacy info.
-- [ ] Complete IARC only after permission to transmit publisher/email is received.
-- [ ] Submit for certification when all required items are complete; record
+- [x] Complete IARC only after permission to transmit publisher/email is received.
+- [x] Submit for certification when all required items are complete; record
   the exact package SHA, source tag/SHA and observed Partner Center state.
 
 ## Initial observations, 2026-11-03
 
-Product created and name reserved. Submission 1152921505702306428 is in draft.
+Product created and name reserved. The first submission was created in draft.
 Free worldwide pricing and Productivity/Personalization properties saved.
 Initial candidate v2.5.2, commit 32ab0b05834691fdd51f2a92116f2b2ed2f42e42,
 has a successful release workflow 41465852278, but is an unpackaged build whose
@@ -74,3 +74,11 @@ for publisher display name/email transmission; do not retry until approved.
   locally; it validates the native manifest using Microsoft's shipping tool.
 - Ruling: smoke-test the staged exe with synthetic clipboard data and clearly
   report that MSIX deployment and WACK are not tested by this workflow.
+- Released v2.5.3 through scripts/release.sh. Windows/macOS release CI succeeded;
+  production and tag equal b3fcf9280a6bde01f5cea55d66470ae7da69bd0f.
+- Store package CI 41657676435 passed MakeAppx and real native clipboard smoke.
+  Screenshot CI 41658759031 unpacked the exact published MSIX and repeated smoke
+  with the CI terminal minimized; this clean screenshot was used in both listings.
+- Partner Center validated MSIX 2.5.3.0. All six required sections Complete.
+  Submitted 2026-11-04 00:06 KST; observed In certification / Pre-processing.
+  Receipt and limits: ../../releases/msstore-2026-11-04/submission.json.

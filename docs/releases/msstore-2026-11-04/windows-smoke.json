@@ -1,0 +1,5 @@
+{
+  "msix_installed": false,
+  "passed": true,
+  "scope": "staged Store executable, native Windows window, synthetic clipboard persistence"
+}

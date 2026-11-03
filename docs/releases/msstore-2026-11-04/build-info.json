@@ -1,0 +1,14 @@
+{
+  "version": "2.5.3",
+  "source_tag": "v2.5.3",
+  "source_commit": "b3fcf9280a6bde01f5cea55d66470ae7da69bd0f",
+  "package": "clipcat-store-x64-2.5.3.msix",
+  "sha256": "de3684acf9e2bc8ec2f695f91d7bbad8eeea986fb153cc3ffba5af55f3e43481",
+  "executable_sha256": "336751bf428dfc3ccf63b45c8782805aaec066ea560c36a8a562e1ecf4e27be7",
+  "cargo_features": [
+    "store"
+  ],
+  "identity": "PIXO.ClipCat",
+  "publisher": "CN=62E0CEB7-8FB8-4E4C-BF40-5231FBBC83E0",
+  "validation": "MakeAppx pack with default manifest validation; unsigned for Microsoft Store"
+}
