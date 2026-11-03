@@ -17,7 +17,7 @@ ICO/ICNS sizes, and bundle resources included before codesigning.
 - [x] Produce ICNS and wire it into signed macOS packaging; update Store assets.
 - [x] Inspect all size previews; check formats and bundle wiring with focused tests.
 - [x] Run release build, Clippy and existing tests; generate regular UI previews.
-- [ ] Review, commit/push, and check Windows/macOS CI. Deliver files and limitations.
+- [x] Review, commit/push, and check Windows/macOS CI. Deliver files and limitations.
 
 ## Decisions and evidence
 
@@ -34,3 +34,11 @@ ICO/ICNS sizes, and bundle resources included before codesigning.
 - Independent read-only review found no blockers; Windows shell execution remains
   separate from PNG/icon-container inspection.
 - No release tag or Store certification change is authorized by this icon task.
+- Implemented and pushed as 7906303. CI run 41664590099: Windows icon-resource
+  validation, build and Clippy passed; tests running at the last recorded check.
+  Remote macOS job was queued. This is not a claim of remote CI completion.
+- Locally verified the actual universal .app's CFBundleIconFile and matching ICNS
+  bytes, codesign integrity, and the icon returned by NSWorkspace for that bundle.
+  Exported Finder preview: /private/tmp/clipcat-icon-native/finder-icon.png.
+- Native Windows shell display was not manually inspected; the size review is a
+  render preview. Existing Store submission remains the previous icon/version.
