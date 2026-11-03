@@ -70,7 +70,18 @@ jobs:
           if ($LASTEXITCODE) { throw 'Store packaging failed' }
       - name: Smoke test staged native app and synthetic clipboard
         shell: pwsh
-        run: ./scripts/validate_windows_store.ps1
+        run: |
+          # Keep CI terminal logs out of the product screenshot.
+          (New-Object -ComObject Shell.Application).MinimizeAll()
+          ./scripts/validate_windows_store.ps1
+          # Ask Windows to decode the EXE's actual embedded shell icon.
+          Add-Type -AssemblyName System.Drawing
+          $nativeIcon = [System.Drawing.Icon]::ExtractAssociatedIcon((Join-Path $PWD 'target/store/stage/clipcat.exe'))
+          if (!$nativeIcon) { throw 'Embedded Windows icon missing' }
+          $bitmap = $nativeIcon.ToBitmap()
+          try {
+            $bitmap.Save((Join-Path $PWD 'target/store/evidence/windows-associated-icon.png'), [System.Drawing.Imaging.ImageFormat]::Png)
+          } finally { $bitmap.Dispose(); $nativeIcon.Dispose() }
       - uses: actions/upload-artifact@v4
         with:
           name: clipcat-store
