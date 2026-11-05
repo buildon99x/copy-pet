@@ -31,6 +31,8 @@ MSIX를 생성한다. CRT는 정적으로 링크한다. 별도 유료 코드 서
 단계이며, 브라우저에서 실제 제출 상태를 확인하고 기록한다.
 
 개인정보처리방침: [privacy-policy.md](privacy-policy.md).
+상품 페이지에 실제 입력한 영어·한국어 문구, 검색어, 기능, 캡션과 공통 설정은
+[Microsoft Store 입력 데이터](msstore-inputs.md)에 보관한다.
 
 ## 최초 생성
 
