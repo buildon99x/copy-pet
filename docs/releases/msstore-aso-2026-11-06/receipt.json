@@ -1,0 +1,49 @@
+{
+  "product_id": "9NZBR8X5T677",
+  "product_name": "ClipCat",
+  "scope": "Store listing metadata only; existing published v2.5.4 package and C icon retained",
+  "basis": "User-selected promotional comparison and ASO guidance, checked against actual release source and current Partner Center fields",
+  "sources": [
+    "https://learn.microsoft.com/en-us/windows/apps/publish/publish-your-app/msix/add-additional-information",
+    "https://learn.microsoft.com/en-us/windows/apps/publish/publish-your-app/msix/screenshots-and-images",
+    "https://learn.microsoft.com/en-us/windows/apps/publish/publish-your-app/msix/import-and-export-store-listings"
+  ],
+  "changes": [
+    "Rewrote English and Korean short and full descriptions around copy/find/paste use cases",
+    "Preserved the desktop-cat identity and verified local history, text/image, HTML/RTF, tags, pinning and capture-pause features",
+    "Corrected the reference chat shortcut assumption: Windows defaults to Win+Shift+V and attempts Ctrl+Shift+V on registration failure",
+    "Added six product features per language",
+    "Registered seven relevant search terms per language; verified against server CSV export",
+    "Added localized captions to existing actual Windows screenshot"
+  ],
+  "category_review": {
+    "primary": "Productivity",
+    "secondary": "Personalization",
+    "action": "Already appropriate; retained"
+  },
+  "validation": {
+    "server_export": "Both full and short descriptions, six features, seven search terms and screenshot captions match the intended content",
+    "keyword_limits": "7 terms per language, each <=40 characters, <=21 whitespace-delimited words total",
+    "feature_limits": "Six entries per language, each <=200 characters",
+    "application_code": "No application source or package changes; no new application tests needed"
+  },
+  "limits": [
+    "Actual Windows screenshot count remains one per language; no new Windows multi-step capture session was performed",
+    "Current screenshot is an existing synthetic-data Windows capture, with localized captions; Korean UI screenshots remain future work",
+    "Analytics currently show no data; no increase in search rank, conversion or installs is established"
+  ],
+  "next_screenshot_capture": [
+    "Main: real Windows editor with clipboard picker and several synthetic items",
+    "Hotkey: picker opened over the active app, caption names the actually registered shortcut",
+    "Find: search/tag/pinned history with meaningful synthetic content",
+    "Paste: the selected synthetic text shown in the destination app",
+    "Formatting: HTML/RTF versus plain-text paste in a supported editor",
+    "Companion: native cat selection or capture-pause settings"
+  ],
+  "optimization_status": "Update in certification",
+  "observed_at_kst": "2026-11-06T00:06:43+09:00",
+  "observed_stage": "Pre-processing, step 2 of 4",
+  "existing_public_app": "In Microsoft Store",
+  "publishing": "Automatically after certification passes",
+  "new_copy_publication_verified": false
+}

@@ -1,0 +1,46 @@
+{
+  "en": {
+    "short": "Find and reuse copied text and images without leaving your workflow. Search clipboard history, pin useful clips, and paste with a shortcut—all with a quiet desktop cat.",
+    "description": "Find what you copied and get back to work—with a quiet desktop cat by your side.\n\nClipCat is a Windows clipboard manager that keeps text and image history on your device. Reuse a message, a code snippet, or an image without copying it again from the original window.\n\nCOPY. FIND. PASTE.\n1. Copy text or an image as usual. ClipCat saves it to local history while your cat reacts.\n2. Press Win+Shift+V to open the clipboard picker near your cursor, or middle-click your cat. If the default shortcut is unavailable, ClipCat tries Ctrl+Shift+V. The tray menu shows the active shortcut.\n3. Search by content, source app, or tags. Select the clip you need to paste it into your previous app, or choose plain-text paste when you do not want formatting.\n\nKEEP USEFUL CLIPS CLOSE\nPin frequently used items and organize them with tags. Reuse text and images, preserve HTML/RTF formatting, or paste plain text for a clean result. Pause clipboard collection when needed.\n\nA SMALL COMPANION FOR EVERYDAY WORK\nChoose from 12 illustrated cats with their own copy reactions, expressions, and sleeping poses. Gently click to pet your cat, drag it to a comfortable spot, and adjust its size or sound from the tray menu. English and Korean interfaces are included.\n\nLOCAL HISTORY, SIMPLE SETUP\nNo account, advertising, analytics, or cloud sync. Clipboard history stays on your device. ClipCat does not record typing or global mouse activity. Pause collection before copying sensitive information, and delete saved items when no longer needed.\n\nMicrosoft Store manages updates. For Windows 10 version 2004 or later and Windows 11 on x64 PCs.",
+    "features": [
+      "Open clipboard history with a global shortcut or a middle-click on your desktop cat",
+      "Search copied text by content, source app, or tags; pin clips you reuse often",
+      "Reuse text and image history, preserve HTML/RTF formatting, or paste plain text",
+      "Choose from 12 illustrated desktop cats with copy reactions and sleeping poses",
+      "Keep history on your device; pause capture and delete saved items when needed",
+      "Use the app in English or Korean; Microsoft Store manages updates"
+    ],
+    "keywords": [
+      "clipboard manager",
+      "clipboard history",
+      "quick paste",
+      "text snippets",
+      "clipboard picker",
+      "desktop cat",
+      "copy paste utility"
+    ],
+    "caption": "ClipCat’s native Windows clipboard panel with a saved text item. Search history, pin useful clips, or pause collection while your desktop cat keeps you company."
+  },
+  "ko": {
+    "short": "복사한 텍스트와 이미지를 다시 찾아 붙여넣으세요. 클립보드 기록 검색·태그·고정·서식 없는 붙여넣기와 함께, 조용한 데스크톱 고양이 12종이 작업을 함께합니다.",
+    "description": "복사한 내용을 다시 찾고, 하던 작업에 바로 붙여넣으세요. 조용한 데스크톱 고양이가 함께합니다.\n\nClipCat은 텍스트와 이미지 복사 기록을 내 PC에 저장하는 Windows 클립보드 관리 도구입니다. 자주 쓰는 답변, 코드 조각, 이미지를 원래 창으로 돌아가 다시 복사하는 수고를 줄여줍니다.\n\n복사 → 검색 → 선택 → 붙여넣기\n1. 평소처럼 텍스트나 이미지를 복사하세요. 고양이가 반응하며 클립보드 기록에 저장합니다.\n2. Win+Shift+V로 커서 근처에 선택창을 열거나 고양이를 마우스 가운데 버튼으로 클릭하세요. 기본 단축키를 사용할 수 없으면 Ctrl+Shift+V 등록을 시도합니다. 현재 단축키는 트레이 메뉴에서 확인할 수 있습니다.\n3. 내용·원본 앱·태그로 검색한 뒤 필요한 항목을 선택해 이전에 사용하던 프로그램에 붙여넣으세요. 서식이 필요 없을 때는 일반 텍스트로 붙여넣을 수 있습니다.\n\n자주 쓰는 내용을 가까이에\n유용한 항목은 고정하고 태그로 정리하세요. 텍스트·이미지 기록을 다시 사용하고 HTML/RTF 서식을 유지하거나 일반 텍스트만 붙여넣을 수 있습니다. 필요할 때 클립보드 수집을 일시정지할 수 있습니다.\n\n작업을 함께하는 작은 고양이\n복사 반응, 표정, 잠자는 모습이 다른 고양이 12종을 자유롭게 선택하세요. 고양이를 가볍게 클릭해 쓰다듬거나 원하는 위치로 드래그하고, 트레이 메뉴에서 크기와 소리를 조절할 수 있습니다. 한국어와 영어 UI를 지원합니다.\n\n기록은 내 PC에\n계정·광고·분석 수집·클라우드 동기화 없이 사용합니다. 클립보드 기록은 기기에 저장하며 키 입력이나 전역 마우스 활동을 기록하지 않습니다. 민감한 내용을 복사하기 전에는 수집을 일시정지하고, 필요 없는 기록은 삭제하세요.\n\n앱 업데이트는 Microsoft Store에서 관리합니다. Windows 10 버전 2004 이상 및 Windows 11의 x64 PC를 지원합니다.",
+    "features": [
+      "전역 단축키 또는 고양이 가운데 클릭으로 클립보드 기록 열기",
+      "내용·원본 앱·태그로 검색하고 자주 쓰는 항목 고정",
+      "텍스트·이미지 기록 재사용, HTML/RTF 서식 유지 및 일반 텍스트 붙여넣기",
+      "복사 반응과 잠자는 모습이 다른 데스크톱 고양이 12종",
+      "내 PC에 기록 저장, 수집 일시정지 및 저장 항목 삭제",
+      "한국어·영어 UI 지원 및 Microsoft Store를 통한 업데이트"
+    ],
+    "keywords": [
+      "클립보드 관리",
+      "클립보드 기록",
+      "빠른 붙여넣기",
+      "복사 붙여넣기",
+      "텍스트 조각",
+      "데스크톱 고양이",
+      "clipboard manager"
+    ],
+    "caption": "저장한 텍스트를 표시하는 ClipCat의 Windows 클립보드 패널입니다. 기록을 검색하고 항목을 고정하거나 수집을 일시정지할 수 있습니다."
+  }
+}
