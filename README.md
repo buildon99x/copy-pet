@@ -7,7 +7,8 @@ ClipCat은 고양이 캐릭터와 클립보드 관리자를 하나로 묶은 데
 필요할 때 검색하거나 태그로 찾아 다시 복사하고 붙여넣으세요.
 고양이를 직접 클릭하면 종류마다 다른 짧은 몸짓으로 반응합니다.
 
-[다운로드](https://github.com/buildon99x/copy-pet/releases/latest) ·
+[Microsoft Store에서 설치](https://apps.microsoft.com/detail/9NZBR8X5T677) ·
+[GitHub에서 다운로드](https://github.com/buildon99x/copy-pet/releases/latest) ·
 [개발 빌드](https://github.com/buildon99x/copy-pet/actions/workflows/ci.yml) ·
 [변경 이력](CHANGELOG.md) · [English](#english)
 
@@ -40,7 +41,9 @@ macOS·Linux에서는 고양이 창에 포커스를 준 뒤 `A`로도 열 수 �
 
 ### Windows
 
-[Releases](https://github.com/buildon99x/copy-pet/releases/latest)에서
+**Microsoft Store 버전:** [ClipCat 설치](https://apps.microsoft.com/detail/9NZBR8X5T677) (Windows 10 2004 이상 또는 Windows 11, x64). Store가 업데이트를 관리합니다.
+
+**독립 실행형 버전:** [Releases](https://github.com/buildon99x/copy-pet/releases/latest)에서
 `clipcat-windows-x86_64.exe`를 받아 실행합니다. 별도 설치 과정은 없습니다.
 트레이 아이콘에서 설정과 종료 메뉴를 사용할 수 있습니다.
 
@@ -243,7 +246,7 @@ screenshots of the current Linux app, not concept art.
 This README describes the current development source. Published releases may
 lag behind it; see [Unreleased](CHANGELOG.md#unreleased).
 
-- **Get it:** [Releases](https://github.com/buildon99x/copy-pet/releases/latest)
+- **Get it:** [Microsoft Store](https://apps.microsoft.com/detail/9NZBR8X5T677) for Windows, or [GitHub Releases](https://github.com/buildon99x/copy-pet/releases/latest)
   for published binaries. Universal macOS test apps are available from successful
   macOS runs in [CI](https://github.com/buildon99x/copy-pet/actions/workflows/ci.yml):
   download `clipcat-macos-universal-test`, unpack both ZIP layers, quit an existing
