@@ -1,0 +1,69 @@
+{
+  "product_name": "ClipCat",
+  "product_id": "9NZBR8X5T677",
+  "observed_at_kst": "2026-11-06T01:25:38+09:00",
+  "scope": "Screenshot replacement only in English and Korean Store listings",
+  "previous_copy_update": "Partner Center showed the earlier description/keyword update as published before this image update began",
+  "existing_app": "In Microsoft Store",
+  "update_status": "Update in certification",
+  "update_stage": "Pre-processing, step 2 of 4",
+  "publishing": "Automatically after certification passes",
+  "new_images_publication_verified": false,
+  "package": "Existing clipcat-store-x64-2.5.4.msix unchanged",
+  "images_per_language": 3,
+  "images": [
+    {
+      "position": 1,
+      "file": "01-main.png",
+      "size": [
+        1440,
+        2168
+      ],
+      "local_source_sha256": "212e6db71ba38a96d598ef2e2229928c6e3a137bc954866f0c83b4b81376f539",
+      "captions": {
+        "en-US": "ClipCat’s Korean interface: clipboard history with search, tags and pinned items, alongside the Ragdoll desktop cat.",
+        "ko-KR": "검색·태그·고정 항목을 확인할 수 있는 ClipCat 클립보드 기록과 랙돌 고양이입니다."
+      }
+    },
+    {
+      "position": 2,
+      "file": "02-cats-1.png",
+      "size": [
+        1536,
+        1024
+      ],
+      "local_source_sha256": "738a025a191a14d616cba1308f1d20852d448c53734b0f539f3c9f971d37783f",
+      "captions": {
+        "en-US": "Six ClipCat companions in different in-app poses: Ragdoll, Birman, Siamese, Bombay, RagaMuffin and Persian.",
+        "ko-KR": "서로 다른 앱 내 자세의 고양이 6종: 랙돌, 버만, 샴, 봄베이, 라가머핀, 페르시안입니다."
+      }
+    },
+    {
+      "position": 3,
+      "file": "03-cats-2.png",
+      "size": [
+        1536,
+        1024
+      ],
+      "local_source_sha256": "78238c30b3f028608f5f1e6fda078ccf2f8cbb49e30e028eff547ebdcf3ef878",
+      "captions": {
+        "en-US": "Six more ClipCat companions in different in-app poses: Turkish Angora, American Curl, Munchkin, British Shorthair, Russian Blue and Tuxedo pattern.",
+        "ko-KR": "서로 다른 앱 내 자세의 나머지 6종: 터키시 앙고라, 아메리칸 컬, 먼치킨, 브리티시 쇼트헤어, 러시안 블루, 턱시도 무늬입니다."
+      }
+    }
+  ],
+  "validation": [
+    "Approved local image hashes matched their review manifest immediately before upload",
+    "Server CSV export contains exactly three distinct desktop image entries per language and the intended localized captions",
+    "Comparison with pre-update server CSV found changes only in DesktopScreenshot image/caption fields; descriptions, keywords, features and C tile retained",
+    "Visible image dimensions were 1440x2168, 1536x1024, 1536x1024 in both languages; main and card thumbnails reviewed in order",
+    "Registration/update submission confirmed in Partner Center"
+  ],
+  "limits": [
+    "The main image is a 4x enlargement of the user attachment; it adds no new detail",
+    "Cat cards are compositions of existing runtime asset frames, not live app captures",
+    "Remote image byte hashes were not verified; recorded SHA-256 values identify the local approved source files",
+    "New image visibility on the public Store is pending Microsoft approval"
+  ],
+  "artifact_storage": "Original/derived image files, account screenshots, full CSV exports and internal submission identifiers remain in ignored .local; this public receipt contains no image files or internal asset URLs"
+}
