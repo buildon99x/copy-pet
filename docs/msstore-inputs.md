@@ -234,3 +234,15 @@ CSV·계정 화면은 ignored `.local/`에 보관하며 공개 레포에는 포�
 [실험 기록](releases/msstore-experiment-2026-11-06/receipt.json)과
 [Microsoft 공식 안내](https://learn.microsoft.com/en-us/windows/apps/publish/product-page-experiments)를
 참조한다. 이미지 파일과 계정 화면은 ignored `.local/`에만 보관한다.
+
+## 실험 심사 제출 완료 — 2026-11-06 01:50 KST
+
+Partner Center에서 기본 이미지 업데이트의 게시 완료와 최신 상품의 Store 제공
+확인을 확인한 뒤, 저장한 실험을 제출했다. 새로고침 후에도 동일한 실험명이
+**In certification**으로 유지됐다. A/B 이미지 순서는 위 초안과 같다.
+
+기본 이미지 업데이트는 게시 완료이며, 실험은 별도 심사 중이다. 실험의 실제
+트래픽 노출과 성과는 아직 확인하지 않았다. 게시 확인은 Partner Center 기준이며,
+공개 Store 웹페이지에서 각 이미지가 렌더링되는지는 별도로 확인하지 않았다.
+최종 상태와 검증 범위는 [실험 기록](releases/msstore-experiment-2026-11-06/receipt.json)에
+갱신했다.
