@@ -1,0 +1,21 @@
+{
+  "product_name": "ClipCat",
+  "product_id": "9NZBR8X5T677",
+  "observed_at_kst": "2026-11-06T01:40:38+09:00",
+  "experiment_name": "Lead image - app vs cats - 20261106",
+  "experiment_status": "In draft",
+  "experiment_submitted": false,
+  "experiment_live": false,
+  "hypothesis": "Leading with the cat collection instead of the app interface may change installation conversion; no outcome is assumed",
+  "intended_original_order": ["01-main.png", "02-cats-1.png", "03-cats-2.png"],
+  "saved_variant_order": ["02-cats-1.png", "01-main.png", "03-cats-2.png"],
+  "variant_scope": "Screenshots across all languages; no logo replacement",
+  "traffic_allocation": "No allocation control was exposed in the saved draft UI; not independently confirmed",
+  "baseline_update_status": "Update in publishing, step 4 of 4; certification passed",
+  "baseline_new_images_publication_verified": false,
+  "submission_prerequisite": "Confirm the original three-image update has published before submitting the experiment",
+  "evaluation": ["Original versus variant installation conversion", "Views, impressions and installs as available", "Do not infer a winner from sparse data or change base screenshots during the experiment"],
+  "validation": ["Partner Center overview showed the named experiment In draft after Save draft", "Reopened Experiment details retained the name and all three images", "Visually verified variant order: cat card 1, main interface, cat card 2"],
+  "official_documentation": "https://learn.microsoft.com/en-us/windows/apps/publish/product-page-experiments",
+  "artifact_storage": "Images, account screenshots and full page snapshots remain in ignored .local; no internal asset URLs or submission identifiers are included here"
+}
