@@ -2,7 +2,7 @@
 
 Public product: [ClipCat on Microsoft Store](https://apps.microsoft.com/detail/9NZBR8X5T677) · [Source / project info](https://github.com/buildon99x/copy-pet)
 
-> Reusable posting drafts. The first Reddit comment was published on 2026-11-06; see the [execution record](clipcat-reddit-2026-11-06.md). Other channel drafts remain unsubmitted. Check each community's promotion rules first. Product Hunt and AlternativeTo require their own accounts / submission workflow.
+> Reusable posting drafts. The first [Reddit comment](clipcat-reddit-2026-11-06.md) and [X image post](clipcat-x-2026-11-06.md) were published on 2026-11-06. Other channel drafts remain unsubmitted. The user skipped AlternativeTo and switched to X. Check each community's promotion rules first. Product Hunt and AlternativeTo require their own accounts / submission workflow.
 
 ## Positioning
 
@@ -89,7 +89,7 @@ Never depict functionality the captured Store build cannot perform. Use syntheti
 ## Status and next checks
 
 - Existing ASO description / keywords / 3 screenshots have already been submitted. The app listing screenshots and A/B experiment are tracked in `docs/msstore-inputs.md`.
-- The first Reddit weekly-thread comment is published; the other social and directory posts remain drafts. See the [execution record](clipcat-reddit-2026-11-06.md) for the exact submitted copy and verification limits.
+- The first Reddit weekly-thread comment and X image post are published. See the [Reddit record](clipcat-reddit-2026-11-06.md) and [X record](clipcat-x-2026-11-06.md) for exact submitted copy and verification limits. Other channel drafts remain unsubmitted.
 - Product Hunt: personal verified account required; avoid vote solicitation.
 - AlternativeTo: verified email and review workflow required.
 - Reddit and Korean communities: obey the specific community self-promotion rules before submitting.

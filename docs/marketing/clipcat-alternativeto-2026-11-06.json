@@ -1,0 +1,31 @@
+{
+  "status": "Unsubmitted draft; user skipped AlternativeTo and switched to X on 2026-11-06",
+  "name": "ClipCat",
+  "developer": "PIXO",
+  "pricing": "Free",
+  "license": "MIT",
+  "platforms": ["Windows"],
+  "requirements": "Windows 10 version 2004 or later / Windows 11, x64",
+  "website": "https://apps.microsoft.com/detail/9NZBR8X5T677",
+  "source_code": "https://github.com/buildon99x/copy-pet",
+  "short_description": "ClipCat is a free Windows clipboard manager with local text and image history, search, tags, pinned clips, and 12 animated desktop cats.",
+  "description": "ClipCat is a free, open-source clipboard manager for Windows with a small desktop cat companion. It keeps copies of text and images in local history, so you can find and reuse something without returning to the original app.\n\nWhen you copy text, your cat reacts by eating a fish. You can choose from 12 cats, each with its own appearance and animations. The companion stays on your desktop, and you can interact with it whenever you like.\n\nFor everyday work, ClipCat lets you search clipboard history, add tags, and pin frequently used items. It supports images and text, preserves HTML/RTF formatting, and lets you paste plain text when formatting would get in the way. The default Windows shortcut is Win+Shift+V; if registration fails, ClipCat attempts Ctrl+Shift+V.\n\nClipboard history stays on your device and is not encrypted. You can pause collection when copying sensitive information and delete saved clips when they are no longer needed. ClipCat does not require an account or cloud synchronization.\n\nClipCat supports Windows 10 version 2004 or later and Windows 11 on x64 PCs. Microsoft Store manages updates for the Store edition. The source code is available under the MIT license.",
+  "tag_candidates": ["Clipboard Manager", "Clipboard History", "Desktop Pet", "Productivity", "Open Source"],
+  "images": [
+    {
+      "file": "01-main.png",
+      "sha256": "212e6db71ba38a96d598ef2e2229928c6e3a137bc954866f0c83b4b81376f539",
+      "caption": "ClipCat's clipboard panel with a Ragdoll desktop cat, shown in Korean. An enlarged capture of the actual application interface."
+    },
+    {
+      "file": "02-cats-1.png",
+      "sha256": "738a025a191a14d616cba1308f1d20852d448c53734b0f539f3c9f971d37783f",
+      "caption": "Six selectable ClipCat companions: Ragdoll, Birman, Siamese, Bombay, RagaMuffin, and Persian. A gallery assembled from runtime character frames, not a live application screenshot."
+    },
+    {
+      "file": "03-cats-2.png",
+      "sha256": "78238c30b3f028608f5f1e6fda078ccf2f8cbb49e30e028eff547ebdcf3ef878",
+      "caption": "Six more companions: Turkish Angora, American Curl, Munchkin, British Shorthair, Russian Blue, and Tuxedo pattern. A gallery assembled from runtime character frames, not a live application screenshot."
+    }
+  ]
+}
