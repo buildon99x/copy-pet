@@ -23,6 +23,8 @@ Hi! I'm the developer of ClipCat, a free Windows clipboard manager with a little
 
 When you copy text, the cat eats a fish. There are 12 cats to choose from, with searchable clipboard history, tags, pinned clips, and image history on Windows.
 
+[Screenshot: Windows clipboard panel + Ragdoll cat](https://github.com/buildon99x/copy-pet/blob/main/docs/releases/msstore-c-icon-2026-11-04/windows-native-panel.png?raw=true) · [More cats: actual Linux screenshots](https://github.com/buildon99x/copy-pet#readme)
+
 One workflow: copy a reusable reply, switch tasks, then press Win+Shift+V, search for the reply, and select it to paste into your previous app. If that shortcut cannot be registered, ClipCat tries Ctrl+Shift+V.
 
 History stays on your PC (stored unencrypted), with no account or cloud sync. You can pause collection before copying sensitive content. The Store version's updates are managed by Microsoft Store.
@@ -32,6 +34,12 @@ Source (MIT): https://github.com/buildon99x/copy-pet
 
 AI helped polish this post. I'm sharing my own project and would appreciate feedback: would you keep the cat visible while working, or hide it until needed?
 ```
+
+## Screenshot follow-up — 2026-11-06
+
+At the user's request, edited the same comment to add the actual Windows clipboard-panel/Ragdoll screenshot and the README's cat screenshot gallery. Inspected the local Windows capture and verified its public GitHub image view before adding the link. The gallery images are explicitly labeled Linux captures.
+
+The Reddit comment edit toolbar offered text formatting and links, with no image attachment control. Added clickable image/gallery links; images are **not embedded inline** in the comment. Saved the edit and reloaded the permalink to verify the screenshot link persisted. Evidence: ignored `.local/promotion-2026-11-06/reddit-screenshot-links.png`. No duplicate comment or post was created.
 
 ## Follow-up plan, not scheduled work
 
