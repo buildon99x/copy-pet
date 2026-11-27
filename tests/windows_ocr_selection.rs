@@ -263,6 +263,10 @@ fn hosted_desktop() -> bool {
         && std::env::var("RUNNER_ENVIRONMENT").as_deref() == Ok("github-hosted")
 }
 
+fn desktop_opt_in() -> bool {
+    std::env::var("CLIPCAT_TEST_DESKTOP").as_deref() == Ok("1")
+}
+
 // On hosted Windows the runner's Terminal can occupy the editor's click
 // point even after the editor enters the topmost band. Minimize only that
 // obstruction on the disposable VM, then restore its original placement.
@@ -271,7 +275,7 @@ struct RunnerTerminal(Option<(HWND, u32, WINDOWPLACEMENT)>);
 
 impl RunnerTerminal {
     unsafe fn clear_obstruction(&mut self, hit: HWND) {
-        if self.0.is_some() || !hosted_desktop() || hit.is_null() { return; }
+        if self.0.is_some() || !hosted_desktop() || !desktop_opt_in() || hit.is_null() { return; }
         let window = GetAncestor(hit, GA_ROOT);
         let mut class = [0u16; 64];
         let len = GetClassNameW(window, class.as_mut_ptr(), class.len() as i32);
@@ -527,7 +531,7 @@ unsafe fn open_preview(fixture: &mut Fixture) -> (HWND, HWND, HWND) {
 // independent profile and child, and a failed scenario cannot skip the others.
 fn desktop_session() -> Option<std::sync::MutexGuard<'static, ()>> {
     static DESKTOP: std::sync::Mutex<()> = std::sync::Mutex::new(());
-    (hosted_desktop() || std::env::var("CLIPCAT_TEST_DESKTOP").as_deref() == Ok("1")).then(|| {
+    (hosted_desktop() || desktop_opt_in()).then(|| {
         let guard = DESKTOP.lock().unwrap_or_else(|e| e.into_inner());
         // The app uses per-monitor v2. The driver must hit-test and click in
         // that same coordinate space, including on a scaled runner display.
