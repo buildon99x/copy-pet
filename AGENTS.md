@@ -84,7 +84,8 @@ cargo run --locked --release --example preview  # /tmp/clipcat-preview에 PNG �
 bash scripts/release.sh verify                 # 변경 이력 형식·버전 검사
 ```
 
-Windows에서는 `cargo clippy --locked --release --features portable`도 실행한다.
+Windows에서는 `cargo clippy --locked --release --features portable`과
+`cargo test --locked --release --features portable`도 실행한다.
 잠금 파일 변경이 작업 범위에 포함되지 않으면 `--locked`를 유지한다.
 아이콘 아트를 변경했을 때만 `cargo run --locked --bin gen_icon`으로 아이콘을 재생성한다.
 성능 측정은 반드시 릴리스 빌드로 한다.
@@ -96,7 +97,7 @@ Windows에서는 `cargo clippy --locked --release --features portable`도 실행
 - UI·렌더링 변경은 preview를 생성하고 실제 PNG를 확인한다. 고양이·생선·아이콘·한글과 영어 패널·글꼴 표시를 확인한다.
 - 런타임 변경은 가능한 OS에서 앱을 직접 실행한다. Linux 헤드리스 환경은 Xvfb로 창과 합성 클립보드 문구의 수집·표시·저장을 확인할 수 있다.
 - 클립 선택·붙여넣기·패널 설정 변경은 Windows에서 핫키 플라이아웃과 가운데 클릭 패널을 각각 확인한다. 설정이 Windows 트레이에서도 도달 가능한지 확인하고, 서식 유지·일반 텍스트 붙여넣기·포커스 복원·자기 복사 억제를 검증한다. 관련 함정은 LNR-0006~0008을 참고한다.
-- CI는 Windows·macOS 빌드와 테스트를 수행하며 Linux 빌드 작업은 없다. Linux 관련 변경은 로컬 Linux 검증이 필요하다. 교차 타깃 `cargo check`는 해당 타깃 설치 후 사용할 수 있지만 실제 OS 실행 검증을 대신하지 않는다.
+- CI는 Windows·macOS 빌드와 테스트를 수행한다. 소스가 바뀐 PR과 수동 실행에서는 Linux X11 빌드·테스트와 Xvfb 실제 앱 검증도 수행한다. Linux 관련 변경은 이 실제 Linux 검증 결과를 확인한다. 교차 타깃 `cargo check`는 해당 타깃 설치 후 사용할 수 있지만 실제 OS 실행 검증을 대신하지 않는다.
 
 ## 코드와 문서 관리
 

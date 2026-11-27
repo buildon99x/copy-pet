@@ -78,6 +78,7 @@ scripts/release.sh     the release path: gates, bump, CHANGELOG rotation, tag,
                        atomic main/tag push (scripts/release.cmd = Windows wrapper)
 scripts/production.py  published-release validation, production promotion and audit
 tests/test_production.py  real Git remote promotion/recovery regression tests
+scripts/validate_linux_workflows.py  isolated CI Xvfb clipboard capture and native-panel smoke
 docs/releasing.md     main/production contract and failed-release recovery
 CHANGELOG.md           user-facing changes only — see policy in its header
 assets/clipcat.ico     the embedded app icon — generated, not hand-edited
@@ -95,7 +96,7 @@ docs/specs/            product & technical specs
 .claude/skills/release/  project skill that drives scripts/release.sh
 .context/kb/adr/       architecture decision records (why)
 .context/kb/lnr/       lessons & near-misses (what bit us)
-.github/workflows/     CI: builds windows + macos (no Linux build; changelog
-                       lint runs on macos); v tags publish the GitHub release
+.github/workflows/     CI: builds Windows + macOS; PR Linux X11/Xvfb validation; changelog
+                       lint runs on Ubuntu; v tags publish the GitHub release
                        + the binaries the in-app updater downloads
 ```

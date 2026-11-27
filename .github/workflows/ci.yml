@@ -166,6 +166,10 @@ jobs:
         if: runner.os == 'Windows'
         run: cargo clippy --release --features portable
 
+      - name: Test portable clipboard and hotkey contracts on Windows
+        if: runner.os == 'Windows'
+        run: cargo test --locked --release --features portable
+
       # The in-app updater (src/update.rs) downloads release assets from
       # github.com/<repo>/releases/download/<tag>/<name>; these names are
       # part of that contract — keep them in sync with update::{WINDOWS_ASSET,MACOS_ASSET}.
@@ -197,6 +201,42 @@ jobs:
           name: release-${{ matrix.os }}
           path: dist/release/*
           if-no-files-found: error
+
+  # PR validation for shared clipboard/hotkey code. Separate from release assets.
+  linux-workflows:
+    name: Linux X11 workflows
+    needs: [changes, changelog]
+    if: >-
+      (github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch') &&
+      needs.changes.outputs.source == 'true'
+    runs-on: ubuntu-latest
+    env:
+      CLIPCAT_CONFIG_DIR: ${{ runner.temp }}/clipcat-linux-tests
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+      - name: Install X11 validation dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libx11-dev libxi-dev libxtst-dev libxkbcommon-dev libxkbcommon-x11-dev pkg-config xvfb xclip xdotool imagemagick fonts-noto-cjk
+      - name: Build and check Linux
+        run: |
+          cargo build --locked --release
+          cargo clippy --locked --release
+          xvfb-run -a cargo test --locked --release
+          xvfb-run -a cargo test --locked --release x11_conflict_rebind_and_cleanup -- --ignored --test-threads=1
+      - name: Exercise clipboard and native panel
+        run: xvfb-run -a python3 scripts/validate_linux_workflows.py target/release/clipcat
+      - name: Upload Linux validation evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: clipcat-linux-validation
+          path: ${{ runner.temp }}/clipcat-linux-validation
+          if-no-files-found: warn
 
   # Publishes the GitHub Release the in-app updater checks against. Runs on
   # an ubuntu runner but builds nothing — it only attaches the artifacts.
