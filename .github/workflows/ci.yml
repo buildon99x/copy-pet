@@ -221,7 +221,7 @@ jobs:
       - name: Install X11 validation dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y libx11-dev libxi-dev libxtst-dev libxkbcommon-dev libxkbcommon-x11-dev pkg-config xvfb xclip xdotool imagemagick fonts-noto-cjk
+          sudo apt-get install -y libx11-dev libxi-dev libxtst-dev libxkbcommon-dev libxkbcommon-x11-dev pkg-config xvfb xclip xdotool imagemagick fonts-noto-cjk python3-tk
       - name: Build and check Linux
         run: |
           cargo build --locked --release
