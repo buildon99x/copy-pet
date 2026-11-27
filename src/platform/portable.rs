@@ -74,9 +74,6 @@ struct PortableApp {
     // clipboard
     clip_rx: Receiver<ClipCapture>,
     suppress: Suppress,
-    /// Mirror of `st.clip_capture` for the watcher thread: while false the
-    /// clipboard is not even read.
-    capture_flag: Arc<AtomicU64>,
     hotkey: RegisteredHotkey,
     hotkey_label: String,
     #[cfg(not(target_os = "macos"))]
@@ -175,7 +172,6 @@ impl PortableApp {
         pet: Pet,
         clip_rx: Receiver<ClipCapture>,
         suppress: Suppress,
-        capture_flag: Arc<AtomicU64>,
         hotkey: RegisteredHotkey,
         hotkey_label: String,
     ) -> Self {
@@ -198,7 +194,6 @@ impl PortableApp {
             #[cfg(not(target_os = "macos"))]
             privacy_source: None,
             suppress,
-            capture_flag,
             hotkey,
             hotkey_label,
             cursor: PhysicalPosition::new(0.0, 0.0),
@@ -1228,7 +1223,7 @@ impl ApplicationHandler<HotkeyEvent> for PortableApp {
                 self.pet.notify_update(&v);
             }
             // copy events observed by the clipboard watcher
-            let epoch = sync_capture_epoch(&self.capture_flag, self.pet.st.clip_capture);
+            let epoch = self.pet.capture_epoch.load(Ordering::Acquire);
             while let Ok(cap) = self.clip_rx.try_recv() {
                 if cap.capture_epoch == epoch {
                     self.pet.on_copy_rich(cap.text, cap.source, None, cap.formats);
@@ -1336,16 +1331,40 @@ fn paste_events(mac: bool) -> Vec<rdev::EventType> {
     events
 }
 
-fn sync_capture_epoch(epoch: &AtomicU64, capture: bool) -> u64 {
-    // The UI thread is the only writer. An even epoch enables capture.
-    let current = epoch.load(Ordering::Acquire);
-    if current.is_multiple_of(2) == capture { return current; }
-    epoch.fetch_add(1, Ordering::AcqRel).wrapping_add(1)
+fn consume_self_copy(marker: &mut Option<String>, text: &str) -> bool {
+    if marker.as_deref() != Some(text) { return false; }
+    *marker = None;
+    true
+}
+
+#[cfg(any(windows, target_os = "macos", test))]
+fn poll_generation<T>(generation: &mut isize, baseline: &mut bool, current: isize,
+    read: impl FnOnce() -> Result<Option<T>, ()>) -> Option<T> {
+    if std::mem::take(baseline) {
+        *generation = current;
+        return None;
+    }
+    if *generation == current { return None; }
+    // Err is transient (e.g. another Windows app still holds the lock).
+    // Ok(None) definitively skips a private or unsupported generation.
+    let observation = read().ok()?;
+    *generation = current;
+    observation
+}
+
+#[cfg(any(target_os = "linux", test))]
+fn stable_text(last: &mut Option<String>, baseline: &mut bool, before: Option<u32>,
+    after: Option<u32>, observed: Option<String>) -> Option<String> {
+    if before != after { return None; }
+    let skip = std::mem::take(baseline) || observed == *last;
+    last.clone_from(&observed);
+    if skip { None } else { observed }
 }
 
 /// Resynchronize silently across pauses. Native generation checks avoid reading
 /// a marked payload on later polls or mistaking an old clipboard for a new copy.
 fn spawn_clipboard_watcher(tx: Sender<ClipCapture>, suppress: Suppress, capture: Arc<AtomicU64>) {
+    let mut seen_epoch = capture.load(Ordering::Acquire);
     std::thread::spawn(move || {
         #[cfg(target_os = "macos")]
         use super::mac_clipboard as native;
@@ -1359,7 +1378,6 @@ fn spawn_clipboard_watcher(tx: Sender<ClipCapture>, suppress: Suppress, capture:
         let mut last = None;
         #[cfg(target_os = "linux")]
         let source_probe = super::linux_clipboard::SourceProbe::open();
-        let mut seen_epoch = capture.load(Ordering::Acquire);
         let mut baseline = cfg!(target_os = "linux");
         loop {
             std::thread::sleep(CLIP_POLL);
@@ -1372,29 +1390,27 @@ fn spawn_clipboard_watcher(tx: Sender<ClipCapture>, suppress: Suppress, capture:
             #[cfg(any(windows, target_os = "macos"))]
             let (text, source, formats) = {
                 let current = native::generation();
-                let unchanged = generation == current;
-                generation = current;
-                if std::mem::take(&mut baseline) || unchanged { continue; }
-                let Some(copy) = native::observe(current) else { continue };
+                let Some(copy) = poll_generation(&mut generation, &mut baseline, current, || {
+                    #[cfg(windows)]
+                    { native::observe(current) }
+                    #[cfg(target_os = "macos")]
+                    { Ok(native::observe(current)) }
+                }) else { continue };
                 copy
             };
             #[cfg(target_os = "linux")]
             let (text, source, formats) = {
                 let owner = source_probe.as_ref().and_then(|probe| probe.owner());
+                let source = owner.and_then(|id| source_probe.as_ref()?.name(id));
                 let observed = cb.get_text().ok();
-                let skip = std::mem::take(&mut baseline) || observed == last;
-                last.clone_from(&observed);
-                if skip { continue; }
-                let Some(text) = observed else { continue };
-                let source = source_probe.as_ref().and_then(|probe| {
-                    let id = owner?;
-                    (probe.owner() == Some(id)).then(|| probe.name(id)).flatten()
-                });
+                let after = source_probe.as_ref().and_then(|probe| probe.owner());
+                let Some(text) = stable_text(&mut last, &mut baseline, owner, after, observed)
+                    else { continue };
                 (text, source, None)
             };
             // our own copy-back? consume the marker and skip one event
             if let Ok(mut guard) = suppress.lock() {
-                if guard.take().as_deref() == Some(text.as_str()) { continue; }
+                if consume_self_copy(&mut guard, &text) { continue; }
             }
             if tx.send(ClipCapture { text, source, formats, capture_epoch: epoch }).is_err() {
                 return;
@@ -1411,8 +1427,6 @@ pub fn run() {
     let (tx, rx) = std::sync::mpsc::channel();
     let suppress: Suppress = Arc::new(Mutex::new(None));
     let st = Persist::load();
-    let capture_flag = Arc::new(AtomicU64::new(u64::from(!st.clip_capture)));
-    spawn_clipboard_watcher(tx, suppress.clone(), capture_flag.clone());
 
     // daily GitHub release check (ADR-0009)
     crate::update::set_enabled(st.auto_update);
@@ -1425,7 +1439,8 @@ pub fn run() {
     let hotkey = RegisteredHotkey::new(event_loop.create_proxy());
     let spec = st.hotkey.clone();
     let pet = Pet::new(st);
-    let mut app = PortableApp::new(pet, rx, suppress, capture_flag, hotkey, String::new());
+    spawn_clipboard_watcher(tx, suppress.clone(), pet.capture_epoch.clone());
+    let mut app = PortableApp::new(pet, rx, suppress, hotkey, String::new());
     app.apply_new_hotkey(&spec);
     event_loop.set_control_flow(ControlFlow::WaitUntil(Instant::now() + TICK));
     let _ = event_loop.run_app(&mut app);
@@ -1435,14 +1450,41 @@ pub fn run() {
 mod paste_tests {
     use super::*;
     #[test]
-    fn privacy_resume_invalidates_pending_events_even_between_polls() {
-        let epoch = AtomicU64::new(0);
-        let pending = sync_capture_epoch(&epoch, true);
-        assert_eq!(sync_capture_epoch(&epoch, false), 1);
-        assert_eq!(sync_capture_epoch(&epoch, false), 1);
-        let resumed = sync_capture_epoch(&epoch, true);
-        assert_ne!(pending, resumed);
-        assert_eq!(sync_capture_epoch(&epoch, true), resumed);
+    fn privacy_two_capture_gestures_before_frame_invalidate_event() {
+        let mut p = Pet::new(Persist::default());
+        let watcher = p.capture_epoch.clone();
+        let pending = watcher.load(Ordering::Acquire);
+        p.apply_menu_action(crate::menu::MenuAction::ToggleCapture);
+        assert_eq!(watcher.load(Ordering::Acquire), pending + 1);
+        p.apply_menu_action(crate::menu::MenuAction::ToggleCapture);
+        assert_eq!(watcher.load(Ordering::Acquire), pending + 2);
+    }
+
+    #[test]
+    fn privacy_unrelated_read_does_not_acknowledge_later_self_copy() {
+        let mut marker = Some("own Y".to_owned());
+        assert!(!consume_self_copy(&mut marker, "external X"));
+        assert!(consume_self_copy(&mut marker, "own Y"));
+        assert!(!consume_self_copy(&mut marker, "own Y"));
+    }
+
+    #[test]
+    fn privacy_busy_generation_retries_and_private_generation_is_consumed() {
+        let mut generation = 4;
+        let mut baseline = false;
+        assert_eq!(poll_generation::<i32>(&mut generation, &mut baseline, 5, || Err(())), None);
+        assert_eq!(poll_generation(&mut generation, &mut baseline, 5, || Ok(Some(51))), Some(51));
+        assert_eq!(poll_generation::<i32>(&mut generation, &mut baseline, 6, || Ok(None)), None);
+        assert_eq!(poll_generation(&mut generation, &mut baseline, 6, || Ok(Some(61))), None);
+    }
+
+    #[test]
+    fn privacy_unstable_x11_owner_does_not_emit_or_update_baseline() {
+        let mut last = Some("old".into());
+        let mut baseline = false;
+        assert!(stable_text(&mut last, &mut baseline, Some(1), Some(2), Some("secret".into())).is_none());
+        assert_eq!(last.as_deref(), Some("old"));
+        assert_eq!(stable_text(&mut last, &mut baseline, Some(2), Some(2), Some("secret".into())).as_deref(), Some("secret"));
     }
 
     #[test]

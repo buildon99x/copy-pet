@@ -59,11 +59,11 @@ pub fn generation() -> isize {
 }
 
 #[cfg(feature = "portable")]
-pub fn observe(expected: isize) -> Option<(String, Option<String>, Option<crate::clipboard::RichFormats>)> {
+pub fn observe(expected: isize) -> Result<Option<(String, Option<String>, Option<crate::clipboard::RichFormats>)>, ()> {
     // SAFETY: the lock spans identity, privacy flags and text. The OS owns the
     // data handle and it is unlocked before closing the clipboard.
     unsafe {
-        if OpenClipboard(std::ptr::null_mut()) == 0 { return None; }
+        if OpenClipboard(std::ptr::null_mut()) == 0 { return Err(()); }
         let result = (|| {
             if generation() != expected || marked_open() { return None; }
             let source = owner_path().and_then(|p| app_name(&p));
@@ -80,6 +80,22 @@ pub fn observe(expected: isize) -> Option<(String, Option<String>, Option<crate:
             Some((text, source, None))
         })();
         CloseClipboard();
-        result
+        Ok(result)
+    }
+}
+
+#[cfg(all(test, feature = "portable"))]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn privacy_locked_clipboard_requests_retry() {
+        // Take only the lock, never read or change the user's clipboard.
+        unsafe {
+            assert_ne!(OpenClipboard(std::ptr::null_mut()), 0);
+            let busy = std::thread::spawn(|| observe(generation()).is_err()).join();
+            CloseClipboard();
+            assert!(busy.unwrap());
+        }
     }
 }

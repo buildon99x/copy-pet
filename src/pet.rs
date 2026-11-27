@@ -82,6 +82,9 @@ fn seed() -> u32 {
 }
 
 pub struct Pet {
+    /// Even while capture is enabled. Increment on each actual UI toggle so a
+    /// watcher event cannot cross a pause/resume pair between frames.
+    pub(crate) capture_epoch: std::sync::Arc<std::sync::atomic::AtomicU64>,
     pub st: Persist,
     cat_art: crate::hunter_art::CatArt,
     pub cat_picker: Option<crate::cat_picker::CatPicker>,
@@ -154,6 +157,7 @@ impl Pet {
         let mut clips = ClipStore::load();
         Self::expire_history(&mut clips, st.retention_days);
         Pet {
+            capture_epoch: std::sync::Arc::new(std::sync::atomic::AtomicU64::new(u64::from(!st.clip_capture))),
             cat_art,
             cat_picker: None,
             st,
@@ -821,6 +825,7 @@ impl Pet {
                 }
             }
             PanelAction::ToggleCapture => {
+                self.capture_epoch.fetch_add(1, std::sync::atomic::Ordering::AcqRel);
                 self.st.clip_capture = !self.st.clip_capture;
                 if !self.st.clip_capture {
                     self.affection = None;
