@@ -88,10 +88,12 @@ root.title("ClipCat synthetic paste target")
 text = tk.Text(root, width=55, height=8)
 text.pack()
 text.focus_set()
+root.update()
 file = Path(sys.argv[1])
 def save():
     tmp = file.with_suffix(".tmp")
-    tmp.write_text(json.dumps({"text": text.get("1.0", "end-1c")}))
+    tmp.write_text(json.dumps({"text": text.get("1.0", "end-1c"),
+                               "window": str(root.tk.call("wm", "frame", root))}))
     tmp.replace(file)
     root.after(50, save)
 save()
@@ -99,11 +101,19 @@ root.mainloop()
 '''
             target = subprocess.Popen([sys.executable, "-c", target_code, str(target_file)],
                                       stdout=log, stderr=log)
-            time.sleep(1)
-            target_windows = subprocess.check_output(["xdotool", "search", "--onlyvisible", "--pid", str(target.pid)],
-                                                     text=True, timeout=5).splitlines()
+            ready_until = time.monotonic() + 15
+            target_windows = []
+            while time.monotonic() < ready_until:
+                if target.poll() is not None:
+                    raise RuntimeError(f"Synthetic paste target exited: {target.returncode}")
+                if target_file.exists():
+                    ready = json.loads(target_file.read_text())
+                    if ready.get("window"):
+                        target_windows = [ready["window"]]
+                        break
+                time.sleep(0.1)
             if not target_windows:
-                raise RuntimeError("Synthetic paste target did not create a native window.")
+                raise RuntimeError("Synthetic paste target did not report its native window before timeout.")
 
             def focus(win):
                 subprocess.run(["xdotool", "windowfocus", "--sync", win], check=True, timeout=5)
