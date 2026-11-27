@@ -941,7 +941,16 @@ pub fn draw_panel_scaled(pm: &mut Pixmap, v: &PanelView, density: f32) {
                 image.height
             )
         });
-        let flat = image_label.as_deref().unwrap_or_else(|| clip.flattened());
+        let flat = clip.ocr_text.as_deref().map(|s| {
+            // Bound per-frame shaping of potentially long OCR output.
+            &s[..s.char_indices().nth(160).map_or(s.len(), |(end, _)| end)]
+        }).or(image_label.as_deref()).unwrap_or_else(|| clip.flattened());
+        #[cfg(all(windows, not(feature = "portable")))]
+        let flat = match v.panel.ocr_status {
+            Some((id, msg)) if id == clip.id && msg != i18n::ImageTextMessage::Ready =>
+                i18n::image_text_message(lang, msg),
+            _ => flat,
+        };
         let (line1, line2) = if thumb {
             sysfont::wrap_two(flat, BODY_PX, tmax)
         } else {
@@ -1052,7 +1061,12 @@ pub fn draw_panel_scaled(pm: &mut Pixmap, v: &PanelView, density: f32) {
     );
     let count = i18n::clip_count(lang, v.store.len(), v.store.pinned_count());
     cv.ui_text(&count, lt.card_x + 10.0, lt.footer_y + 3.0, 1.4, TEXT_DIM);
-    let keys = sysfont::truncate_to_width(t(lang, if v.panel.tag_edit.is_some() { Msg::TagEditKeys } else { Msg::FooterKeys }), 1.25, lt.row_w);
+    let keys = t(lang, if v.panel.tag_edit.is_some() { Msg::TagEditKeys } else { Msg::FooterKeys });
+    #[cfg(all(windows, not(feature = "portable")))]
+    let keys = if v.panel.tag_edit.is_none() && visible.get(v.panel.sel).is_some_and(|clip| clip.image.is_some()) {
+        i18n::image_text_message(lang, i18n::ImageTextMessage::Actions)
+    } else { keys };
+    let keys = sysfont::truncate_to_width(keys, 1.25, lt.row_w);
     let kw = sysfont::measure(&keys, 1.25);
     cv.ui_text(
         &keys,

@@ -222,6 +222,8 @@ pub enum PanelDrag {
 }
 
 pub struct Panel {
+    #[cfg(all(windows, not(feature = "portable")))]
+    pub(crate) ocr_status: Option<(u64, crate::i18n::ImageTextMessage)>,
     pub queue: crate::paste_queue::PasteQueue,
     pub queue_open: bool,
     pub queue_conflict: bool,
@@ -282,6 +284,8 @@ pub struct Panel {
 impl Default for Panel {
     fn default() -> Panel {
         Panel {
+            #[cfg(all(windows, not(feature = "portable")))]
+            ocr_status: None,
             queue: Default::default(),
             queue_open: false,
             queue_conflict: false,

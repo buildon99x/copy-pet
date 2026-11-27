@@ -125,6 +125,8 @@ Linux Wayland에서는 전역 단축키를 등록하지 못할 수 있으며,
 
 영문 대소문자는 구분하지 않습니다. 일반 검색은 태그 일부에도 일치하지만,
 `#tag`는 태그 전체가 일치해야 합니다.
+Windows 기본판에서 이미지 행을 선택한 후 **F8**을 누르면 설치된 Windows 인식 언어로 글자를 읽습니다. 같은 키로 재시도할 수 있습니다. 검색창에 인식된 단어를 입력하세요. **F9**는 인식 결과를 보여 주고 **F10**은 글자만 복사합니다. 이미지 행을 평소처럼 선택하면 원본 이미지를 복사합니다. Windows 글자 인식 기능 또는 해당 언어가 없으면 설정을 확인하세요.
+
 [태그·이미지 지원 형식과 저장 한도](docs/specs/clipboard-tags-images.md)
 
 ### 순서대로 붙여넣기
@@ -259,6 +261,8 @@ In the Windows tray menu or macOS cat menu, select **Exclude copies from apps**,
 Source identification is best effort. Windows uses the clipboard owner's executable, with the foreground app as a fallback. macOS samples the foreground app during clipboard polling. X11 reads the selection owner's application class when available. An unidentified source can still be captured. On X11, a clipboard restored by ClipCat may create a copy reaction if the server cannot verify the owner process. Exclusions apply to ClipCat history at the application level. Websites, password fields and OS clipboard history have separate privacy controls. Supported Windows and macOS privacy markers take precedence over the source name.
 
 Set `CLIPCAT_CONFIG_DIR` to a separate directory for an isolated profile. ClipCat skips legacy profile migration while this override is active.
+
+**Image text on native Windows.** Select an image and press F8 to recognize or retry using installed Windows OCR languages. Search for recognized words in history, press F9 to preview the result, or F10 to copy the text. Selecting the row normally still copies the original image. Recognition runs only on request and needs an available Windows OCR engine.
 
 **Ordered paste.** In clipboard history, F3 adds or removes the selected row.
 F2 shows the queue. Use the arrows to select or reorder, Delete to remove,

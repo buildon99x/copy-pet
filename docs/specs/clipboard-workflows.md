@@ -85,6 +85,10 @@ removed/expired clips must be discarded. Supported installed OCR languages gover
 recognition; Windows execution and Korean/English accuracy need actual OS proof.
 Other platforms retain image behavior and must not advertise unavailable OCR.
 
+The native Windows panel uses F8 for recognition/retry, F9 for preview and F10 for plain-text copy. Recognition is manual. One active job accepts at most a validated 16-megapixel image, times out after 20 seconds, and returns at most 64 KiB of UTF-8. The helper exchanges data through anonymous pipes. Pause, source-exclusion changes, deletion and expiration invalidate in-flight results. Recopying or restoring the same image also invalidates the previous request. Historical OCR remains subject to the same retention rules as the source image.
+
+Microsoft documents package identity as a requirement for Windows.Media.Ocr. The Store build supplies package identity. Standalone availability depends on the host. A missing activation or profile-language engine produces the localized unavailable message. English and Korean recognition require corresponding installed Windows OCR support and a matching user-profile language. ClipCat does not install language packs.
+
 ## Alternatives and choices
 
 Privacy uses source exclusion and storage limits rather than promising universal

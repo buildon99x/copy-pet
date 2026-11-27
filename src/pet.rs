@@ -37,6 +37,13 @@ pub struct ClipPick {
     pub image: Option<ClipImage>,
 }
 
+#[cfg(any(test, all(windows, not(feature = "portable"))))]
+impl ClipPick {
+    pub(crate) fn recognized_text(text: &str) -> Self {
+        Self { text: text.to_owned(), paste: false, queued: false, plain_only: true, formats: None, image: None }
+    }
+}
+
 struct QueueTicket {
     ids: Vec<u64>,
     revision: u64,
@@ -1259,6 +1266,13 @@ impl Pet {
         None
     }
 
+    #[cfg(any(test, all(windows, not(feature = "portable"))))]
+    pub(crate) fn ocr_allowed(&self, clip: &crate::clipboard::Clip) -> bool {
+        let days = self.st.retention_days;
+        self.st.clip_capture && !clip.source.as_deref().is_some_and(|s| self.st.excludes(s))
+            && (clip.pinned || days == 0 || clip.ts >= crate::clipboard::now_ts().saturating_sub(u64::from(days) * 86400))
+    }
+
     fn expire_queue(&mut self) {
         if self.st.retention_days > 0 {
             let cutoff = crate::clipboard::now_ts()
@@ -1433,6 +1447,8 @@ impl Pet {
             (&p.query, &p.source, &p.tag_edit, p.scroll, p.sel, p.clear_armed,
                 p.expanded, p.view, p.ai_adding, self.clips.version()).hash(&mut h);
             (p.queue_open,p.queue_sel,p.queue.revision(),p.queue.next().map(|entry| entry.id)).hash(&mut h);
+            #[cfg(all(windows, not(feature = "portable")))]
+            p.ocr_status.hash(&mut h);
             p.tag_select_all.hash(&mut h);
             (p.w.to_bits(), p.h.to_bits(), p.off.0.to_bits(), p.off.1.to_bits()).hash(&mut h);
             p.cursor.map(|(x, y)| (x.to_bits(), y.to_bits())).hash(&mut h);
@@ -1833,6 +1849,8 @@ impl Pet {
                     return MenuOutcome::Handled;
                 }
                 self.dirty = true;
+                #[cfg(all(windows, not(feature = "portable")))]
+                self.capture_epoch.fetch_add(2, std::sync::atomic::Ordering::AcqRel);
                 self.set_toast(i18n::source_status(self.lang(), &name, self.st.excludes(&name)), 2.0);
             }
             MenuAction::OpenQueue => { self.open_panel(); self.panel.queue_open = true; }

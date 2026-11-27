@@ -53,6 +53,7 @@ use windows_sys::Win32::UI::Shell::{
 };
 use windows_sys::Win32::UI::WindowsAndMessaging::*;
 
+const WM_OCR_PREVIEW: u32 = WM_APP + 90;
 const WM_TRAY: u32 = WM_APP + 1;
 // WM_MOUSELEAVE lives in Win32::UI::Controls in windows-sys; define it locally.
 const WM_MOUSELEAVE: u32 = 0x02A3;
@@ -101,6 +102,7 @@ struct App {
     // simulation
     pet: Pet,
     // clipboard
+    ocr: Option<super::win_ocr::Job>,
     queue_active: Option<u8>,
     suppress_clip: Option<u32>,
     // interaction
@@ -273,9 +275,114 @@ impl App {
 
     // ---- per-frame update --------------------------------------------------
 
-    /// One ~33 ms frame. Returns `true` when an installed update is in
-    /// place and the app should relaunch (handled by the WM_TIMER caller).
+    fn ocr_notice(&mut self, id: u64, message: i18n::ImageTextMessage) {
+        self.pet.panel.ocr_status = Some((id, message));
+        self.pet.set_toast(
+            i18n::image_text_message(self.pet.lang(), message).to_owned(),
+            4.0,
+        );
+    }
+
+    fn ocr_key(&mut self, vk: u16) -> bool {
+        use i18n::ImageTextMessage::*;
+        if !(0x77..=0x79).contains(&vk)
+            || self.pet.panel.queue_open
+            || self.pet.workbench.open
+            || self.pet.cat_picker.is_some()
+            || self.pet.panel.tag_edit.is_some()
+        {
+            return false;
+        }
+        let Some(id) = self.pet.panel.selected_id(&self.pet.clips) else {
+            return false;
+        };
+        let Some(clip) = self.pet.clips.get(id) else {
+            return false;
+        };
+        let Some(image) = clip.image.as_ref() else {
+            return false;
+        };
+        if vk == 0x77 {
+            if !self.pet.ocr_allowed(clip) {
+                self.ocr_notice(id, Restricted);
+                return true;
+            }
+            if self.ocr.is_none() {
+                self.ocr = Some(super::win_ocr::Job::start(
+                    id,
+                    clip.image_generation,
+                    self.pet
+                        .capture_epoch
+                        .load(std::sync::atomic::Ordering::Acquire),
+                    image.clone(),
+                ));
+            }
+            self.ocr_notice(self.ocr.as_ref().unwrap().id, Busy);
+        } else if let Some(text) = clip.ocr_text.as_deref() {
+            if vk == 0x78 {
+                unsafe {
+                    PostMessageW(self.hwnd, WM_OCR_PREVIEW, 0, 0);
+                }
+            } else {
+                self.copy_back(ClipPick::recognized_text(text));
+            }
+        } else {
+            self.ocr_notice(id, Missing);
+        }
+        true
+    }
+
+    fn poll_ocr(&mut self) {
+        use i18n::ImageTextMessage::*;
+        let Some(job) = self.ocr.as_ref() else { return };
+        let (image, result) = match job.result.try_recv() {
+            Ok(value) => value,
+            Err(std::sync::mpsc::TryRecvError::Empty) => return,
+            Err(_) => {
+                let id = job.id;
+                self.ocr.take();
+                self.ocr_notice(id, Failed);
+                return;
+            }
+        };
+        let job = self.ocr.take().unwrap();
+        if job.epoch
+            != self
+                .pet
+                .capture_epoch
+                .load(std::sync::atomic::Ordering::Acquire)
+            || !self
+                .pet
+                .clips
+                .get(job.id)
+                .is_some_and(|c| self.pet.ocr_allowed(c))
+        {
+            self.ocr_notice(job.id, Changed);
+            return;
+        }
+        use super::win_ocr::Failure;
+        let message = match result {
+            Ok(text) => {
+                if self
+                    .pet
+                    .clips
+                    .set_ocr_text(job.id, job.generation, &image, text)
+                {
+                    Ready
+                } else {
+                    Changed
+                }
+            }
+            Err(Failure::Empty) => Empty,
+            Err(Failure::Unavailable) => Unavailable,
+            Err(Failure::Failed) => Failed,
+        };
+        self.ocr_notice(job.id, message);
+    }
+
+    /// One frame. Returns true when a completed update requires a relaunch.
     fn tick(&mut self) -> bool {
+        self.poll_ocr();
         let redraw = self.pet.advance();
 
         // auto-update: surface a found release / a finished install
@@ -1833,7 +1940,9 @@ unsafe fn flyout_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRESULT {
             with_app(|a| a.panel_char_utf16(wp as u16));
             0
         }
+        WM_SYSKEYDOWN if wp == 0x79 && GetKeyState(0x12) >= 0 && with_app(|a| a.pet.panel_open() && a.ocr_key(wp as u16)).unwrap_or(false) => 0,
         WM_KEYDOWN => {
+            if with_app(|a| a.ocr_key(wp as u16)).unwrap_or(false) { return 0; }
             if paste_workbench_editor(hwnd, wp) {
                 return 0;
             }
@@ -1861,6 +1970,17 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
         return flyout_proc(hwnd, msg, wp, lp);
     }
     match msg {
+        WM_OCR_PREVIEW => {
+            let preview = with_app(|a| {
+                let id = a.pet.panel.selected_id(&a.pet.clips)?;
+                let clip = a.pet.clips.get(id)?;
+                Some((wz(clip.ocr_text.as_deref()?), wz(i18n::image_text_message(a.pet.lang(), i18n::ImageTextMessage::Preview))))
+            }).flatten();
+            if let Some((text, title)) = preview {
+                MessageBoxW(hwnd, text.as_ptr(), title.as_ptr(), MB_OK);
+            }
+            0
+        }
         WM_TIMER => {
             if wp == TIMER_ID {
                 with_app(|a| {
@@ -2096,6 +2216,7 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
             });
             0
         }
+        WM_SYSKEYDOWN if wp == 0x79 && GetKeyState(0x12) >= 0 && with_app(|a| a.pet.panel_open() && a.ocr_key(wp as u16)).unwrap_or(false) => 0,
         WM_KEYDOWN => {
             if with_app(|a| a.pet.embedded_panel_open()).unwrap_or(false)
                 && paste_workbench_editor(hwnd, wp) {
@@ -2106,6 +2227,7 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
                     return false;
                 }
                 let ctrl = GetKeyState(0x11) < 0; // VK_CONTROL
+                if a.ocr_key(wp as u16) { return true; }
                 let key = map_nav_key(wp as u16, ctrl);
                 if let Some(key) = key {
                     if let Some(pick) = a.pet.panel_nav(key) {
@@ -2176,6 +2298,7 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
             with_app(|a| {
                 let (x, y) = a.window_pos();
                 a.pet.save_pos(x, y);
+                a.ocr.take();
                 KillTimer(hwnd, TIMER_ID);
                 UnregisterHotKey(hwnd, HOTKEY_ID);
                 UnregisterHotKey(hwnd, 2);
@@ -2372,6 +2495,7 @@ pub fn run() {
             h,
             pm: tiny_skia::Pixmap::new(w as u32, h as u32).unwrap(),
             pet,
+            ocr: None,
             queue_active: None,
             suppress_clip: None,
             mouse_down: false,

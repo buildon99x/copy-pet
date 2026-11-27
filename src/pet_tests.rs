@@ -1115,3 +1115,22 @@ fn ordered_queue_shortcut_presets_keep_legacy_panel_binding_untouched() {
         assert_eq!(p.st.hotkey, panel_hotkey);
     }
 }
+
+#[test]
+fn ocr_result_requires_eligible_source_and_copies_only_recognized_plain_text() {
+    let mut p = pet();
+    let image = ClipImage::from_pixmap(&Pixmap::new(3, 2).unwrap()).unwrap();
+    p.clips.add_image(image.clone(), Some("Paint".into()));
+    let clip = p.clips.visible("")[0].clone();
+    assert!(p.ocr_allowed(&clip));
+    p.apply_menu_action(MenuAction::ToggleExcludedSource("paint".into()));
+    assert!(!p.ocr_allowed(&clip));
+    p.apply_menu_action(MenuAction::ToggleExcludedSource("paint".into()));
+    p.apply_menu_action(MenuAction::ToggleCapture);
+    assert!(!p.ocr_allowed(&clip));
+    let pick = ClipPick::recognized_text("Receipt 12345");
+    assert_eq!(pick.text, "Receipt 12345");
+    assert!(pick.plain_only && !pick.queued && !pick.paste);
+    assert!(pick.image.is_none() && pick.formats.is_none());
+    assert_eq!(clip.image, Some(image));
+}

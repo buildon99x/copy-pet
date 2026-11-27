@@ -73,6 +73,9 @@ fn main() {
         store.add_image(clipcat::clip_image::ClipImage::from_pixmap(&image).unwrap(), Some("SnippingTool".into()));
         let id = store.visible("").iter().find(|c| c.image.is_some()).unwrap().id;
         store.set_tags(id, "디자인, 참고");
+        let clip = store.get(id).unwrap();
+        let (generation, captured) = (clip.image_generation, clip.image.clone().unwrap());
+        store.set_ocr_text(id, generation, &captured, "Receipt 12345 · 영수증".into());
         // Keep the image ahead of the demo's pinned text for this preview.
         store.toggle_pin(id);
         for (lang,name) in [(Lang::Ko,"8-images-tags-ko"),(Lang::En,"8-images-tags-en")] {

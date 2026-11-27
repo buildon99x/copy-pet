@@ -913,3 +913,33 @@ pub fn queue_button(lang: Lang, key: crate::panel::NavKey, open: bool) -> &'stat
         en
     }
 }
+
+#[cfg(all(windows, not(feature = "portable")))]
+#[derive(Clone, Copy, Hash, PartialEq, Eq)]
+pub(crate) enum ImageTextMessage { Actions, Busy, Ready, Empty, Unavailable, Failed, Missing, Restricted, Changed, Preview }
+#[cfg(all(windows, not(feature = "portable")))]
+pub(crate) fn image_text_message(lang: Lang, msg: ImageTextMessage) -> &'static str {
+    use ImageTextMessage::*;
+    match (lang, msg) {
+        (Lang::En, Preview) => "Recognized image text",
+        (Lang::Ko, Preview) => "인식한 이미지 글자",
+        (Lang::En, Actions) => "F8 Read · F9 Preview · F10 Copy text",
+        (Lang::Ko, Actions) => "F8 인식 · F9 미리보기 · F10 글자 복사",
+        (Lang::En, Busy) => "Reading image text…",
+        (Lang::Ko, Busy) => "이미지 글자를 인식하는 중…",
+        (Lang::En, Ready) => "Image text ready · F9 preview",
+        (Lang::Ko, Ready) => "글자 인식 완료 · F9 미리보기",
+        (Lang::En, Empty) => "No text found · F8 retry",
+        (Lang::Ko, Empty) => "찾은 글자가 없습니다 · F8 재시도",
+        (Lang::En, Unavailable) => "Windows OCR unavailable. Check installed OCR languages and app package.",
+        (Lang::Ko, Unavailable) => "Windows 글자 인식을 사용할 수 없습니다. 설치된 인식 언어와 앱 패키지를 확인하세요.",
+        (Lang::En, Failed) => "Image recognition failed · F8 retry",
+        (Lang::Ko, Failed) => "글자 인식 실패 · F8 재시도",
+        (Lang::En, Missing) => "Press F8 to recognize image text first",
+        (Lang::Ko, Missing) => "먼저 F8을 눌러 이미지 글자를 인식하세요",
+        (Lang::En, Restricted) => "Recognition blocked by capture privacy settings",
+        (Lang::Ko, Restricted) => "수집 개인정보 설정으로 글자 인식이 차단되었습니다",
+        (Lang::En, Changed) => "History changed · F8 retry",
+        (Lang::Ko, Changed) => "기록이 바뀌었습니다 · F8 재시도",
+    }
+}
