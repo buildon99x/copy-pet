@@ -92,9 +92,24 @@ mod tests {
     fn privacy_locked_clipboard_requests_retry() {
         // Take only the lock, never read or change the user's clipboard.
         unsafe {
-            assert_ne!(OpenClipboard(std::ptr::null_mut()), 0);
+            // A NULL owner associates the lock with the calling task. Model
+            // window contention with an invisible system-class message window.
+            let class: Vec<u16> = "STATIC".encode_utf16().chain(Some(0)).collect();
+            let hwnd = CreateWindowExW(0, class.as_ptr(), std::ptr::null(), 0,
+                0, 0, 0, 0, HWND_MESSAGE, std::ptr::null_mut(),
+                std::ptr::null_mut(), std::ptr::null());
+            assert!(!hwnd.is_null());
+            let locked = (0..20).any(|_| {
+                if OpenClipboard(hwnd) != 0 { return true; }
+                std::thread::sleep(std::time::Duration::from_millis(10));
+                false
+            });
+            if !locked { DestroyWindow(hwnd); panic!("could not acquire test clipboard lock"); }
+            let holder = GetOpenClipboardWindow();
             let busy = std::thread::spawn(|| observe(generation()).is_err()).join();
             CloseClipboard();
+            DestroyWindow(hwnd);
+            assert_eq!(holder, hwnd);
             assert!(busy.unwrap());
         }
     }
