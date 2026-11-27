@@ -210,10 +210,10 @@ jobs:
       (github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch') &&
       needs.changes.outputs.source == 'true'
     runs-on: ubuntu-latest
-    env:
-      CLIPCAT_CONFIG_DIR: ${{ runner.temp }}/clipcat-linux-tests
     steps:
       - uses: actions/checkout@v4
+      - name: Select isolated Linux test profile
+        run: echo "CLIPCAT_CONFIG_DIR=$RUNNER_TEMP/clipcat-linux-tests" >> "$GITHUB_ENV"
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy
