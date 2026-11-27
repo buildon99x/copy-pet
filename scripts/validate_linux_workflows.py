@@ -28,6 +28,7 @@ def main():
     result = {"binary": str(binary), "profile": str(profile)}
     env = dict(os.environ, CLIPCAT_CONFIG_DIR=str(profile))
     target = None
+    window = None
     with (output / "app.log").open("w") as log:
         child = subprocess.Popen([str(binary)], env=env, stdout=log, stderr=log)
         try:
@@ -90,10 +91,27 @@ text.pack()
 text.focus_set()
 root.update()
 file = Path(sys.argv[1])
+command = file.with_suffix(".command")
+stats = {"control_v": 0, "paste": 0}
+def record(name):
+    stats[name] += 1
+text.bind("<Control-v>", lambda event: record("control_v"), add="+")
+text.bind("<<Paste>>", lambda event: record("paste"), add="+")
 def save():
+    if command.exists():
+        action = command.read_text()
+        command.unlink()
+        if action == "clear":
+            text.delete("1.0", "end")
+        elif action == "focus":
+            text.focus_force()
     tmp = file.with_suffix(".tmp")
     tmp.write_text(json.dumps({"text": text.get("1.0", "end-1c"),
-                               "window": str(root.tk.call("wm", "frame", root))}))
+                               "window": str(text.winfo_id()),
+                               "frame_window": str(root.tk.call("wm", "frame", root)),
+                               "focus_widget": str(root.focus_get()),
+                               "has_focus": root.focus_displayof() == text,
+                               "events": stats}))
     tmp.replace(file)
     root.after(50, save)
 save()
@@ -130,6 +148,24 @@ root.mainloop()
                     time.sleep(0.1)
                 raise RuntimeError(f"Native queue paste mismatch: expected {expected!r}, got {actual!r}")
 
+            def focus_target():
+                focus(target_windows[0])
+                target_file.with_suffix(".command").write_text("focus")
+                until = time.monotonic() + 5
+                while time.monotonic() < until:
+                    if json.loads(target_file.read_text()).get("has_focus"):
+                        return
+                    time.sleep(0.1)
+                raise RuntimeError("Synthetic editable control did not gain keyboard focus.")
+
+            # Establish the editable target and normal clipboard paste first.
+            focus_target()
+            key("ctrl+v")
+            expect_text(tokens[2])
+            target_file.with_suffix(".command").write_text("clear")
+            expect_text("")
+            result["target_normal_paste_verified"] = True
+
             # PointerRoot over empty desktop is not an external input target.
             # The following real shortcut must leave the first queue item ready.
             subprocess.run(["xdotool", "mousemove", "1", "1"], check=True, timeout=5)
@@ -151,7 +187,7 @@ root.mainloop()
             key("ctrl+alt+j")
             expect_text("")
 
-            focus(target_windows[0])
+            focus_target()
             subprocess.run(["xset", "r", "on"], check=True, timeout=5)
             subprocess.run(["xset", "r", "rate", "200", "30"], check=True, timeout=5)
             subprocess.run(["xdotool", "keydown", "ctrl+alt+j"], check=True, timeout=5)
@@ -162,13 +198,13 @@ root.mainloop()
             expect_text(tokens[2] + tokens[1])
             focus(window)
             key("F5")
-            focus(target_windows[0])
+            focus_target()
             key("ctrl+alt+j")
             replay = tokens[2] + tokens[1] + tokens[1]
             expect_text(replay)
             focus(window)
             key("F6")
-            focus(target_windows[0])
+            focus_target()
             key("ctrl+alt+j")
             combined = replay + tokens[2] + "\n" + tokens[1]
             expect_text(combined)
@@ -182,6 +218,16 @@ root.mainloop()
                           captured_sources=sorted({c.get("source") or "unknown" for c in saved}),
                           window_geometry=dimensions, screenshot="native-panel-ko.png")
         finally:
+            if target is not None:
+                target_state = output / "paste-target.json"
+                if target_state.exists():
+                    result["target_diagnostic"] = json.loads(target_state.read_text())
+            if window is not None and child.poll() is None:
+                try:
+                    subprocess.run(["import", "-window", window, str(output / "native-queue-final.png")],
+                                   stdout=subprocess.DEVNULL, stderr=log, timeout=10)
+                except (OSError, subprocess.TimeoutExpired) as error:
+                    result["final_screenshot_error"] = str(error)
             if target is not None and target.poll() is None:
                 target.terminate()
                 try:
