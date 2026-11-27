@@ -176,6 +176,7 @@ mod native {
     #[link(name = "X11")]
     extern "C" {
         fn XOpenDisplay(name: *const c_char) -> *mut Display;
+        fn XkbSetDetectableAutoRepeat(d: *mut Display, on: c_int, supported: *mut c_int) -> c_int;
         fn XCloseDisplay(d: *mut Display) -> c_int;
         fn XDefaultRootWindow(d: *mut Display) -> c_ulong;
         fn XKeysymToKeycode(d: *mut Display, sym: c_ulong) -> u8;
@@ -218,6 +219,7 @@ mod native {
         root: c_ulong,
         keys: [u8; 2],
         queue_pressed: bool,
+        detectable_repeat: bool,
         modifiers: [Vec<u32>; 2],
     }
     impl Native {
@@ -237,7 +239,11 @@ mod native {
                 }
                 OUR_DISPLAY.store(display, Ordering::SeqCst);
                 *PREVIOUS.lock().unwrap_or_else(|e| e.into_inner()) = XSetErrorHandler(Some(error));
+                let mut supported = 0;
+                let detectable_repeat =
+                    XkbSetDetectableAutoRepeat(display, 1, &mut supported) != 0 && supported != 0;
                 Some(Self {
+                    detectable_repeat,
                     display,
                     root: XDefaultRootWindow(display),
                     keys: [0; 2],
@@ -266,6 +272,9 @@ mod native {
                 let Some(hk) = hk else {
                     return true;
                 };
+                if slot == 1 && !self.detectable_repeat {
+                    return false;
+                }
                 FAILED.store(false, Ordering::SeqCst);
                 self.keys[slot] =
                     XKeysymToKeycode(self.display, hk.key.to_ascii_lowercase() as c_ulong);

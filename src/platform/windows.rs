@@ -38,7 +38,7 @@ use windows_sys::Win32::System::Memory::{
 };
 use windows_sys::Win32::System::Registry::*;
 use windows_sys::Win32::System::Threading::{
-    AttachThreadInput, CreateMutexW, GetCurrentThreadId,
+    CreateMutexW,
     Sleep,
 };
 use windows_sys::Win32::UI::HiDpi::SetProcessDpiAwarenessContext;
@@ -122,7 +122,7 @@ struct App {
     hotkey_label: String,
     /// The window that had focus when the panel was opened — where auto-paste
     /// (`paste_on_select`) sends the synthesized Ctrl+V. Null until captured.
-    paste_target: HWND,
+    paste_target: Option<super::win_focus::PasteTarget>,
     // ---- caret-anchored flyout panel (hotkey path): its own layered window --
     /// Second layered window that hosts the panel at the text caret (Win+V
     /// parity), independent of the cat window so the cat never moves.
@@ -216,62 +216,43 @@ impl App {
     /// setting for the embedded panel), it then restores focus to the app that
     /// was active when the panel opened and synthesizes Ctrl+V there.
     fn copy_back(&mut self, pick: ClipPick) {
-        if pick.queued && !self.pet.queue_output_valid() { self.pet.finish_queue_pick(false); return; }
+        self.output_pick(pick, true);
+    }
+
+    fn output_pick(&mut self, pick: ClipPick, restore_panel_target: bool) {
+        if pick.queued
+            && (!self.pet.queue_output_valid()
+                || !self.paste_target.is_some_and(|target| target.valid())
+                || (!restore_panel_target
+                    && super::win_focus::PasteTarget::external() != self.paste_target))
+        {
+            self.pet.finish_queue_pick(false);
+            return;
+        }
         // Arm sequence-based suppression only after a successful write.
         // This handles image-only clips without comparing or retaining pixels.
         let sequence = unsafe {
             if let Some(image) = &pick.image {
                 set_clipboard_image(self.hwnd, image)
             } else {
-                set_clipboard_rich(self.hwnd, &pick.text, pick.formats.as_ref(), pick.plain_only)
+                set_clipboard_rich(
+                    self.hwnd,
+                    &pick.text,
+                    pick.formats.as_ref(),
+                    pick.plain_only,
+                )
             }
         };
         self.suppress_clip = sequence.map(|receipt| receipt.0);
         let ok = sequence.is_some_and(|(_, complete)| !pick.queued || complete);
-        let mut sent = false;
-        // Only paste when the write actually landed: on failure the clipboard
-        // still holds the previous content, so synthesizing Ctrl+V would paste
-        // stale text into the target field instead of the picked clip. The
-        // `IsWindow` check skips a target that was closed between capture and
-        // paste (defense-in-depth: with the flyout still foreground, a no-op
-        // Ctrl+V into ourselves is harmless — V isn't a panel key — and the
-        // clip is still on the clipboard).
-        if ok
+        let sent = ok
             && pick.paste
-            && !self.paste_target.is_null()
-            && self.paste_target != self.hwnd
-            && unsafe { IsWindow(self.paste_target) } != 0
-        {
-            unsafe {
-                // Win+V parity: hand the foreground back to the app that was
-                // active when the panel opened, then synthesize Ctrl+V there.
-                //
-                // SetForegroundWindow is asynchronous and won't promote a
-                // window owned by another thread on demand, so a bare
-                // SetForegroundWindow + SendInput races: the Ctrl+V fires
-                // before focus actually lands on the target and is lost. Attach
-                // our input queue to the target thread first — that
-                // synchronizes the foreground/focus state across both threads,
-                // so the foreground switch takes effect before we synthesize
-                // the keystroke (SetFocus then nails the keyboard focus onto the
-                // target within the shared input state). Always detach after.
-                let target = self.paste_target;
-                let tid = GetWindowThreadProcessId(target, null_mut());
-                let me = GetCurrentThreadId();
-                let attached = tid != 0 && tid != me && AttachThreadInput(me, tid, 1) != 0;
-                SetForegroundWindow(target);
-                if attached {
-                    SetFocus(target);
-                }
-                sent = GetForegroundWindow() == target
-                    && (!pick.queued || self.suppress_clip == Some(GetClipboardSequenceNumber()))
-                    && send_ctrl_v();
-                if attached {
-                    AttachThreadInput(me, tid, 0);
-                }
-            }
+            && self.paste_target.is_some_and(|target| {
+                submit_paste(target, restore_panel_target, self.suppress_clip)
+            });
+        if pick.queued {
+            self.pet.finish_queue_pick(sent);
         }
-        if pick.queued { self.pet.finish_queue_pick(sent); }
     }
 
     /// Records the window to auto-paste into: the foreground window captured at
@@ -282,9 +263,11 @@ impl App {
     /// which foregrounds us before it runs, can never overwrite a good target
     /// with ourselves.
     unsafe fn capture_paste_target(&mut self) {
-        let fg = GetForegroundWindow();
-        if !fg.is_null() && fg != self.hwnd && fg != self.flyout_hwnd {
-            self.paste_target = fg;
+        if let Some(target) = super::win_focus::PasteTarget::external() {
+            self.paste_target = Some(target);
+        } else {
+            let fg = GetForegroundWindow();
+            if fg != self.hwnd && fg != self.flyout_hwnd { self.paste_target = None; }
         }
     }
 
@@ -971,7 +954,7 @@ unsafe fn set_clipboard_image(hwnd: HWND, image: &ClipImage) -> Option<(u32,bool
         let png_ok = atom != 0 && write_format(atom, &png);
         // Capture the marker while the clipboard is locked, so another app
         // cannot replace it before we remember our own sequence number.
-        let sequence = (dib_ok || png_ok).then(|| (GetClipboardSequenceNumber(), png_ok));
+        let sequence = crate::paste_queue::image_write_receipt(dib_ok, png_ok, || GetClipboardSequenceNumber());
         CloseClipboard();
         return sequence;
     }
@@ -1207,6 +1190,20 @@ unsafe fn register_panel_hotkey(hwnd: HWND, spec: &str) -> HotkeyReg {
         };
     }
     HotkeyReg::None
+}
+
+fn submit_paste(
+    target: super::win_focus::PasteTarget,
+    restore_panel_target: bool,
+    sequence: Option<u32>,
+) -> bool {
+    let focused = if restore_panel_target {
+        target.restore()
+    } else {
+        super::win_focus::PasteTarget::external() == Some(target)
+    };
+    // SAFETY: the focus and write receipt are checked at the dispatch boundary.
+    focused && sequence == Some(unsafe { GetClipboardSequenceNumber() }) && unsafe { send_ctrl_v() }
 }
 
 /// Synthesizes a Ctrl+V keystroke into the foreground window (auto-paste).
@@ -1931,10 +1928,9 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
         WM_HOTKEY => {
             if wp as i32 == 2 {
                 with_app(|a| {
-                    let fg = GetForegroundWindow();
-                    if fg != a.hwnd && fg != a.flyout_hwnd && !fg.is_null() {
-                        a.paste_target = fg;
-                        if let Some(pick) = a.pet.next_queue_pick() { a.copy_back(pick); }
+                    if let Some(target) = super::win_focus::PasteTarget::external() {
+                        a.paste_target = Some(target);
+                        if let Some(pick) = a.pet.next_queue_pick() { a.output_pick(pick, false); }
                     }
                 });
             }
@@ -2388,7 +2384,7 @@ pub fn run() {
             icon,
             taskbar_created: RegisterWindowMessageW(wz("TaskbarCreated").as_ptr()),
             hotkey_label,
-            paste_target: null_mut(),
+            paste_target: None,
             flyout_hwnd,
             fly_mem_dc,
             fly_dib,
@@ -2426,6 +2422,176 @@ pub fn run() {
 #[cfg(test)]
 mod clipboard_tests {
     use super::*;
+
+    const TARGET_ENV: &str = "CLIPCAT_SYNTHETIC_EDIT_DIR";
+    const SAMPLE: &str = "queue-win";
+
+    #[test]
+    fn synthetic_external_edit_fixture() {
+        let Some(path) = std::env::var_os(TARGET_ENV) else {
+            return;
+        };
+        let dir = std::path::PathBuf::from(path);
+        unsafe {
+            let module = GetModuleHandleW(null());
+            let top = CreateWindowExW(
+                0,
+                wz("STATIC").as_ptr(),
+                wz("ClipCat test target").as_ptr(),
+                WS_OVERLAPPEDWINDOW,
+                10,
+                10,
+                320,
+                150,
+                null_mut(),
+                null_mut(),
+                module,
+                null(),
+            );
+            let edit = CreateWindowExW(
+                0,
+                wz("EDIT").as_ptr(),
+                null(),
+                WS_CHILD | WS_VISIBLE | WS_TABSTOP,
+                5,
+                5,
+                280,
+                40,
+                top,
+                null_mut(),
+                module,
+                null(),
+            );
+            assert!(!top.is_null() && !edit.is_null());
+            ShowWindow(top, SW_SHOW);
+            SetForegroundWindow(top);
+            SetFocus(edit);
+            let parent: u32 = std::env::var("CLIPCAT_SYNTHETIC_PARENT")
+                .unwrap()
+                .parse()
+                .unwrap();
+            AllowSetForegroundWindow(parent);
+            std::fs::write(
+                dir.join("handles"),
+                format!("{} {}", top as usize, edit as usize),
+            )
+            .unwrap();
+            let until = std::time::Instant::now() + std::time::Duration::from_secs(20);
+            let mut last = 0;
+            while std::time::Instant::now() < until {
+                let mut msg: MSG = std::mem::zeroed();
+                while PeekMessageW(&mut msg, null_mut(), 0, 0, PM_REMOVE) != 0 {
+                    TranslateMessage(&msg);
+                    DispatchMessageW(&msg);
+                }
+                let mut buf = [0u16; 64];
+                // This process owns this dedicated synthetic EDIT. Product
+                // code never reads control text to validate a paste target.
+                let n = GetWindowTextW(edit, buf.as_mut_ptr(), buf.len() as i32);
+                let text = String::from_utf16_lossy(&buf[..n as usize]);
+                let count = if text == SAMPLE.repeat(2) {
+                    2
+                } else if text == SAMPLE {
+                    1
+                } else {
+                    0
+                };
+                if count > last {
+                    std::fs::write(dir.join(count.to_string()), []).unwrap();
+                    last = count;
+                }
+                if count == 2 {
+                    break;
+                }
+                Sleep(5);
+            }
+            DestroyWindow(top);
+            assert_eq!(last, 2, "both pastes must reach the EDIT child");
+        }
+    }
+
+    /// Called inside the native clipboard round-trip test so its synthetic
+    /// clipboard writes cannot race the test's image and rich-text writes.
+    unsafe fn native_focus_roundtrip(owner: HWND) {
+        use std::{
+            process::Command,
+            time::{Duration, Instant},
+        };
+        let dir = std::env::temp_dir().join(format!("clipcat-queue-edit-{}", std::process::id()));
+        std::fs::create_dir(&dir).unwrap();
+        let child = Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "platform::windows::clipboard_tests::synthetic_external_edit_fixture",
+            ])
+            .env(TARGET_ENV, &dir)
+            .env("CLIPCAT_SYNTHETIC_PARENT", std::process::id().to_string())
+            .spawn()
+            .unwrap();
+        struct Cleanup(std::process::Child, std::path::PathBuf);
+        impl Drop for Cleanup {
+            fn drop(&mut self) {
+                let _ = self.0.kill();
+                let _ = self.0.wait();
+                let _ = std::fs::remove_dir_all(&self.1);
+            }
+        }
+        let mut child = Cleanup(child, dir);
+        let wait = |name: &str| {
+            let file = child.1.join(name);
+            let until = Instant::now() + Duration::from_secs(8);
+            while !file.exists() && Instant::now() < until {
+                std::thread::sleep(Duration::from_millis(10));
+            }
+            assert!(
+                file.exists(),
+                "external fixture timed out waiting for {name}"
+            );
+        };
+        wait("handles");
+        let ids = std::fs::read_to_string(child.1.join("handles")).unwrap();
+        let mut ids = ids
+            .split_whitespace()
+            .map(|id| id.parse::<usize>().unwrap() as HWND);
+        let top = ids.next().unwrap();
+        let edit = ids.next().unwrap();
+        assert_eq!(GetForegroundWindow(), top);
+        let target = super::super::win_focus::PasteTarget::external().unwrap();
+        assert_eq!(target.control_for_test(), edit);
+        let (sequence, complete) = set_clipboard_rich(owner, SAMPLE, None, true).unwrap();
+        assert!(complete);
+        // The dedicated shortcut must preserve the control already in focus.
+        assert!(submit_paste(target, false, Some(sequence)));
+        wait("1");
+        let panel = CreateWindowExW(
+            0,
+            wz("STATIC").as_ptr(),
+            null(),
+            WS_OVERLAPPEDWINDOW,
+            0,
+            0,
+            200,
+            100,
+            null_mut(),
+            null_mut(),
+            GetModuleHandleW(null()),
+            null(),
+        );
+        assert!(!panel.is_null());
+        ShowWindow(panel, SW_SHOW);
+        SetForegroundWindow(panel);
+        SetFocus(panel);
+        let previous = GetForegroundWindow();
+        let own = super::super::win_focus::PasteTarget::external();
+        let sent = previous == panel && own.is_none() && !submit_paste(target, false, Some(sequence)) && submit_paste(target, true, Some(sequence));
+        DestroyWindow(panel);
+        assert!(
+            sent,
+            "restore captured EDIT after a ClipCat panel took focus"
+        );
+        wait("2");
+        assert!(child.0.wait().unwrap().success());
+    }
 
     /// Exercises actual Win32 allocation/ownership and format conversion. A
     /// message-only window owns the clipboard without presenting test UI.
@@ -2491,6 +2657,13 @@ mod clipboard_tests {
                 assert!(write_format(atom, &value.to_ne_bytes()));
                 CloseClipboard();
                 assert_eq!(read_clipboard_content(hwnd).is_none(), expect_private);
+            }
+
+            // Full desktop injection is exercised on CI runners and opt-in
+            // development desktops, with only the synthetic EDIT as its target.
+            if std::env::var_os("GITHUB_ACTIONS").is_some()
+                || std::env::var_os("CLIPCAT_TEST_DESKTOP").is_some() {
+                native_focus_roundtrip(hwnd);
             }
 
         }

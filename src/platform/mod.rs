@@ -60,6 +60,8 @@ mod mac_paste;
 
 #[cfg(windows)]
 mod win_privacy;
+#[cfg(windows)]
+mod win_focus;
 
 #[cfg(target_os = "linux")]
 mod linux_clipboard;

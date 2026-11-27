@@ -418,9 +418,31 @@ impl PortableApp {
         }
     }
 
+    #[cfg(target_os = "linux")]
+    fn external_target(&self) -> Option<u32> {
+        use winit::raw_window_handle::{HasWindowHandle, RawWindowHandle};
+        let window = self.window.as_ref()?.window_handle().ok()?;
+        let own = match window.as_raw() {
+            RawWindowHandle::Xlib(handle) => u32::try_from(handle.window).ok()?,
+            RawWindowHandle::Xcb(handle) => handle.window.get(),
+            _ => return None,
+        };
+        super::linux_clipboard::external_focus(own)
+    }
+
+    #[cfg(windows)]
+    fn external_target(&self) -> Option<super::win_focus::PasteTarget> {
+        super::win_focus::PasteTarget::external()
+    }
+
     fn write_and_paste(&mut self, pick: ClipPick) -> bool {
         #[cfg(target_os = "macos")]
         let written_generation;
+        #[cfg(not(target_os = "macos"))]
+        let destination = if pick.queued {
+            let Some(target) = self.external_target() else { return false; };
+            Some(target)
+        } else { None };
         if pick.image.is_some() {
             return false;
         } // Image clipboard is Windows-native only.
@@ -512,7 +534,7 @@ impl PortableApp {
             }
             #[cfg(not(target_os = "macos"))]
             {
-                let sent = paste_synthesize();
+                let sent = (!pick.queued || destination == self.external_target()) && paste_synthesize();
                 if pick.queued {
                     self.pet.finish_queue_pick(sent);
                 }
