@@ -177,27 +177,41 @@ unsafe fn save_preview_image(dialog: HWND, directory: &std::path::Path) {
 // Both editors belong to the fixture process. The first open seeds the
 // previous target; the cat's real context-menu command must replace it with B.
 unsafe fn queue_menu_roundtrip(main: HWND) {
+    unsafe extern "system" fn editor_frame(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRESULT {
+        if msg == WM_SETFOCUS {
+            let edit = GetDlgItem(hwnd, 1);
+            if !edit.is_null() {
+                SetFocus(edit);
+                return 0;
+            }
+        }
+        DefWindowProcW(hwnd, msg, wp, lp)
+    }
+    let module = windows_sys::Win32::System::LibraryLoader::GetModuleHandleW(std::ptr::null());
+    let class: Vec<u16> = "ClipCatTestQueueEditor".encode_utf16().chain(Some(0)).collect();
+    let mut wc: WNDCLASSW = std::mem::zeroed();
+    wc.hInstance = module;
+    wc.lpfnWndProc = Some(editor_frame);
+    wc.lpszClassName = class.as_ptr();
+    assert_ne!(RegisterClassW(&wc), 0);
     let editor = |x| {
-        let class: Vec<u16> = "EDIT".encode_utf16().chain(Some(0)).collect();
-        let hwnd = CreateWindowExW(
-            0,
-            class.as_ptr(),
-            [0u16].as_ptr(),
-            WS_OVERLAPPEDWINDOW | WS_VISIBLE | ES_MULTILINE as u32,
-            x,
-            60,
-            200,
-            100,
-            null_mut(),
-            null_mut(),
-            null_mut(),
-            std::ptr::null(),
+        let frame = CreateWindowExW(
+            0, class.as_ptr(), std::ptr::null(), WS_OVERLAPPEDWINDOW,
+            x, 60, 200, 100, null_mut(), null_mut(), module, std::ptr::null(),
         );
-        assert!(!hwnd.is_null());
-        hwnd
+        assert!(!frame.is_null());
+        let edit_class: Vec<u16> = "EDIT".encode_utf16().chain(Some(0)).collect();
+        let edit = CreateWindowExW(
+            0, edit_class.as_ptr(), std::ptr::null(), WS_CHILD | WS_VISIBLE | WS_TABSTOP | ES_MULTILINE as u32,
+            0, 0, 180, 50, frame, 1usize as HMENU, module, std::ptr::null(),
+        );
+        assert!(!edit.is_null());
+        // The test's next click supplies activation after both controls exist.
+        ShowWindow(frame, SW_SHOWNOACTIVATE);
+        (frame, edit)
     };
-    let a = editor(30);
-    let b = editor(270);
+    let (frame_a, edit_a) = editor(30);
+    let (frame_b, edit_b) = editor(270);
     let pump = || {
         let mut msg = std::mem::zeroed();
         while PeekMessageW(&mut msg, null_mut(), 0, 0, PM_REMOVE) != 0 {
@@ -205,17 +219,28 @@ unsafe fn queue_menu_roundtrip(main: HWND) {
             DispatchMessageW(&msg);
         }
     };
-    let focus = |editor| {
-        // A real click gives this fixture the foreground entitlement and
-        // focuses exactly its EDIT, independent of Windows foreground locks.
+    let focus = |label: &str, frame: HWND, edit: HWND| {
+        pump();
         let mut pt = POINT { x: 10, y: 10 };
-        windows_sys::Win32::Graphics::Gdi::ClientToScreen(editor, &mut pt);
-        assert_eq!(WindowFromPoint(pt), editor);
+        assert_ne!(windows_sys::Win32::Graphics::Gdi::ClientToScreen(edit, &mut pt), 0);
+        assert_eq!(WindowFromPoint(pt), edit, "synthetic editor {label} must be visible");
         click(pt, [MOUSEEVENTF_LEFTDOWN, MOUSEEVENTF_LEFTUP]);
-        wait("synthetic editor focus", || {
+        let deadline = Instant::now() + Duration::from_secs(10);
+        let thread_id = GetWindowThreadProcessId(frame, null_mut());
+        loop {
             pump();
-            (GetForegroundWindow() == editor && GetFocus() == editor).then_some(())
-        });
+            let mut gui: GUITHREADINFO = std::mem::zeroed();
+            gui.cbSize = std::mem::size_of::<GUITHREADINFO>() as u32;
+            let ok = GetGUIThreadInfo(thread_id, &mut gui) != 0;
+            let foreground = GetForegroundWindow();
+            if ok && foreground == frame && gui.hwndActive == frame && gui.hwndFocus == edit {
+                break;
+            }
+            assert!(Instant::now() < deadline,
+                "editor {label} click: expected frame={frame:?}, EDIT={edit:?}; GUI info={ok}, foreground={foreground:?}, active={:?}, focus={:?}, hit={:?}",
+                gui.hwndActive, gui.hwndFocus, WindowFromPoint(pt));
+            thread::sleep(Duration::from_millis(15));
+        }
     };
     let visible_panel = |open| {
         wait("embedded panel activation style", || {
@@ -225,14 +250,14 @@ unsafe fn queue_menu_roundtrip(main: HWND) {
         });
     };
     visible_panel(false);
-    focus(a);
+    focus("A", frame_a, edit_a);
     PostMessageW(main, WM_MBUTTONUP, 0, 0);
     visible_panel(true);
     send(main, WM_KEYDOWN, 0x24, 0); // Home selects the synthetic text row
     send(main, WM_KEYDOWN, 0x72, 0); // F3 adds it to the ordered queue
     PostMessageW(main, WM_MBUTTONUP, 0, 0);
     visible_panel(false);
-    focus(b);
+    focus("B", frame_b, edit_b);
     let mut pet_bounds: RECT = std::mem::zeroed();
     assert_ne!(GetWindowRect(main, &mut pet_bounds), 0);
     let point = (pet_bounds.top..pet_bounds.bottom)
@@ -295,13 +320,14 @@ unsafe fn queue_menu_roundtrip(main: HWND) {
     wait("queue text in editor B", || {
         pump();
         let mut text = [0u16; 32];
-        let len = GetWindowTextW(b, text.as_mut_ptr(), 32);
+        let len = GetWindowTextW(edit_b, text.as_mut_ptr(), 32);
         (String::from_utf16_lossy(&text[..len as usize]) == "external fixture").then_some(())
     });
-    assert_eq!(GetWindowTextLengthW(a), 0);
-    assert_eq!(GetFocus(), b);
-    DestroyWindow(a);
-    DestroyWindow(b);
+    assert_eq!(GetWindowTextLengthW(edit_a), 0);
+    assert_eq!(GetFocus(), edit_b);
+    DestroyWindow(frame_a);
+    DestroyWindow(frame_b);
+    UnregisterClassW(class.as_ptr(), module);
 }
 
 fn sample_image(timestamp: u64, pinned: bool) -> serde_json::Value {
