@@ -77,25 +77,24 @@ impl PasteTarget {
             if GetForegroundWindow() == self.top {
                 return Self::external() == Some(self);
             }
+            // Keep the target's input queue independent during activation. A
+            // window may restore its own child from WM_ACTIVATE/WM_SETFOCUS.
+            // Wait for that work before considering an explicit child restore.
+            let settle = || {
+                let mut result = 0;
+                SendMessageTimeoutW(self.top, WM_NULL, 0, 0, SMTO_ABORTIFHUNG, 350, &mut result) != 0
+                    && GetForegroundWindow() == self.top && self.valid()
+            };
+            if SetForegroundWindow(self.top) == 0 || !settle() { return false; }
+            if Self::external() == Some(self) { return true; }
+
+            // The frame activated successfully but its editor was not restored.
+            // Join queues only for SetFocus, after the frame handled activation.
             let caller = GetCurrentThreadId();
-            let attached = self.thread != caller && AttachThreadInput(caller, self.thread, 1) != 0;
-            if self.thread != caller && !attached {
-                return false;
-            }
-            if SetForegroundWindow(self.top) != 0
-                && GetForegroundWindow() == self.top
-                && self.valid()
-            {
-                SetFocus(self.control);
-            }
-            if attached {
-                AttachThreadInput(caller, self.thread, 0);
-            }
-            // Detaching can leave activation work queued on the foreign GUI
-            // thread. Give it a bounded turn, then recheck the exact control.
-            let mut result = 0;
-            SendMessageTimeoutW(self.top, WM_NULL, 0, 0, SMTO_ABORTIFHUNG | SMTO_BLOCK,
-                200, &mut result) != 0 && Self::external() == Some(self)
+            if AttachThreadInput(caller, self.thread, 1) == 0 { return false; }
+            if GetForegroundWindow() == self.top && self.valid() { SetFocus(self.control); }
+            AttachThreadInput(caller, self.thread, 0);
+            settle() && Self::external() == Some(self)
         }
     }
 }

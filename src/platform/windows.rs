@@ -472,8 +472,12 @@ impl App {
         if embedded && no_activate {
             // The opening gesture has already captured its intended external control.
             SetWindowLongPtrW(self.hwnd, GWL_EXSTYLE, ex & !(WS_EX_NOACTIVATE as isize));
-            SetForegroundWindow(self.hwnd);
-            SetFocus(self.hwnd);
+            // A fast F9 can start the modal loop ahead of this deferred resize.
+            // Its disabled owner must not take focus away from the preview EDIT.
+            if self.ocr_preview_owner.is_none() {
+                SetForegroundWindow(self.hwnd);
+                SetFocus(self.hwnd);
+            }
         } else if !embedded && !no_activate {
             SetWindowLongPtrW(self.hwnd, GWL_EXSTYLE, ex | WS_EX_NOACTIVATE as isize);
         }
@@ -2595,9 +2599,21 @@ mod clipboard_tests {
         }
     }
 
+    thread_local! { static EDITOR_EVENTS: RefCell<std::collections::VecDeque<String>> = RefCell::new(std::collections::VecDeque::new()); }
+    fn note_editor_event(message: String) {
+        EDITOR_EVENTS.with(|events| {
+            let mut events = events.borrow_mut();
+            if events.len() == 40 { events.pop_front(); }
+            events.push_back(message);
+        });
+    }
+
     // A normal single-document editor forwards activation focus to its view.
     // A stock STATIC top-level keeps focus on itself after asynchronous activation.
     unsafe extern "system" fn editor_frame(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRESULT {
+        if matches!(msg, WM_ACTIVATE | WM_ACTIVATEAPP | WM_SETFOCUS | WM_KILLFOCUS | WM_ENTERMENULOOP | WM_EXITMENULOOP | WM_SYSCOMMAND) {
+            note_editor_event(format!("frame({msg:#x},{wp:#x})"));
+        }
         if msg == WM_SETFOCUS {
             let edit = GetDlgItem(hwnd, 1);
             if !edit.is_null() { SetFocus(edit); return 0; }
@@ -2675,6 +2691,9 @@ mod clipboard_tests {
             let mut last_state = String::new();
             loop {
                 pump_messages(|msg| {
+                    if matches!(msg.message, WM_KEYDOWN | WM_KEYUP | WM_SYSKEYDOWN | WM_SYSKEYUP) {
+                        note_editor_event(format!("key({},{:#x},{:#x})", if msg.hwnd == edit { "edit" } else { "frame" }, msg.message, msg.wParam));
+                    }
                     if msg.hwnd == edit && msg.message == WM_KEYDOWN && msg.wParam == b'V' as usize
                         && GetKeyState(VK_CONTROL as i32) < 0 {
                         ctrl_v += 1;
@@ -2686,7 +2705,12 @@ mod clipboard_tests {
                 let text = String::from_utf16_lossy(&buf[..n as usize]);
                 let mut caret = POINT { x: 0, y: 0 };
                 let caret_pos = (GetCaretPos(&mut caret) != 0).then_some((caret.x, caret.y));
-                let state = format!("reset={reset}, text={text:?}, foreground_is_target={}, edit_focused={}, caret={caret_pos:?}, edit_ctrl_v_down={ctrl_v}",
+                let mut gui: GUITHREADINFO = std::mem::zeroed();
+                gui.cbSize = std::mem::size_of::<GUITHREADINFO>() as u32;
+                GetGUIThreadInfo(GetWindowThreadProcessId(top, null_mut()), &mut gui);
+                let events = EDITOR_EVENTS.with(|events| events.borrow().iter().cloned().collect::<Vec<_>>().join(" "));
+                let state = format!("active_frame={}, focused_frame={}, focus_null={}, gui_flags={:#x}, events={events}; reset={reset}, text={text:?}, foreground_is_target={}, edit_focused={}, caret={caret_pos:?}, edit_ctrl_v_down={ctrl_v}",
+                    gui.hwndActive == top, gui.hwndFocus == top, gui.hwndFocus.is_null(), gui.flags,
                     GetForegroundWindow() == top, windows_sys::Win32::UI::Input::KeyboardAndMouse::GetFocus() == edit);
                 if state != last_state {
                     std::fs::write(dir.join("child-state"), &state).unwrap();

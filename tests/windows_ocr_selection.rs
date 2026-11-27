@@ -98,6 +98,22 @@ unsafe fn clipboard_is(owner: HWND, text: &str) -> bool {
     matches
 }
 
+unsafe fn click(pt: POINT) {
+    assert_ne!(SetCursorPos(pt.x, pt.y), 0);
+    let mut clicks: [INPUT; 2] = std::mem::zeroed();
+    for (click, flags) in clicks
+        .iter_mut()
+        .zip([MOUSEEVENTF_LEFTDOWN, MOUSEEVENTF_LEFTUP])
+    {
+        click.r#type = INPUT_MOUSE;
+        click.Anonymous.mi.dwFlags = flags;
+    }
+    assert_eq!(
+        SendInput(2, clicks.as_ptr(), std::mem::size_of::<INPUT>() as i32),
+        2
+    );
+}
+
 fn preview_sample() -> String {
     let mut sample = String::from("Part 12345 receipt");
     for i in 1..=24 {
@@ -182,21 +198,6 @@ unsafe fn queue_menu_roundtrip(main: HWND) {
             TranslateMessage(&msg);
             DispatchMessageW(&msg);
         }
-    };
-    let click = |pt: POINT| {
-        assert_ne!(SetCursorPos(pt.x, pt.y), 0);
-        let mut clicks: [INPUT; 2] = std::mem::zeroed();
-        for (click, flags) in clicks
-            .iter_mut()
-            .zip([MOUSEEVENTF_LEFTDOWN, MOUSEEVENTF_LEFTUP])
-        {
-            click.r#type = INPUT_MOUSE;
-            click.Anonymous.mi.dwFlags = flags;
-        }
-        assert_eq!(
-            SendInput(2, clicks.as_ptr(), std::mem::size_of::<INPUT>() as i32),
-            2
-        );
     };
     let focus = |editor| {
         // A real click gives this fixture the foreground entitlement and
@@ -322,6 +323,9 @@ unsafe fn open_preview(fixture: &mut Fixture) -> (HWND, HWND, HWND) {
         (!target.1.is_null()).then_some(target.1)
     });
     PostMessageW(main, WM_MBUTTONUP, 0, 0);
+    wait("embedded panel activation before F9", || {
+        (GetWindowLongW(main, GWL_EXSTYLE) as u32 & WS_EX_NOACTIVATE == 0).then_some(())
+    });
     PostMessageW(main, WM_KEYDOWN, 0x78, 0); // F9 opens the actual preview
     let (dialog, edit) = wait("owned preview EDIT", || {
         let dialog = GetWindow(main, GW_ENABLEDPOPUP);
@@ -353,16 +357,34 @@ fn copying_preview_selection_keeps_image_history_and_suppresses_copy_feedback() 
             clipboard_is(main, "12345"),
             "selection must go through ClipCat's plain-text writer"
         );
-        send(edit, 0x00b1, 11, 18); // select "receipt" for the real Ctrl+C chord
-        SetForegroundWindow(dialog);
-        wait("foreground modal with focused synthetic EDIT", || {
+        // A real user can focus this app-owned selectable control by clicking.
+        // Posted button notifications alone do not confer foreground rights.
+        let mut point = POINT { x: 15, y: 15 };
+        assert_ne!(
+            windows_sys::Win32::Graphics::Gdi::ClientToScreen(edit, &mut point),
+            0
+        );
+        assert_eq!(
+            WindowFromPoint(point),
+            edit,
+            "preview EDIT must be visible before click"
+        );
+        click(point);
+        let until = Instant::now() + Duration::from_secs(5);
+        loop {
             let mut gui: GUITHREADINFO = std::mem::zeroed();
             gui.cbSize = std::mem::size_of::<GUITHREADINFO>() as u32;
-            (GetForegroundWindow() == dialog
-                && GetGUIThreadInfo(GetWindowThreadProcessId(dialog, null_mut()), &mut gui) != 0
-                && gui.hwndFocus == edit)
-                .then_some(())
-        });
+            let ok = GetGUIThreadInfo(GetWindowThreadProcessId(dialog, null_mut()), &mut gui) != 0;
+            let foreground = GetForegroundWindow();
+            if ok && foreground == dialog && gui.hwndFocus == edit {
+                break;
+            }
+            assert!(Instant::now() < until,
+                "after click: GUI info={ok}, fg={foreground:?}, active={:?}, focus={:?}, dialog={dialog:?}, edit={edit:?}, owner={main:?}, flags={:#x}",
+                gui.hwndActive, gui.hwndFocus, gui.flags);
+            thread::sleep(Duration::from_millis(15));
+        }
+        send(edit, 0x00b1, 11, 18); // select "receipt" after the focus click
         let mut keys: [INPUT; 4] = std::mem::zeroed();
         for (input, (key, flags)) in keys.iter_mut().zip([
             (VK_CONTROL, 0),
