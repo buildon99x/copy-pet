@@ -2599,7 +2599,10 @@ mod clipboard_tests {
         }
     }
 
-    thread_local! { static EDITOR_EVENTS: RefCell<std::collections::VecDeque<String>> = RefCell::new(std::collections::VecDeque::new()); }
+    thread_local! {
+        static EDITOR_EVENTS: RefCell<std::collections::VecDeque<String>> = const { RefCell::new(std::collections::VecDeque::new()) };
+        static FRAME_ACTIVE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    }
     fn note_editor_event(message: String) {
         EDITOR_EVENTS.with(|events| {
             let mut events = events.borrow_mut();
@@ -2611,6 +2614,7 @@ mod clipboard_tests {
     // A normal single-document editor forwards activation focus to its view.
     // A stock STATIC top-level keeps focus on itself after asynchronous activation.
     unsafe extern "system" fn editor_frame(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRESULT {
+        if msg == WM_ACTIVATE { FRAME_ACTIVE.with(|active| active.set(wp as u16 != WA_INACTIVE as u16)); }
         if matches!(msg, WM_ACTIVATE | WM_ACTIVATEAPP | WM_SETFOCUS | WM_KILLFOCUS | WM_ENTERMENULOOP | WM_EXITMENULOOP | WM_SYSCOMMAND) {
             note_editor_event(format!("frame({msg:#x},{wp:#x})"));
         }
@@ -2722,6 +2726,10 @@ mod clipboard_tests {
                     assert_eq!(GetWindowTextLengthW(edit), 0);
                     reset = true;
                     std::fs::write(dir.join("first-received-and-cleared"), []).unwrap();
+                } else if reset && GetForegroundWindow() != top && !FRAME_ACTIVE.with(std::cell::Cell::get) {
+                    if !dir.join("yielded-to-panel").exists() {
+                        std::fs::write(dir.join("yielded-to-panel"), []).unwrap();
+                    }
                 } else if reset && text == SECOND {
                     assert_eq!(windows_sys::Win32::UI::Input::KeyboardAndMouse::GetFocus(), edit);
                     std::fs::write(dir.join("second-received"), []).unwrap();
@@ -2814,6 +2822,9 @@ mod clipboard_tests {
         let own = super::super::win_focus::PasteTarget::external();
         assert_eq!(previous,panel);
         assert!(own.is_none());
+        // A normal user chooses the queue action after the editor has yielded to
+        // the panel. Pump the parent and await the editor's own deactivation.
+        wait("yielded-to-panel");
         let second = set_clipboard_rich(owner, SECOND, None, true).unwrap()
             .acknowledge(&mut None, true).unwrap();
         assert_ne!(sequence, second);
@@ -2822,7 +2833,8 @@ mod clipboard_tests {
         let restored = submit_paste(target, true, Some(second));
         assert!(
             restored.is_ok(),
-            "restore captured EDIT after panel focus: {restored:?}; captured={target:?}"
+            "restore captured EDIT after panel focus: {restored:?}; captured={target:?}; last child state={}",
+            std::fs::read_to_string(child.1.join("child-state")).unwrap_or_default()
         );
         wait("second-received");
         DestroyWindow(panel);

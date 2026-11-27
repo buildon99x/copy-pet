@@ -265,10 +265,14 @@ unsafe fn queue_menu_roundtrip(main: HWND) {
         let menu = menu as HMENU;
         let index = (0..GetMenuItemCount(menu)).find(|&i| GetMenuItemID(menu, i) == 56)?;
         let mut rect: RECT = std::mem::zeroed();
-        (GetMenuItemRect(main, menu, index as u32, &mut rect) != 0).then_some(POINT {
+        if GetMenuItemRect(null_mut(), menu, index as u32, &mut rect) == 0 {
+            return None;
+        }
+        let point = POINT {
             x: (rect.left + rect.right) / 2,
             y: (rect.top + rect.bottom) / 2,
-        })
+        };
+        (WindowFromPoint(point) == popup).then_some(point)
     });
     click(point);
     visible_panel(true);
@@ -333,7 +337,12 @@ unsafe fn open_preview(fixture: &mut Fixture) -> (HWND, HWND, HWND) {
             return None;
         }
         let edit = GetDlgItem(dialog, 100);
-        (!edit.is_null()).then_some((dialog, edit))
+        if edit.is_null() || IsWindowVisible(dialog) == 0 || IsWindowVisible(edit) == 0 {
+            return None;
+        }
+        let mut rect: RECT = std::mem::zeroed();
+        (GetClientRect(edit, &mut rect) != 0 && rect.right > 100 && rect.bottom > 30)
+            .then_some((dialog, edit))
     });
     (main, dialog, edit)
 }
@@ -348,15 +357,6 @@ fn copying_preview_selection_keeps_image_history_and_suppresses_copy_feedback() 
     let mut fixture = launch(1, true);
     unsafe {
         let (main, dialog, edit) = open_preview(&mut fixture);
-        send(edit, 0x00b1, 5, 10); // EM_SETSEL, select only 12345
-        if let Some(dir) = std::env::var_os("CLIPCAT_OCR_EVIDENCE") {
-            save_preview_image(dialog, std::path::Path::new(&dir));
-        }
-        send(edit, WM_COPY, 0, 0); // same command as the read-only context menu
-        assert!(
-            clipboard_is(main, "12345"),
-            "selection must go through ClipCat's plain-text writer"
-        );
         // A real user can focus this app-owned selectable control by clicking.
         // Posted button notifications alone do not confer foreground rights.
         let mut point = POINT { x: 15, y: 15 };
@@ -384,6 +384,14 @@ fn copying_preview_selection_keeps_image_history_and_suppresses_copy_feedback() 
                 gui.hwndActive, gui.hwndFocus, gui.flags);
             thread::sleep(Duration::from_millis(15));
         }
+        send(edit, 0x00b1, 5, 10); // EM_SETSEL, select only 12345
+        if let Some(dir) = std::env::var_os("CLIPCAT_OCR_EVIDENCE") {
+            save_preview_image(dialog, std::path::Path::new(&dir));
+        }
+        send(edit, WM_COPY, 0, 0); // same command as the read-only context menu
+        wait("one WM_COPY through ClipCat's plain-text writer", || {
+            clipboard_is(main, "12345").then_some(())
+        });
         send(edit, 0x00b1, 11, 18); // select "receipt" after the focus click
         let mut keys: [INPUT; 4] = std::mem::zeroed();
         for (input, (key, flags)) in keys.iter_mut().zip([
