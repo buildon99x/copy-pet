@@ -14,7 +14,7 @@ use std::{
 };
 use windows_sys::Win32::Foundation::*;
 use windows_sys::Win32::System::{DataExchange::*, Memory::*};
-use windows_sys::Win32::UI::WindowsAndMessaging::*;
+use windows_sys::Win32::UI::{Input::KeyboardAndMouse::*, WindowsAndMessaging::*};
 
 struct Fixture {
     child: Child,
@@ -100,6 +100,9 @@ unsafe fn clipboard_is(owner: HWND, text: &str) -> bool {
 
 #[test]
 fn copying_preview_selection_keeps_image_history_and_suppresses_copy_feedback() {
+    if std::env::var_os("GITHUB_ACTIONS").is_none() && std::env::var_os("CLIPCAT_TEST_DESKTOP").is_none() {
+        return;
+    }
     let dir = std::env::temp_dir().join(format!(
         "clipcat-preview-selection-{}-{}",
         std::process::id(),
@@ -125,6 +128,7 @@ fn copying_preview_selection_keeps_image_history_and_suppresses_copy_feedback() 
     let mut fixture = Fixture { child, dir };
     unsafe {
         let main = wait("isolated ClipCat window", || {
+            assert!(fixture.child.try_wait().unwrap().is_none(), "test app exited before window creation; check for another ClipCat in this session");
             let mut target = (fixture.child.id(), null_mut() as HWND);
             EnumWindows(Some(find_main), &mut target as *mut (u32, HWND) as LPARAM);
             (!target.1.is_null()).then_some(target.1)
@@ -145,6 +149,22 @@ fn copying_preview_selection_keeps_image_history_and_suppresses_copy_feedback() 
             clipboard_is(main, "12345"),
             "selection must go through ClipCat's plain-text writer"
         );
+        send(edit, 0x00b1, 11, 18); // select "receipt" for the real Ctrl+C chord
+        SetForegroundWindow(dialog);
+        wait("foreground modal with focused synthetic EDIT", || {
+            let mut gui: GUITHREADINFO = std::mem::zeroed();
+            gui.cbSize = std::mem::size_of::<GUITHREADINFO>() as u32;
+            (GetForegroundWindow() == dialog && GetGUIThreadInfo(GetWindowThreadProcessId(dialog, null_mut()), &mut gui) != 0
+                && gui.hwndFocus == edit).then_some(())
+        });
+        let mut keys: [INPUT; 4] = std::mem::zeroed();
+        for (input, (key, flags)) in keys.iter_mut().zip([(VK_CONTROL, 0), (0x43, 0), (0x43, KEYEVENTF_KEYUP), (VK_CONTROL, KEYEVENTF_KEYUP)]) {
+            input.r#type = INPUT_KEYBOARD;
+            input.Anonymous.ki.wVk = key;
+            input.Anonymous.ki.dwFlags = flags;
+        }
+        assert_eq!(SendInput(4, keys.as_ptr(), std::mem::size_of::<INPUT>() as i32), 4);
+        wait("Ctrl+C of selected receipt through the native writer", || clipboard_is(main, "receipt").then_some(()));
         // Allow the real asynchronous WM_CLIPBOARDUPDATE to be delivered before
         // shutting down. Receiving later messages in the modal loop is essential.
         PostMessageW(dialog, WM_CLOSE, 0, 0);

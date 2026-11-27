@@ -80,7 +80,11 @@ impl PasteTarget {
             if attached {
                 AttachThreadInput(caller, self.thread, 0);
             }
-            Self::external() == Some(self)
+            // Detaching can leave activation work queued on the foreign GUI
+            // thread. Give it a bounded turn, then recheck the exact control.
+            let mut result = 0;
+            SendMessageTimeoutW(self.top, WM_NULL, 0, 0, SMTO_ABORTIFHUNG | SMTO_BLOCK,
+                200, &mut result) != 0 && Self::external() == Some(self)
         }
     }
 }

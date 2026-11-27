@@ -2579,6 +2579,16 @@ mod clipboard_tests {
         }
     }
 
+    // A normal single-document editor forwards activation focus to its view.
+    // A stock STATIC top-level keeps focus on itself after asynchronous activation.
+    unsafe extern "system" fn editor_frame(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRESULT {
+        if msg == WM_SETFOCUS {
+            let edit = GetDlgItem(hwnd, 1);
+            if !edit.is_null() { SetFocus(edit); return 0; }
+        }
+        DefWindowProcW(hwnd, msg, wp, lp)
+    }
+
     #[test]
     fn synthetic_external_edit_fixture() {
         let Some(path) = std::env::var_os(TARGET_ENV) else {
@@ -2587,9 +2597,16 @@ mod clipboard_tests {
         let dir = std::path::PathBuf::from(path);
         unsafe {
             let module = GetModuleHandleW(null());
+            let class = wz("ClipCatSyntheticEditor");
+            let mut wc: WNDCLASSEXW = std::mem::zeroed();
+            wc.cbSize = std::mem::size_of::<WNDCLASSEXW>() as u32;
+            wc.lpfnWndProc = Some(editor_frame);
+            wc.hInstance = module;
+            wc.lpszClassName = class.as_ptr();
+            assert_ne!(RegisterClassExW(&wc), 0);
             let top = CreateWindowExW(
                 0,
-                wz("STATIC").as_ptr(),
+                class.as_ptr(),
                 wz("ClipCat test target").as_ptr(),
                 WS_OVERLAPPEDWINDOW,
                 10,
@@ -2611,7 +2628,7 @@ mod clipboard_tests {
                 280,
                 40,
                 top,
-                null_mut(),
+                1usize as HMENU,
                 module,
                 null(),
             );

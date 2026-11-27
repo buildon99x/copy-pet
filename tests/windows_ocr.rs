@@ -5,12 +5,22 @@ use std::process::{Command, Stdio};
 use tiny_skia::{Color, Pixmap, Transform};
 
 #[test]
-fn installed_english_recognizer_reads_synthetic_image() {
+fn installed_profile_recognizer_reads_synthetic_image() {
+    let language = std::env::var("CLIPCAT_OCR_LANGUAGE").unwrap_or_else(|_| "en-US".into());
+    let sample = match language.as_str() {
+        "ko-KR" => "한글 문서",
+        "en-US" => "Receipt 12345",
+        _ => panic!("unsupported fixture language {language}"),
+    };
+    let fonts = clipcat::sysfont::diagnostics();
+    if language == "ko-KR" {
+        assert!(fonts.lines().any(|l| l.starts_with("SELECTED") && l.contains("hangul=true")), "{fonts}");
+    }
     let mut pixels = Pixmap::new(480, 100).unwrap();
     pixels.fill(Color::WHITE);
     clipcat::sysfont::draw(
         &mut pixels,
-        "Receipt 12345",
+        sample,
         20.0,
         20.0,
         5.5,
@@ -24,11 +34,16 @@ fn installed_english_recognizer_reads_synthetic_image() {
         "Windows OCR exit {:?}",
         output.status.code()
     );
-    let text = String::from_utf8(output.stdout).unwrap().to_lowercase();
-    assert!(
-        text.contains("receipt") && text.contains("12345"),
-        "{text:?}"
-    );
+    let text = String::from_utf8(output.stdout).unwrap();
+    println!("Windows OCR ({language}): {text:?}");
+    if let Some(path) = std::env::var_os("CLIPCAT_OCR_EVIDENCE") {
+        let dir = std::path::PathBuf::from(path);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join(format!("{language}-result.txt")), format!("{text}\n{fonts}")).unwrap();
+        pixels.save_png(dir.join(format!("{language}-fixture.png"))).unwrap();
+    }
+    let normalize = |s: &str| s.split_whitespace().collect::<String>().to_lowercase();
+    assert_eq!(normalize(&text), normalize(sample), "{language}: {text:?}");
 }
 
 fn run_worker(image: &ClipImage) -> std::process::Output {

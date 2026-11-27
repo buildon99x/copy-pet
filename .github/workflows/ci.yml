@@ -107,27 +107,33 @@ jobs:
       - name: Clippy
         run: cargo clippy --release
 
-      - name: Ensure English Windows OCR capability
+      - name: Select English Windows OCR profile
         if: runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          $probe = @'
-          $ErrorActionPreference = 'Stop'
-          [Windows.Media.Ocr.OcrEngine, Windows.Foundation, ContentType = WindowsRuntime] | Out-Null
-          $tags = @([Windows.Media.Ocr.OcrEngine]::AvailableRecognizerLanguages | ForEach-Object { $_.LanguageTag })
-          Write-Output ("Installed OCR languages: " + ($tags -join ', '))
-          if ($tags -notcontains 'en-US') { exit 3 }
-          '@
-          $windowsPowerShell = "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe"
-          & $windowsPowerShell -NoProfile -NonInteractive -Command $probe
-          if ($LASTEXITCODE -eq 3) {
-            Add-WindowsCapability -Online -Name 'Language.OCR~~~en-US~0.0.1.0'
-            & $windowsPowerShell -NoProfile -NonInteractive -Command $probe
-          }
-          if ($LASTEXITCODE -ne 0) { throw 'English Windows OCR capability is unavailable on this runner.' }
+        shell: powershell
+        run: ./scripts/ci_windows_ocr.ps1 en-US
 
       - name: Test
+        env:
+          CLIPCAT_OCR_EVIDENCE: ${{ runner.temp }}/clipcat-windows-ocr
         run: cargo test --locked --release --no-fail-fast
+
+      - name: Recognize synthetic Hangul with the Korean Windows profile
+        if: "!cancelled() && runner.os == 'Windows'"
+        shell: powershell
+        env:
+          CLIPCAT_OCR_LANGUAGE: ko-KR
+          CLIPCAT_OCR_EVIDENCE: ${{ runner.temp }}/clipcat-windows-ocr
+        run: |
+          ./scripts/ci_windows_ocr.ps1 ko-KR
+          cargo test --locked --release --test windows_ocr installed_profile_recognizer_reads_synthetic_image -- --exact --nocapture
+
+      - name: Upload native OCR evidence
+        if: "!cancelled() && runner.os == 'Windows'"
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-ocr-languages
+          path: ${{ runner.temp }}/clipcat-windows-ocr
+          if-no-files-found: error
 
       - name: Validate macOS cat assets and rendering
         if: runner.os == 'macOS'
@@ -182,12 +188,20 @@ jobs:
 
       # Also exercise the portable backend on Windows so it can't bit-rot.
       - name: Clippy (portable backend on Windows)
-        if: runner.os == 'Windows'
-        run: cargo clippy --release --features portable
+        if: "!cancelled() && runner.os == 'Windows'"
+        env:
+          CARGO_TARGET_DIR: target/portable
+        run: cargo clippy --locked --release --features portable
 
       - name: Test portable clipboard and hotkey contracts on Windows
-        if: runner.os == 'Windows'
+        if: "!cancelled() && runner.os == 'Windows'"
+        env:
+          CARGO_TARGET_DIR: target/portable
         run: cargo test --locked --release --features portable
+
+      - name: Verify native update executable through its OCR worker
+        if: runner.os == 'Windows'
+        run: python -c "import subprocess, sys; result = subprocess.run(['target/release/clipcat.exe','--ocr-worker'], input=b'{}', timeout=10); sys.exit(0 if result.returncode == 3 else 1)"
 
       # The in-app updater (src/update.rs) downloads release assets from
       # github.com/<repo>/releases/download/<tag>/<name>; these names are
