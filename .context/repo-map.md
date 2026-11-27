@@ -13,6 +13,7 @@ src/
   pet.rs               Pet: platform-agnostic simulation, fish animation,
                        clip/panel orchestration + scene building
   ai_workbench.rs      legacy local project/draft compatibility; no app UI entry points
+  capture_policy.rs    portable source permissions shared by the watcher and UI delivery queue
   clipboard.rs         ClipStore: text/image history, tags + clips.json persistence
   clip_image.rs        bounded PNG storage, Windows DIB conversion and thumbnails
   panel.rs             clipboard panel UI state, dynamic Layout geometry
@@ -78,6 +79,7 @@ scripts/release.sh     the release path: gates, bump, CHANGELOG rotation, tag,
                        atomic main/tag push (scripts/release.cmd = Windows wrapper)
 scripts/production.py  published-release validation, production promotion and audit
 tests/test_production.py  real Git remote promotion/recovery regression tests
+scripts/ci_windows_ocr.ps1  select and verify installed English/Korean OCR on ephemeral hosted Windows CI
 scripts/validate_linux_workflows.py  isolated CI Xvfb clipboard capture and native-panel smoke
 docs/releasing.md     main/production contract and failed-release recovery
 CHANGELOG.md           user-facing changes only — see policy in its header

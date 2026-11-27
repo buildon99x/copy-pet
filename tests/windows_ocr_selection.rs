@@ -98,6 +98,60 @@ unsafe fn clipboard_is(owner: HWND, text: &str) -> bool {
     matches
 }
 
+fn preview_sample() -> String {
+    let mut sample = String::from("Part 12345 receipt");
+    for i in 1..=24 {
+        sample.push_str(&format!("\nSynthetic line {i:02} · 한글 문서"));
+    }
+    sample
+}
+
+/// Print just the fixture child's owned dialog (including its standard EDIT).
+/// The destination DIB is private memory. No desktop pixels are copied.
+unsafe fn save_preview_image(dialog: HWND, directory: &std::path::Path) {
+    use windows_sys::Win32::Graphics::Gdi::*;
+    #[link(name = "user32")]
+    extern "system" {
+        fn PrintWindow(window: HWND, dc: HDC, flags: u32) -> BOOL;
+    }
+    let mut rect: RECT = std::mem::zeroed();
+    assert_ne!(GetWindowRect(dialog, &mut rect), 0);
+    let (width, height) = (rect.right - rect.left, rect.bottom - rect.top);
+    let mut pixels = tiny_skia::Pixmap::new(width as u32, height as u32).unwrap();
+    let dc = CreateCompatibleDC(null_mut());
+    assert!(!dc.is_null());
+    let mut info: BITMAPINFO = std::mem::zeroed();
+    info.bmiHeader.biSize = std::mem::size_of::<BITMAPINFOHEADER>() as u32;
+    info.bmiHeader.biWidth = width;
+    info.bmiHeader.biHeight = -height;
+    info.bmiHeader.biPlanes = 1;
+    info.bmiHeader.biBitCount = 32;
+    let mut bits = null_mut();
+    let bitmap = CreateDIBSection(dc, &info, DIB_RGB_COLORS, &mut bits, null_mut(), 0);
+    assert!(!bitmap.is_null() && !bits.is_null());
+    let previous = SelectObject(dc, bitmap);
+    let printed = PrintWindow(dialog, dc, 0);
+    GdiFlush();
+    let bytes = std::slice::from_raw_parts(bits.cast::<u8>(), pixels.data().len());
+    for (pixel, source) in pixels
+        .data_mut()
+        .as_chunks_mut::<4>()
+        .0
+        .iter_mut()
+        .zip(bytes.as_chunks::<4>().0)
+    {
+        pixel.copy_from_slice(&[source[2], source[1], source[0], 255]);
+    }
+    SelectObject(dc, previous);
+    DeleteObject(bitmap);
+    DeleteDC(dc);
+    assert_ne!(printed, 0);
+    fs::create_dir_all(directory).unwrap();
+    pixels
+        .save_png(directory.join("native-ocr-preview.png"))
+        .unwrap();
+}
+
 // Both editors belong to the fixture process. The first open seeds the
 // previous target; the cat's real context-menu command must replace it with B.
 unsafe fn queue_menu_roundtrip(main: HWND) {
@@ -243,7 +297,7 @@ fn launch(timestamp: u64, pinned: bool) -> Fixture {
     fs::create_dir(&dir).unwrap();
     let image = ClipImage::from_pixmap(&tiny_skia::Pixmap::new(2, 2).unwrap()).unwrap();
     let clip = json!({"id":1,"source":"Synthetic", "text":"", "ts":timestamp,"pinned":pinned,
-        "image":image,"ocr_text":"Part 12345 receipt"});
+        "image":image,"ocr_text":preview_sample()});
     fs::write(dir.join("clips.json"), json!({"clips":[clip]}).to_string()).unwrap();
     fs::write(
         dir.join("state.json"),
@@ -291,6 +345,9 @@ fn copying_preview_selection_keeps_image_history_and_suppresses_copy_feedback() 
     unsafe {
         let (main, dialog, edit) = open_preview(&mut fixture);
         send(edit, 0x00b1, 5, 10); // EM_SETSEL, select only 12345
+        if let Some(dir) = std::env::var_os("CLIPCAT_OCR_EVIDENCE") {
+            save_preview_image(dialog, std::path::Path::new(&dir));
+        }
         send(edit, WM_COPY, 0, 0); // same command as the read-only context menu
         assert!(
             clipboard_is(main, "12345"),
@@ -377,7 +434,7 @@ fn copying_preview_selection_keeps_image_history_and_suppresses_copy_feedback() 
     // A regressing native EDIT writer would insert the selected text as a new row.
     let rows = stored["clips"].as_array().unwrap();
     assert_eq!(rows.len(), 2);
-    assert!(rows.iter().any(|c| c["ocr_text"] == "Part 12345 receipt"));
+    assert!(rows.iter().any(|c| c["ocr_text"] == preview_sample()));
     assert!(rows.iter().any(|c| c["text"] == "external fixture"));
     assert!(!rows.iter().any(|c| c["text"] == "12345"));
 

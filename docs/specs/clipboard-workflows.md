@@ -106,3 +106,11 @@ in an isolated test profile, exercise reachable flows, capture screenshots, then
 quit. Verify Windows native/portable compilation and CI when possible; never
 equate cross-compilation with real Windows manual testing. Commit/push each unit
 over the repository's SSH remote; do not release or promote production.
+
+
+The native Windows desktop tests open synthetic editor and ClipCat windows and
+write to the session clipboard. Hosted Windows CI runs them automatically. To
+run them locally, use a dedicated interactive Windows session with no ClipCat
+instance, set `CLIPCAT_TEST_DESKTOP=1`, then run `cargo test --locked --release`.
+The CI language fixture saves the input PNG, recognized text, selected system
+fonts, installed recognizers and profile-language evidence for English and Korean.

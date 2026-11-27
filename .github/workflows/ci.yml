@@ -113,11 +113,28 @@ jobs:
         run: ./scripts/ci_windows_ocr.ps1 en-US
 
       - name: Test
-        env:
-          CLIPCAT_OCR_EVIDENCE: ${{ runner.temp }}/clipcat-windows-ocr
+        if: runner.os != 'Windows'
         run: cargo test --locked --release --no-fail-fast
 
+      - name: Test native Windows
+        if: runner.os == 'Windows'
+        shell: bash
+        env:
+          CLIPCAT_OCR_EVIDENCE: ${{ runner.temp }}/clipcat-windows-ocr
+        run: |
+          set -o pipefail
+          cargo test --locked --release --no-fail-fast 2>&1 | tee native-test.log
+
+      - name: Upload native test diagnostics before language provisioning
+        if: "!cancelled() && runner.os == 'Windows'"
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-native-test-log
+          path: native-test.log
+          if-no-files-found: error
+
       - name: Recognize synthetic Hangul with the Korean Windows profile
+        timeout-minutes: 18
         if: "!cancelled() && runner.os == 'Windows'"
         shell: powershell
         env:
@@ -200,7 +217,7 @@ jobs:
         run: cargo test --locked --release --features portable
 
       - name: Verify native update executable through its OCR worker
-        if: runner.os == 'Windows'
+        if: "!cancelled() && runner.os == 'Windows'"
         run: python -c "import subprocess, sys; result = subprocess.run(['target/release/clipcat.exe','--ocr-worker'], input=b'{}', timeout=10); sys.exit(0 if result.returncode == 3 else 1)"
 
       # The in-app updater (src/update.rs) downloads release assets from
