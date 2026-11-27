@@ -14,6 +14,7 @@ use std::{
 };
 use windows_sys::Win32::Foundation::*;
 use windows_sys::Win32::System::{DataExchange::*, Memory::*};
+use windows_sys::Win32::UI::HiDpi::{GetDpiForWindow, SetThreadDpiAwarenessContext, DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2};
 use windows_sys::Win32::UI::{Input::KeyboardAndMouse::*, WindowsAndMessaging::*};
 
 struct Fixture {
@@ -53,7 +54,7 @@ unsafe extern "system" fn find_main(hwnd: HWND, lp: LPARAM) -> BOOL {
     1
 }
 
-unsafe fn send(hwnd: HWND, message: u32, wp: WPARAM, lp: LPARAM) {
+unsafe fn send(hwnd: HWND, message: u32, wp: WPARAM, lp: LPARAM) -> usize {
     let mut result = 0;
     assert_ne!(
         SendMessageTimeoutW(
@@ -68,6 +69,7 @@ unsafe fn send(hwnd: HWND, message: u32, wp: WPARAM, lp: LPARAM) {
         0,
         "child window did not respond to {message:#x}"
     );
+    result
 }
 
 unsafe fn clipboard_is(owner: HWND, text: &str) -> bool {
@@ -118,6 +120,45 @@ unsafe fn click(pt: POINT, button: [MOUSE_EVENT_FLAGS; 2]) {
         SendInput(2, clicks.as_ptr(), std::mem::size_of::<INPUT>() as i32),
         2
     );
+}
+
+// The caller has checked the foreground dialog and focused EDIT. Send input
+// through the same queue as the focus click, in physical event order.
+unsafe fn send_keys(events: &[(u16, KEYBD_EVENT_FLAGS)]) {
+    let inputs: Vec<INPUT> = events.iter().map(|&(key, flags)| {
+        let mut input: INPUT = std::mem::zeroed();
+        input.r#type = INPUT_KEYBOARD;
+        input.Anonymous.ki.wVk = key;
+        input.Anonymous.ki.dwFlags = flags;
+        input
+    }).collect();
+    assert_eq!(SendInput(inputs.len() as u32, inputs.as_ptr(), std::mem::size_of::<INPUT>() as i32), inputs.len() as u32);
+}
+
+unsafe fn select_first_line_range(dialog: HWND, edit: HWND, start: u16, end: u16) {
+    let mut gui: GUITHREADINFO = std::mem::zeroed();
+    gui.cbSize = std::mem::size_of::<GUITHREADINFO>() as u32;
+    assert_ne!(GetGUIThreadInfo(GetWindowThreadProcessId(dialog, null_mut()), &mut gui), 0);
+    assert_eq!(GetForegroundWindow(), dialog);
+    assert_eq!(gui.hwndFocus, edit);
+    let tap = |key| [(key, 0), (key, KEYEVENTF_KEYUP)];
+    let mut events = vec![(VK_CONTROL, 0)];
+    events.extend(tap(VK_HOME));
+    events.push((VK_CONTROL, KEYEVENTF_KEYUP));
+    for _ in 0..start { events.extend(tap(VK_RIGHT)); }
+    events.push((VK_SHIFT, 0));
+    for _ in start..end { events.extend(tap(VK_RIGHT)); }
+    events.push((VK_SHIFT, KEYEVENTF_KEYUP));
+    send_keys(&events);
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        // EM_GETSEL packs these short offsets when both pointers are NULL.
+        let range = send(edit, 0x00b0, 0, 0);
+        let actual = (range as u16, (range >> 16) as u16);
+        if actual == (start, end) { break; }
+        assert!(Instant::now() < deadline, "preview selection expected {start}..{end}, observed {actual:?}, foreground={:?}", GetForegroundWindow());
+        thread::sleep(Duration::from_millis(15));
+    }
 }
 
 fn preview_sample() -> String {
@@ -174,6 +215,90 @@ unsafe fn save_preview_image(dialog: HWND, directory: &std::path::Path) {
         .unwrap();
 }
 
+unsafe fn menu_command_point(owner: HWND, command: u32, mut pump: impl FnMut()) -> POINT {
+    let thread = GetWindowThreadProcessId(owner, null_mut());
+    unsafe extern "system" fn find_menu(hwnd: HWND, output: LPARAM) -> BOOL {
+        let mut class = [0u16; 16];
+        let n = GetClassNameW(hwnd, class.as_mut_ptr(), class.len() as i32);
+        if IsWindowVisible(hwnd) != 0 && String::from_utf16_lossy(&class[..n as usize]) == "#32768"
+        {
+            *(output as *mut HWND) = hwnd;
+            return 0;
+        }
+        1
+    }
+    let root = GetAncestor(owner, GA_ROOT);
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        pump();
+        let mut info: GUITHREADINFO = std::mem::zeroed();
+        info.cbSize = std::mem::size_of::<GUITHREADINFO>() as u32;
+        let gui = GetGUIThreadInfo(thread, &mut info) != 0;
+        let mut popup: HWND = null_mut();
+        EnumThreadWindows(thread, Some(find_menu), &mut popup as *mut HWND as LPARAM);
+        let mut menu = 0;
+        let mut hit = null_mut();
+        if gui && (info.hwndMenuOwner == owner || info.hwndMenuOwner == root) && !popup.is_null()
+            && SendMessageTimeoutW(popup, MN_GETHMENU, 0, 0, SMTO_ABORTIFHUNG, 100, &mut menu) != 0
+        {
+            let menu = menu as HMENU;
+            if let Some(index) = (0..GetMenuItemCount(menu)).find(|&i| GetMenuItemID(menu, i) == command) {
+                let mut rect: RECT = std::mem::zeroed();
+                if GetMenuItemRect(null_mut(), menu, index as u32, &mut rect) != 0 {
+                    let point = POINT { x: (rect.left + rect.right) / 2, y: (rect.top + rect.bottom) / 2 };
+                    hit = WindowFromPoint(point);
+                    if hit == popup { return point; }
+                }
+            }
+        }
+        assert!(Instant::now() < deadline,
+            "command {command} in menu of {owner:?}: root={root:?}, foreground={:?}, focus={:?}, menu owner={:?}, popup={popup:?}, menu={menu:#x}, hit={hit:?}",
+            GetForegroundWindow(), info.hwndFocus, info.hwndMenuOwner);
+        thread::sleep(Duration::from_millis(15));
+    }
+}
+
+fn hosted_desktop() -> bool {
+    std::env::var("GITHUB_ACTIONS").as_deref() == Ok("true")
+        && std::env::var("RUNNER_ENVIRONMENT").as_deref() == Ok("github-hosted")
+}
+
+// On hosted Windows the runner's Terminal can occupy the editor's click
+// point even after the editor enters the topmost band. Minimize only that
+// obstruction on the disposable VM, then restore its original placement.
+#[derive(Default)]
+struct RunnerTerminal(Option<(HWND, u32, WINDOWPLACEMENT)>);
+
+impl RunnerTerminal {
+    unsafe fn clear_obstruction(&mut self, hit: HWND) {
+        if self.0.is_some() || !hosted_desktop() || hit.is_null() { return; }
+        let window = GetAncestor(hit, GA_ROOT);
+        let mut class = [0u16; 64];
+        let len = GetClassNameW(window, class.as_mut_ptr(), class.len() as i32);
+        if String::from_utf16_lossy(&class[..len as usize]) != "CASCADIA_HOSTING_WINDOW_CLASS" { return; }
+        let mut placement: WINDOWPLACEMENT = std::mem::zeroed();
+        placement.length = std::mem::size_of::<WINDOWPLACEMENT>() as u32;
+        let mut pid = 0;
+        assert_ne!(GetWindowThreadProcessId(window, &mut pid), 0);
+        assert_ne!(GetWindowPlacement(window, &mut placement), 0);
+        assert_ne!(ShowWindowAsync(window, SW_MINIMIZE), 0);
+        self.0 = Some((window, pid, placement));
+    }
+}
+
+impl Drop for RunnerTerminal {
+    fn drop(&mut self) {
+        if let Some((window, pid, placement)) = self.0.take() {
+            unsafe {
+                let mut current_pid = 0;
+                if GetWindowThreadProcessId(window, &mut current_pid) != 0 && current_pid == pid {
+                    SetWindowPlacement(window, &placement);
+                }
+            }
+        }
+    }
+}
+
 // Both editors belong to the fixture process. The first open seeds the
 // previous target; the cat's real context-menu command must replace it with B.
 unsafe fn queue_menu_roundtrip(main: HWND) {
@@ -212,14 +337,19 @@ unsafe fn queue_menu_roundtrip(main: HWND) {
     };
     let (frame_a, edit_a) = editor(30);
     let (frame_b, edit_b) = editor(270);
+    let clicked_edit = std::cell::Cell::new(null_mut());
     let pump = || {
         let mut msg = std::mem::zeroed();
         while PeekMessageW(&mut msg, null_mut(), 0, 0, PM_REMOVE) != 0 {
+            if msg.message == WM_LBUTTONUP && (msg.hwnd == edit_a || msg.hwnd == edit_b) {
+                clicked_edit.set(msg.hwnd);
+            }
             TranslateMessage(&msg);
             DispatchMessageW(&msg);
         }
     };
-    let focus = |label: &str, frame: HWND, edit: HWND| {
+    let mut runner_terminal = RunnerTerminal::default();
+    let mut focus = |label: &str, frame: HWND, edit: HWND| {
         // A visible frame shown without activation can still be behind other
         // runner windows. Raise just this fixture frame for its physical click.
         let placement = SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE;
@@ -233,13 +363,24 @@ unsafe fn queue_menu_roundtrip(main: HWND) {
             assert_ne!(windows_sys::Win32::Graphics::Gdi::ClientToScreen(edit, &mut pt), 0);
             let hit = WindowFromPoint(pt);
             if hit == edit { break pt; }
+            runner_terminal.clear_obstruction(hit);
             if Instant::now() >= deadline {
+                #[link(name = "dwmapi")]
+                extern "system" {
+                    fn DwmGetWindowAttribute(hwnd: HWND, attribute: u32, value: *mut u32, size: u32) -> i32;
+                }
+                let mut cloaked = 0;
+                let cloak_status = DwmGetWindowAttribute(frame, 14 /* DWMWA_CLOAKED */, &mut cloaked, 4);
                 let mut pid = 0;
                 GetWindowThreadProcessId(hit, &mut pid);
                 let mut class = [0u16; 256];
                 let len = GetClassNameW(hit, class.as_mut_ptr(), class.len() as i32);
-                panic!("editor {label} before click: expected frame={frame:?}, EDIT={edit:?}; point=({}, {}), hit={hit:?}, pid={pid}, class={}, root={:?}",
-                    pt.x, pt.y, String::from_utf16_lossy(&class[..len as usize]), GetAncestor(hit, GA_ROOT));
+                panic!("editor {label} before click: frame={frame:?} visible={} minimized={} exstyle={:#x} cloaked={:?} previous_z={:?}, EDIT={edit:?} visible={} enabled={} dpi={}; point=({}, {}), hit={hit:?}, pid={pid}, class={}, root={:?}, foreground={:?}, runner terminal minimize requested={}",
+                    IsWindowVisible(frame), IsIconic(frame), GetWindowLongW(frame, GWL_EXSTYLE),
+                    (cloak_status >= 0).then_some(cloaked), GetWindow(frame, GW_HWNDPREV),
+                    IsWindowVisible(edit), IsWindowEnabled(edit), GetDpiForWindow(edit), pt.x, pt.y,
+                    String::from_utf16_lossy(&class[..len as usize]), GetAncestor(hit, GA_ROOT),
+                    GetForegroundWindow(), runner_terminal.0.is_some());
             }
             thread::sleep(Duration::from_millis(15));
         };
@@ -252,12 +393,12 @@ unsafe fn queue_menu_roundtrip(main: HWND) {
             gui.cbSize = std::mem::size_of::<GUITHREADINFO>() as u32;
             let ok = GetGUIThreadInfo(thread_id, &mut gui) != 0;
             let foreground = GetForegroundWindow();
-            if ok && foreground == frame && gui.hwndActive == frame && gui.hwndFocus == edit {
+            if clicked_edit.get() == edit && ok && foreground == frame && gui.hwndActive == frame && gui.hwndFocus == edit {
                 break;
             }
             assert!(Instant::now() < deadline,
-                "editor {label} click: expected frame={frame:?}, EDIT={edit:?}; GUI info={ok}, foreground={foreground:?}, active={:?}, focus={:?}, hit={:?}",
-                gui.hwndActive, gui.hwndFocus, WindowFromPoint(pt));
+                "editor {label} click: expected frame={frame:?}, EDIT={edit:?}; GUI info={ok}, foreground={foreground:?}, active={:?}, focus={:?}, hit={:?}, mouse-up={:?}",
+                gui.hwndActive, gui.hwndFocus, WindowFromPoint(pt), clicked_edit.get());
             thread::sleep(Duration::from_millis(15));
         }
         assert_ne!(SetWindowPos(frame, HWND_NOTOPMOST, 0, 0, 0, 0, placement), 0);
@@ -300,39 +441,7 @@ unsafe fn queue_menu_roundtrip(main: HWND) {
             && GetForegroundWindow() == main)
             .then_some(())
     });
-    unsafe extern "system" fn find_menu(hwnd: HWND, output: LPARAM) -> BOOL {
-        let mut class = [0u16; 16];
-        let n = GetClassNameW(hwnd, class.as_mut_ptr(), class.len() as i32);
-        if IsWindowVisible(hwnd) != 0 && String::from_utf16_lossy(&class[..n as usize]) == "#32768"
-        {
-            *(output as *mut HWND) = hwnd;
-            return 0;
-        }
-        1
-    }
-    let point = wait("queue command in native menu", || {
-        pump();
-        let mut popup: HWND = null_mut();
-        EnumThreadWindows(thread, Some(find_menu), &mut popup as *mut HWND as LPARAM);
-        if popup.is_null() {
-            return None;
-        }
-        let mut menu = 0;
-        if SendMessageTimeoutW(popup, MN_GETHMENU, 0, 0, SMTO_ABORTIFHUNG, 100, &mut menu) == 0 {
-            return None;
-        }
-        let menu = menu as HMENU;
-        let index = (0..GetMenuItemCount(menu)).find(|&i| GetMenuItemID(menu, i) == 56)?;
-        let mut rect: RECT = std::mem::zeroed();
-        if GetMenuItemRect(null_mut(), menu, index as u32, &mut rect) == 0 {
-            return None;
-        }
-        let point = POINT {
-            x: (rect.left + rect.right) / 2,
-            y: (rect.top + rect.bottom) / 2,
-        };
-        (WindowFromPoint(point) == popup).then_some(point)
-    });
+    let point = menu_command_point(main, 56, pump);
     click(point, [MOUSEEVENTF_LEFTDOWN, MOUSEEVENTF_LEFTUP]);
     visible_panel(true);
     // Post so the editor thread keeps dispatching during checked focus restore.
@@ -344,6 +453,7 @@ unsafe fn queue_menu_roundtrip(main: HWND) {
         (String::from_utf16_lossy(&text[..len as usize]) == "external fixture").then_some(())
     });
     assert_eq!(GetWindowTextLengthW(edit_a), 0);
+    assert_eq!(GetForegroundWindow(), frame_b);
     assert_eq!(GetFocus(), edit_b);
     DestroyWindow(frame_a);
     DestroyWindow(frame_b);
@@ -417,9 +527,13 @@ unsafe fn open_preview(fixture: &mut Fixture) -> (HWND, HWND, HWND) {
 // independent profile and child, and a failed scenario cannot skip the others.
 fn desktop_session() -> Option<std::sync::MutexGuard<'static, ()>> {
     static DESKTOP: std::sync::Mutex<()> = std::sync::Mutex::new(());
-    (std::env::var_os("GITHUB_ACTIONS").is_some()
-        || std::env::var_os("CLIPCAT_TEST_DESKTOP").is_some())
-    .then(|| DESKTOP.lock().unwrap_or_else(|e| e.into_inner()))
+    (hosted_desktop() || std::env::var("CLIPCAT_TEST_DESKTOP").as_deref() == Ok("1")).then(|| {
+        let guard = DESKTOP.lock().unwrap_or_else(|e| e.into_inner());
+        // The app uses per-monitor v2. The driver must hit-test and click in
+        // that same coordinate space, including on a scaled runner display.
+        unsafe { assert!(!SetThreadDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2).is_null()); }
+        guard
+    })
 }
 
 #[test]
@@ -457,28 +571,18 @@ fn copying_preview_selection_keeps_image_history_and_suppresses_copy_feedback() 
                 gui.hwndActive, gui.hwndFocus, gui.flags);
             thread::sleep(Duration::from_millis(15));
         }
-        send(edit, 0x00b1, 5, 10); // EM_SETSEL, select only 12345
+        select_first_line_range(dialog, edit, 5, 10);
         if let Some(dir) = std::env::var_os("CLIPCAT_OCR_EVIDENCE") {
             save_preview_image(dialog, std::path::Path::new(&dir));
         }
-        send(edit, WM_COPY, 0, 0); // same command as the read-only context menu
-        wait_for_clipboard("preview WM_COPY selection", main, "12345");
-        send(edit, 0x00b1, 11, 18); // select "receipt" after the focus click
-        let mut keys: [INPUT; 4] = std::mem::zeroed();
-        for (input, (key, flags)) in keys.iter_mut().zip([
-            (VK_CONTROL, 0),
-            (0x43, 0),
-            (0x43, KEYEVENTF_KEYUP),
-            (VK_CONTROL, KEYEVENTF_KEYUP),
-        ]) {
-            input.r#type = INPUT_KEYBOARD;
-            input.Anonymous.ki.wVk = key;
-            input.Anonymous.ki.dwFlags = flags;
-        }
-        assert_eq!(
-            SendInput(4, keys.as_ptr(), std::mem::size_of::<INPUT>() as i32),
-            4
-        );
+        // The Apps key opens the selected text's context menu. Clicking Copy
+        // invokes WM_COPY from within the app's ordinary menu dispatch.
+        send_keys(&[(VK_APPS, 0), (VK_APPS, KEYEVENTF_KEYUP)]);
+        let point = menu_command_point(edit, 1, || {});
+        click(point, [MOUSEEVENTF_LEFTDOWN, MOUSEEVENTF_LEFTUP]);
+        wait_for_clipboard("preview Copy menu WM_COPY selection", main, "12345");
+        select_first_line_range(dialog, edit, 11, 18);
+        send_keys(&[(VK_CONTROL, 0), (0x43, 0), (0x43, KEYEVENTF_KEYUP), (VK_CONTROL, KEYEVENTF_KEYUP)]);
         wait_for_clipboard("preview Ctrl+C selection", main, "receipt");
         // Allow the real asynchronous WM_CLIPBOARDUPDATE to be delivered before
         // shutting down. Receiving later messages in the modal loop is essential.

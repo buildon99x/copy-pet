@@ -120,6 +120,7 @@ jobs:
         if: runner.os == 'Windows'
         shell: bash
         env:
+          CLIPCAT_TEST_DESKTOP: '1'
           CLIPCAT_OCR_EVIDENCE: ${{ runner.temp }}/clipcat-windows-ocr
         run: |
           set -o pipefail
