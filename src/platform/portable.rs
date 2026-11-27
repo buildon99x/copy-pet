@@ -52,8 +52,8 @@ const CLIP_POLL: Duration = Duration::from_millis(400);
 
 #[cfg(not(target_os = "macos"))]
 type Surface = softbuffer::Surface<Rc<Window>, Rc<Window>>;
-/// Text we just wrote to the clipboard ourselves; the watcher skips it once.
-type Suppress = Arc<Mutex<Option<String>>>;
+/// Identity of a successful local write: native generation or verified X11 owner.
+type Suppress = Arc<Mutex<Option<isize>>>;
 
 struct PortableApp {
     pet: Pet,
@@ -388,23 +388,27 @@ impl PortableApp {
     /// macOS paste after the original app regains focus on the main run loop.
     fn set_clipboard(&mut self, pick: ClipPick) {
         if pick.image.is_some() { return; } // Image clipboard is Windows-native only.
-        // suppression is keyed on the text, which is always written, so it stays
-        // valid whether or not we also write the rich formats (ADR-0014).
-        if let Ok(mut guard) = self.suppress.lock() {
-            *guard = Some(pick.text.clone());
-        }
-        #[cfg(target_os = "macos")]
         {
-            // macOS: write text plus the original HTML/RTF, unless this is the
-            // "paste as text" action (plain_only) which strips formatting.
-            let formats = if pick.plain_only { None } else { pick.formats.as_ref() };
-            super::mac_clipboard::write(&pick.text, formats);
-        }
-        #[cfg(not(target_os = "macos"))]
-        {
-            // Linux: arboard is text-only — rich formats degrade to plain.
-            if let Ok(mut cb) = arboard::Clipboard::new() {
-                let _ = cb.set_text(pick.text.clone());
+            // Publish the identity before the watcher can accept the write.
+            let mut marker = self.suppress.lock().unwrap_or_else(|e| e.into_inner());
+            #[cfg(target_os = "macos")]
+            {
+                let formats = if pick.plain_only { None } else { pick.formats.as_ref() };
+                let Some(generation) = super::mac_clipboard::write(&pick.text, formats) else { return; };
+                *marker = Some(generation);
+            }
+            #[cfg(windows)]
+            {
+                let Some(generation) = self.window.as_ref().and_then(|w| super::win_privacy::write_text(w, &pick.text))
+                    else { return; };
+                *marker = Some(generation);
+            }
+            #[cfg(target_os = "linux")]
+            {
+                let Ok(mut clipboard) = arboard::Clipboard::new() else { return; };
+                if clipboard.set_text(pick.text.clone()).is_err() { return; }
+                *marker = super::linux_clipboard::SourceProbe::open()
+                    .and_then(|probe| probe.own_selection()).map(|id| id as isize);
             }
         }
         if pick.paste {
@@ -1331,8 +1335,8 @@ fn paste_events(mac: bool) -> Vec<rdev::EventType> {
     events
 }
 
-fn consume_self_copy(marker: &mut Option<String>, text: &str) -> bool {
-    if marker.as_deref() != Some(text) { return false; }
+fn consume_self_copy(marker: &mut Option<isize>, observation: Option<isize>) -> bool {
+    if observation.is_none() || *marker != observation { return false; }
     *marker = None;
     true
 }
@@ -1353,11 +1357,13 @@ fn poll_generation<T>(generation: &mut isize, baseline: &mut bool, current: isiz
 }
 
 #[cfg(any(target_os = "linux", test))]
-fn stable_text(last: &mut Option<String>, baseline: &mut bool, before: Option<u32>,
+fn stable_text(last: &mut Option<(Option<u32>, String)>, baseline: &mut bool, before: Option<u32>,
     after: Option<u32>, observed: Option<String>) -> Option<String> {
     if before != after { return None; }
+    let observed = observed.map(|text| (after, text));
     let skip = std::mem::take(baseline) || observed == *last;
     last.clone_from(&observed);
+    let observed = observed.map(|(_, text)| text);
     if skip { None } else { observed }
 }
 
@@ -1391,6 +1397,9 @@ fn spawn_clipboard_watcher(tx: Sender<ClipCapture>, suppress: Suppress, capture:
             let (text, source, formats) = {
                 let current = native::generation();
                 let Some(copy) = poll_generation(&mut generation, &mut baseline, current, || {
+                    let mut marker = suppress.lock().unwrap_or_else(|e| e.into_inner());
+                    if consume_self_copy(&mut marker, Some(current)) { return Ok(None); }
+                    drop(marker);
                     #[cfg(windows)]
                     { native::observe(current) }
                     #[cfg(target_os = "macos")]
@@ -1406,12 +1415,10 @@ fn spawn_clipboard_watcher(tx: Sender<ClipCapture>, suppress: Suppress, capture:
                 let after = source_probe.as_ref().and_then(|probe| probe.owner());
                 let Some(text) = stable_text(&mut last, &mut baseline, owner, after, observed)
                     else { continue };
+                let mut marker = suppress.lock().unwrap_or_else(|e| e.into_inner());
+                if consume_self_copy(&mut marker, owner.map(|id| id as isize)) { continue; }
                 (text, source, None)
             };
-            // our own copy-back? consume the marker and skip one event
-            if let Ok(mut guard) = suppress.lock() {
-                if consume_self_copy(&mut guard, &text) { continue; }
-            }
             if tx.send(ClipCapture { text, source, formats, capture_epoch: epoch }).is_err() {
                 return;
             }
@@ -1462,10 +1469,27 @@ mod paste_tests {
 
     #[test]
     fn privacy_unrelated_read_does_not_acknowledge_later_self_copy() {
-        let mut marker = Some("own Y".to_owned());
-        assert!(!consume_self_copy(&mut marker, "external X"));
-        assert!(consume_self_copy(&mut marker, "own Y"));
-        assert!(!consume_self_copy(&mut marker, "own Y"));
+        let mut marker = Some(10);
+        assert!(!consume_self_copy(&mut marker, Some(9)));
+        assert!(consume_self_copy(&mut marker, Some(10)));
+        assert!(!consume_self_copy(&mut marker, Some(10)));
+    }
+
+    #[test]
+    fn superseded_self_write_does_not_suppress_later_external_same_text() {
+        let mut marker = Some(10);
+        // Own Y at 10 was superseded by external X at 11 and external Y at 12.
+        assert!(!consume_self_copy(&mut marker, Some(11)));
+        assert!(!consume_self_copy(&mut marker, Some(12)));
+        assert!(!consume_self_copy(&mut marker, None));
+    }
+
+    #[test]
+    fn older_inflight_same_text_does_not_clear_newer_own_write() {
+        let mut marker = Some(10);
+        // Text is Y in both observations. Only generation 10 is our write.
+        assert!(!consume_self_copy(&mut marker, Some(9)));
+        assert!(consume_self_copy(&mut marker, Some(10)));
     }
 
     #[test]
@@ -1479,11 +1503,24 @@ mod paste_tests {
     }
 
     #[test]
+    fn x11_same_text_from_another_owner_reaches_history() {
+        let mut marker = Some(17);
+        let mut last = None;
+        let mut baseline = false;
+        for owner in [17, 23] {
+            let text = stable_text(&mut last, &mut baseline, Some(owner), Some(owner), Some("Y".into()));
+            assert_eq!(text.as_deref(), Some("Y"));
+            assert_eq!(consume_self_copy(&mut marker, Some(owner as isize)), owner == 17);
+        }
+        assert!(!consume_self_copy(&mut None, None));
+    }
+
+    #[test]
     fn privacy_unstable_x11_owner_does_not_emit_or_update_baseline() {
-        let mut last = Some("old".into());
+        let mut last = Some((Some(1), "old".into()));
         let mut baseline = false;
         assert!(stable_text(&mut last, &mut baseline, Some(1), Some(2), Some("secret".into())).is_none());
-        assert_eq!(last.as_deref(), Some("old"));
+        assert_eq!(last.as_ref().map(|(_, text)| text.as_str()), Some("old"));
         assert_eq!(stable_text(&mut last, &mut baseline, Some(2), Some(2), Some("secret".into())).as_deref(), Some("secret"));
     }
 

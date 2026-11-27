@@ -100,6 +100,22 @@ mod tests {
     use super::*;
 
     #[test]
+    fn local_write_receipt_identifies_its_pasteboard_generation() {
+        unsafe {
+            let pool: Id = msg_send![class!(NSAutoreleasePool), new];
+            let board: Id = msg_send![class!(NSPasteboard), pasteboardWithUniqueName];
+            let rich = RichFormats { html: Some("<b>Y</b>".into()), rtf_b64: None };
+            let own = write_board(board, "Y", Some(&rich)).expect("own rich write");
+            assert_eq!(observe_board(board, own).unwrap().0, "Y");
+            let external = write_board(board, "Y", None).expect("second declaration");
+            assert_ne!(own, external);
+            assert!(observe_board(board, own).is_none());
+            let _: () = msg_send![board, releaseGlobally];
+            let _: () = msg_send![pool, drain];
+        }
+    }
+
+    #[test]
     fn privacy_marked_pasteboard_item_is_ignored() {
         // A unique pasteboard does not touch the user's general pasteboard.
         unsafe {
@@ -125,26 +141,34 @@ mod tests {
 
 /// Replaces the pasteboard with `text` plus the given rich `formats` (when
 /// present). `formats: None` writes plain text only.
-pub fn write(text: &str, formats: Option<&RichFormats>) {
+pub fn write(text: &str, formats: Option<&RichFormats>) -> Option<isize> {
     unsafe {
         let pool: Id = msg_send![class!(NSAutoreleasePool), new];
         let pb: Id = msg_send![class!(NSPasteboard), generalPasteboard];
-        let _: isize = msg_send![pb, clearContents];
-        // plain text is always written, so the suppression marker (keyed on
-        // text) stays valid for the watcher's self-copy skip.
-        let _: BOOL = msg_send![pb, setString: nsstring(text) forType: nsstring(UTF8_TEXT)];
-        if let Some(f) = formats {
-            if let Some(html) = &f.html {
-                let _: BOOL = msg_send![pb, setString: nsstring(html) forType: nsstring(HTML)];
-            }
-            if let Some(rtf_b64) = &f.rtf_b64 {
-                if let Some(bytes) = b64_decode(rtf_b64) {
-                    let data: Id =
-                        msg_send![class!(NSData), dataWithBytes: bytes.as_ptr() length: bytes.len()];
-                    let _: BOOL = msg_send![pb, setData: data forType: nsstring(RTF)];
-                }
+        let result = write_board(pb, text, formats);
+        let _: () = msg_send![pool, drain];
+        result
+    }
+}
+
+// setString/setData add types to our declared pasteboard contents. A new
+// declaration by another process changes the generation returned by clearContents.
+unsafe fn write_board(pb: Id, text: &str, formats: Option<&RichFormats>) -> Option<isize> {
+    let declared: isize = msg_send![pb, clearContents];
+    let ok: BOOL = msg_send![pb, setString: nsstring(text) forType: nsstring(UTF8_TEXT)];
+    if ok != objc::runtime::YES { return None; }
+    if let Some(f) = formats {
+        if let Some(html) = &f.html {
+            let _: BOOL = msg_send![pb, setString: nsstring(html) forType: nsstring(HTML)];
+        }
+        if let Some(rtf_b64) = &f.rtf_b64 {
+            if let Some(bytes) = b64_decode(rtf_b64) {
+                let data: Id =
+                    msg_send![class!(NSData), dataWithBytes: bytes.as_ptr() length: bytes.len()];
+                let _: BOOL = msg_send![pb, setData: data forType: nsstring(RTF)];
             }
         }
-        let _: () = msg_send![pool, drain];
     }
+    let current: isize = msg_send![pb, changeCount];
+    (current == declared).then_some(current)
 }

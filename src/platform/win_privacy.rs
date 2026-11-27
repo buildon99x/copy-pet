@@ -1,5 +1,5 @@
 //! OS clipboard privacy flags and application identity. Called at observation time.
-use windows_sys::Win32::{Foundation::CloseHandle, System::{DataExchange::*, Memory::*, Threading::*}, UI::WindowsAndMessaging::*};
+use windows_sys::Win32::{Foundation::{CloseHandle, GlobalFree}, System::{DataExchange::*, Memory::*, Threading::*}, UI::WindowsAndMessaging::*};
 
 pub unsafe fn owner_path() -> Option<String> {
     let mut src = GetClipboardOwner();
@@ -98,4 +98,49 @@ mod tests {
             assert!(busy.unwrap());
         }
     }
+}
+
+/// Writes one format's bytes to an already-open, already-emptied clipboard.
+/// SAFETY: the GlobalAlloc'd buffer is handed to the clipboard on success (it
+/// then owns it); on failure we free it ourselves.
+pub(super) unsafe fn write_format(fmt: u32, bytes: &[u8]) -> bool {
+    let h = GlobalAlloc(GMEM_MOVEABLE, bytes.len());
+    if h.is_null() {
+        return false;
+    }
+    let p = GlobalLock(h) as *mut u8;
+    if p.is_null() {
+        GlobalFree(h);
+        return false;
+    }
+    std::ptr::copy_nonoverlapping(bytes.as_ptr(), p, bytes.len());
+    GlobalUnlock(h);
+    if SetClipboardData(fmt, h).is_null() {
+        GlobalFree(h);
+        false
+    } else {
+        true
+    }
+}
+
+#[cfg(feature = "portable")]
+pub fn write_text(window: &winit::window::Window, text: &str) -> Option<isize> {
+    use winit::raw_window_handle::{HasWindowHandle, RawWindowHandle};
+    let RawWindowHandle::Win32(handle) = window.window_handle().ok()?.as_raw() else { return None; };
+    let wide: Vec<u16> = text.encode_utf16().chain(Some(0)).collect();
+    // SAFETY: the window is live; the slice borrows initialized UTF-16.
+    // Sample the sequence under the clipboard lock to bind it to this write.
+    unsafe {
+        let bytes = std::slice::from_raw_parts(wide.as_ptr().cast(), wide.len() * 2);
+        for _ in 0..5 {
+            if OpenClipboard(handle.hwnd.get() as _) != 0 {
+                let ok = EmptyClipboard() != 0 && write_format(13, bytes);
+                let sequence = ok.then(generation);
+                CloseClipboard();
+                return sequence;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+    }
+    None
 }

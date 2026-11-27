@@ -33,7 +33,10 @@ Windows honors `ExcludeClipboardContentFromMonitorProcessing` and a zero
 auto-generated pasteboard markers. macOS identifies the foreground application
 when polling. A rapid app switch or background writer can produce a different
 name. X11 uses the selection owner's WM_CLASS when available. Unknown sources
-remain eligible. The portable shortcuts with the panel closed are `]` to cycle
+remain eligible. macOS and Windows use clipboard change numbers to acknowledge
+a self-write. X11 uses the selection-owner window when the X server can verify
+its process ID through XRes. Without that identity a self-write may appear as
+a new copy. The portable shortcuts with the panel closed are `]` to cycle
 sources, `E` to toggle exclusion and `R` to cycle retention. Seconds since the
 last copy determine expiry; periodic cleanup runs once per minute.
 

@@ -61,7 +61,7 @@ libc = "0.2"
 
 # Read the X11 clipboard owner's WM_CLASS. Already used by arboard/winit.
 [target.'cfg(target_os = "linux")'.dependencies]
-x11rb = "0.13"
+x11rb = { version = "0.13", features = ["res"] }
 
 # --- macOS native bits -------------------------------------------------------
 # core-graphics: transparent presenter (src/platform/mac_present.rs).

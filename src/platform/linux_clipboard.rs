@@ -16,6 +16,17 @@ impl SourceProbe {
         (id != 0).then_some(id)
     }
 
+    /// A post-write owner could already be another application. Only trust
+    /// a window the X server identifies as belonging to this process.
+    pub fn own_selection(&self) -> Option<Window> {
+        use x11rb::protocol::res::{ClientIdMask, ClientIdSpec, ConnectionExt};
+        let owner = self.owner()?;
+        let spec = ClientIdSpec { client: owner, mask: ClientIdMask::LOCAL_CLIENT_PID };
+        let reply = self.connection.res_query_client_ids(&[spec]).ok()?.reply().ok()?;
+        reply.ids.iter().any(|id| id.spec.mask == ClientIdMask::LOCAL_CLIENT_PID
+            && id.value.first() == Some(&std::process::id())).then_some(owner)
+    }
+
     pub fn name(&self, owner: Window) -> Option<String> {
         let reply = self.connection.get_property(false, owner, AtomEnum::WM_CLASS,
             AtomEnum::STRING, 0, 256).ok()?.reply().ok()?;

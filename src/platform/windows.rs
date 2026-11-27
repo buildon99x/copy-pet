@@ -10,6 +10,7 @@
 //! `WS_EX_NOACTIVATE` and takes focus so the search box can receive
 //! keyboard input (incl. IME-composed Hangul via WM_CHAR).
 
+use super::win_privacy::write_format;
 use crate::clip_image::{ClipImage, MAX_IMAGE_BYTES};
 use crate::clipboard::{b64_decode, b64_encode, RichFormats};
 use crate::hotkey::{self, Hotkey};
@@ -29,11 +30,11 @@ use windows_sys::Win32::Graphics::Gdi::*;
 use windows_sys::Win32::System::DataExchange::{
     AddClipboardFormatListener, CloseClipboard, EmptyClipboard, GetClipboardData,
     GetClipboardSequenceNumber, OpenClipboard, RegisterClipboardFormatW,
-    RemoveClipboardFormatListener, SetClipboardData,
+    RemoveClipboardFormatListener,
 };
 use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows_sys::Win32::System::Memory::{
-    GlobalAlloc, GlobalLock, GlobalSize, GlobalUnlock, GMEM_MOVEABLE,
+    GlobalLock, GlobalSize, GlobalUnlock,
 };
 use windows_sys::Win32::System::Registry::*;
 use windows_sys::Win32::System::Threading::{
@@ -968,29 +969,6 @@ unsafe fn set_clipboard_image(hwnd: HWND, image: &ClipImage) -> Option<u32> {
         return sequence;
     }
     None
-}
-
-/// Writes one format's bytes to an already-open, already-emptied clipboard.
-/// SAFETY: the GlobalAlloc'd buffer is handed to the clipboard on success (it
-/// then owns it); on failure we free it ourselves.
-unsafe fn write_format(fmt: u32, bytes: &[u8]) -> bool {
-    let h = GlobalAlloc(GMEM_MOVEABLE, bytes.len());
-    if h.is_null() {
-        return false;
-    }
-    let p = GlobalLock(h) as *mut u8;
-    if p.is_null() {
-        GlobalFree(h);
-        return false;
-    }
-    std::ptr::copy_nonoverlapping(bytes.as_ptr(), p, bytes.len());
-    GlobalUnlock(h);
-    if SetClipboardData(fmt, h).is_null() {
-        GlobalFree(h);
-        false
-    } else {
-        true
-    }
 }
 
 /// Replaces the clipboard with `text` (CF_UNICODETEXT, always), plus the
