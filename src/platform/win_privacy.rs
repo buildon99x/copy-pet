@@ -1,5 +1,6 @@
-//! OS clipboard privacy flags and application identity. Called at observation time.
-use windows_sys::Win32::{Foundation::{CloseHandle, GlobalFree}, System::{DataExchange::*, Memory::*, Threading::*}, UI::WindowsAndMessaging::*};
+//! Windows clipboard privacy and write receipts. Both backends match the owner
+//! and finalized sequence under the read lock before publishing capture feedback.
+use windows_sys::Win32::{Foundation::{CloseHandle, GlobalFree, HWND}, System::{DataExchange::*, Memory::*, Threading::*}, UI::WindowsAndMessaging::*};
 
 pub unsafe fn owner_path() -> Option<String> {
     let mut src = GetClipboardOwner();
@@ -59,13 +60,16 @@ pub fn generation() -> isize {
 }
 
 #[cfg(feature = "portable")]
-pub fn observe(expected: isize) -> Result<Option<(String, Option<String>, Option<crate::clipboard::RichFormats>)>, ()> {
+pub(super) fn observe(expected: isize, suppression: &std::sync::Mutex<Option<ClipboardIdentity>>) -> Result<Option<(String, Option<String>, Option<crate::clipboard::RichFormats>)>, ()> {
     // SAFETY: the lock spans identity, privacy flags and text. The OS owns the
     // data handle and it is unlocked before closing the clipboard.
+    let mut marker = suppression.lock().unwrap_or_else(|e| e.into_inner());
     unsafe {
         if OpenClipboard(std::ptr::null_mut()) == 0 { return Err(()); }
+        let skip = generation() != expected || ClipboardIdentity::consume_open(&mut marker);
+        drop(marker); // Reading a delayed format can wait on its owner.
         let result = (|| {
-            if generation() != expected || marked_open() { return None; }
+            if skip || marked_open() { return None; }
             let source = owner_path().and_then(|p| app_name(&p));
             let handle = GetClipboardData(13);
             if handle.is_null() { return None; }
@@ -106,7 +110,7 @@ mod tests {
             });
             if !locked { DestroyWindow(hwnd); panic!("could not acquire test clipboard lock"); }
             let holder = GetOpenClipboardWindow();
-            let busy = std::thread::spawn(|| observe(generation()).is_err()).join();
+            let busy = std::thread::spawn(|| observe(generation(), &std::sync::Mutex::new(None)).is_err()).join();
             CloseClipboard();
             DestroyWindow(hwnd);
             assert_eq!(holder, hwnd);
@@ -115,19 +119,67 @@ mod tests {
     }
 }
 
-/// Called after the writing CloseClipboard, which can finalize additional
-/// formats and advance the sequence. Reopen without modifying data so a
-/// competing writer cannot change the owner between its check and the sample.
-pub(super) unsafe fn verified_write_sequence(hwnd: windows_sys::Win32::Foundation::HWND) -> Option<u32> {
-    for attempt in 0..5 {
-        if attempt != 0 { std::thread::sleep(std::time::Duration::from_millis(5)); }
-        if OpenClipboard(std::ptr::null_mut()) == 0 { continue; }
-        let own = GetClipboardOwner() == hwnd;
-        let sequence = GetClipboardSequenceNumber();
-        let closed = CloseClipboard() != 0;
-        return (closed && own && sequence != 0 && sequence == GetClipboardSequenceNumber()).then_some(sequence);
+/// The HWND is only compared as an opaque identity. The portable clipboard
+/// watcher can check it from another thread without accessing the window.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) struct ClipboardIdentity {
+    owner: usize,
+    generation: u32,
+}
+
+impl ClipboardIdentity {
+    /// SAFETY: the caller holds the clipboard open across both observations.
+    unsafe fn current_open() -> Self {
+        Self { owner: GetClipboardOwner() as usize, generation: GetClipboardSequenceNumber() }
     }
-    None
+
+    /// Only a successful lock can resolve a pending receipt. A later owner or
+    /// generation (even one publishing identical bytes) remains a real copy.
+    pub(super) unsafe fn consume_open(marker: &mut Option<Self>) -> bool {
+        marker.take().is_some_and(|expected| expected.generation != 0 && expected == Self::current_open())
+    }
+}
+
+pub(super) struct WriteReceipt {
+    identity: ClipboardIdentity,
+    complete: bool,
+}
+
+/// All Windows writers end their write lock here. CloseClipboard finalizes
+/// synthesized formats, so an earlier generation cannot identify the write.
+pub(super) unsafe fn close_write(hwnd: HWND, completeness: Option<bool>) -> Option<WriteReceipt> {
+    if CloseClipboard() == 0 { return None; }
+    let complete = completeness?;
+    let identity = ClipboardIdentity { owner: hwnd as usize, generation: GetClipboardSequenceNumber() };
+    Some(WriteReceipt { identity, complete })
+}
+
+impl WriteReceipt {
+    /// Arm capture suppression immediately. Only a second, read-only lock
+    /// can verify the finalized owner and generation for paste dispatch.
+    pub(super) fn acknowledge(
+        self, marker: &mut Option<ClipboardIdentity>, require_complete: bool,
+    ) -> Option<u32> {
+        *marker = Some(self.identity);
+        // SAFETY: each successful OpenClipboard is closed on this thread.
+        unsafe {
+            for attempt in 0..5 {
+                if attempt != 0 { std::thread::sleep(std::time::Duration::from_millis(5)); }
+                if OpenClipboard(std::ptr::null_mut()) == 0 { continue; }
+                let current = ClipboardIdentity::current_open();
+                let closed = CloseClipboard() != 0;
+                if current != self.identity {
+                    *marker = None;
+                    return None;
+                }
+                return (closed && current.generation != 0 && current.generation == GetClipboardSequenceNumber()
+                    && (!require_complete || self.complete)).then_some(current.generation);
+            }
+        }
+        // Another reader may still be holding our successful write. Keep
+        // the receipt until capture can compare it under its own read lock.
+        None
+    }
 }
 
 /// Writes one format's bytes to an already-open, already-emptied clipboard.
@@ -176,31 +228,29 @@ pub(super) unsafe fn write_rich_formats(formats: &crate::clipboard::RichFormats)
     ok
 }
 
-#[cfg(feature = "portable")]
-pub fn write_text(
-    window: &winit::window::Window,
-    text: &str,
-    formats: Option<&crate::clipboard::RichFormats>,
-) -> Option<(isize, bool)> {
-    use winit::raw_window_handle::{HasWindowHandle, RawWindowHandle};
-    let RawWindowHandle::Win32(handle) = window.window_handle().ok()?.as_raw() else {
-        return None;
-    };
+/// Write CF_UNICODETEXT and every requested rich format under one lock.
+/// SAFETY: hwnd is the live ClipCat clipboard owner window.
+pub(super) unsafe fn write_text(
+    hwnd: HWND, text: &str, formats: Option<&crate::clipboard::RichFormats>,
+) -> Option<WriteReceipt> {
     let wide: Vec<u16> = text.encode_utf16().chain(Some(0)).collect();
-    // SAFETY: the window is live; the slice borrows initialized UTF-16.
-    // Verify ownership and the finalized sequence after releasing the write lock.
-    unsafe {
-        let bytes = std::slice::from_raw_parts(wide.as_ptr().cast(), wide.len() * 2);
-        for _ in 0..5 {
-            if OpenClipboard(handle.hwnd.get() as _) != 0 {
-                let ok = EmptyClipboard() != 0 && write_format(13, bytes);
-                let complete = ok && formats.is_none_or(|formats| write_rich_formats(formats));
-                if CloseClipboard() == 0 || !ok { return None; }
-                return verified_write_sequence(handle.hwnd.get() as _)
-                    .map(|sequence| (sequence as isize, complete));
-            }
-            std::thread::sleep(std::time::Duration::from_millis(10));
-        }
+    let bytes = std::slice::from_raw_parts(wide.as_ptr().cast(), wide.len() * 2);
+    for attempt in 0..5 {
+        if attempt != 0 { std::thread::sleep(std::time::Duration::from_millis(10)); }
+        if OpenClipboard(hwnd) == 0 { continue; }
+        let text_written = EmptyClipboard() != 0 && write_format(13, bytes);
+        let completeness = text_written.then(|| formats.is_none_or(|formats| write_rich_formats(formats)));
+        return close_write(hwnd, completeness);
     }
     None
+}
+
+#[cfg(feature = "portable")]
+pub(super) fn write_window_text(
+    window: &winit::window::Window, text: &str, formats: Option<&crate::clipboard::RichFormats>,
+) -> Option<WriteReceipt> {
+    use winit::raw_window_handle::{HasWindowHandle, RawWindowHandle};
+    let RawWindowHandle::Win32(handle) = window.window_handle().ok()?.as_raw() else { return None; };
+    // SAFETY: window owns this non-null HWND for the duration of the write.
+    unsafe { write_text(handle.hwnd.get() as _, text, formats) }
 }

@@ -277,7 +277,7 @@ pub(super) unsafe fn show(owner: HWND, lang: Lang, text: &str, copy: fn(String))
 mod tests {
     use super::*;
     use std::cell::RefCell;
-    use windows_sys::Win32::UI::Input::KeyboardAndMouse::{GetKeyboardState, SetKeyboardState};
+    use windows_sys::Win32::UI::Input::KeyboardAndMouse::{GetKeyboardState, SetKeyboardState, VK_CONTROL, VK_LCONTROL};
     thread_local! { static COPIED: RefCell<Vec<String>> = const { RefCell::new(Vec::new()) }; }
 
     #[test]
@@ -326,8 +326,17 @@ mod tests {
             let mut previous = [0u8; 256];
             assert_ne!(GetKeyboardState(previous.as_mut_ptr()), 0);
             let mut pressed = previous;
-            pressed[0x11] |= 0x80;
+            pressed[VK_LCONTROL as usize] |= 0x80;
+            pressed[VK_CONTROL as usize] |= 0x80;
             assert_ne!(SetKeyboardState(pressed.as_ptr()), 0);
+            SendMessageW(
+                edit,
+                EM_GETSEL,
+                (&mut start as *mut u32) as usize,
+                (&mut end as *mut u32) as isize,
+            );
+            assert_eq!((start, end), (36000, 36004), "selection before synthetic Ctrl+C");
+            assert!(GetKeyState(VK_CONTROL as i32) < 0, "Ctrl must be down on this GUI thread");
             // Only this synthetic control receives the key. No global input injection.
             SendMessageW(edit, WM_KEYDOWN, 0x43, 0);
             SendMessageW(edit, WM_CHAR, 3, 0);

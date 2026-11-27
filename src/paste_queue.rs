@@ -127,26 +127,25 @@ mod tests {
 }
 
 #[cfg(any(all(windows, not(feature = "portable")), test))]
-pub(crate) fn image_write_receipt(
+pub(crate) fn image_write_completeness(
     dib: bool,
     png: bool,
-    generation: impl FnOnce() -> u32,
-) -> Option<(u32, bool)> {
-    (dib || png).then(|| (generation(), dib && png))
+) -> Option<bool> {
+    (dib || png).then_some(dib && png)
 }
 
 #[cfg(test)]
 mod output_tests {
     #[test]
     fn partial_image_write_suppresses_own_change_without_advancing() {
-        use super::image_write_receipt;
+        use super::image_write_completeness;
         for (dib, png, expected) in [
             (false, false, None),
-            (true, false, Some((7, false))),
-            (false, true, Some((7, false))),
-            (true, true, Some((7, true))),
+            (true, false, Some(false)),
+            (false, true, Some(false)),
+            (true, true, Some(true)),
         ] {
-            assert_eq!(image_write_receipt(dib, png, || 7), expected);
+            assert_eq!(image_write_completeness(dib, png), expected);
         }
     }
 }

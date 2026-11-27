@@ -53,7 +53,10 @@ const CLIP_POLL: Duration = Duration::from_millis(400);
 #[cfg(not(target_os = "macos"))]
 type Surface = softbuffer::Surface<Rc<Window>, Rc<Window>>;
 /// Identity of a successful local write: native generation or verified X11 owner.
+#[cfg(not(windows))]
 type Suppress = Arc<Mutex<Option<isize>>>;
+#[cfg(windows)]
+type Suppress = Arc<Mutex<Option<super::win_privacy::ClipboardIdentity>>>;
 
 struct PortableApp {
     pet: Pet,
@@ -473,18 +476,13 @@ impl PortableApp {
                 } else {
                     pick.formats.as_ref()
                 };
-                let Some((generation, complete)) = self
-                    .window
-                    .as_ref()
-                    .and_then(|w| super::win_privacy::write_text(w, &pick.text, formats))
+                let Some(generation) = self.window.as_ref()
+                    .and_then(|w| super::win_privacy::write_window_text(w, &pick.text, formats))
+                    .and_then(|write| write.acknowledge(&mut marker, pick.queued))
                 else {
                     return false;
                 };
-                written_generation = generation;
-                *marker = Some(generation);
-                if pick.queued && !complete {
-                    return false;
-                }
+                written_generation = generation as isize;
             }
             #[cfg(target_os = "linux")]
             {
@@ -1491,6 +1489,7 @@ fn paste_events(mac: bool) -> Vec<rdev::EventType> {
     events
 }
 
+#[cfg(any(not(windows), test))]
 fn consume_self_copy(marker: &mut Option<isize>, observation: Option<isize>) -> bool {
     if observation.is_none() || *marker != observation { return false; }
     *marker = None;
@@ -1553,13 +1552,15 @@ fn spawn_clipboard_watcher(tx: Sender<ClipCapture>, suppress: Suppress, capture:
             let (text, source, formats) = {
                 let current = native::generation();
                 let Some(copy) = poll_generation(&mut generation, &mut baseline, current, || {
-                    let mut marker = suppress.lock().unwrap_or_else(|e| e.into_inner());
-                    if consume_self_copy(&mut marker, Some(current)) { return Ok(None); }
-                    drop(marker);
                     #[cfg(windows)]
-                    { native::observe(current) }
+                    { native::observe(current, &suppress) }
                     #[cfg(target_os = "macos")]
-                    { Ok(native::observe(current)) }
+                    {
+                        let mut marker = suppress.lock().unwrap_or_else(|e| e.into_inner());
+                        if consume_self_copy(&mut marker, Some(current)) { return Ok(None); }
+                        drop(marker);
+                        Ok(native::observe(current))
+                    }
                 }) else { continue };
                 copy
             };
