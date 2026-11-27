@@ -250,7 +250,7 @@ impl App {
         let sent = ok
             && pick.paste
             && self.paste_target.is_some_and(|target| {
-                submit_paste(target, restore_panel_target, self.suppress_clip)
+                submit_paste(target, restore_panel_target, self.suppress_clip).is_ok()
             });
         if pick.queued {
             self.pet.finish_queue_pick(sent);
@@ -1299,18 +1299,31 @@ unsafe fn register_panel_hotkey(hwnd: HWND, spec: &str) -> HotkeyReg {
     HotkeyReg::None
 }
 
+#[derive(Debug, PartialEq, Eq)]
+enum DispatchFailure {
+    FocusChanged { current: Option<super::win_focus::PasteTarget> },
+    ClipboardChanged { expected: Option<u32>, actual: u32 },
+    InputRejected { inserted: u32, last_error: Option<u32> },
+}
+
 fn submit_paste(
     target: super::win_focus::PasteTarget,
     restore_panel_target: bool,
     sequence: Option<u32>,
-) -> bool {
-    let focused = if restore_panel_target {
-        target.restore()
-    } else {
-        super::win_focus::PasteTarget::external() == Some(target)
-    };
-    // SAFETY: the focus and write receipt are checked at the dispatch boundary.
-    focused && sequence == Some(unsafe { GetClipboardSequenceNumber() }) && unsafe { send_ctrl_v() }
+) -> Result<(), DispatchFailure> {
+    if restore_panel_target && !target.restore() {
+        return Err(DispatchFailure::FocusChanged { current: super::win_focus::PasteTarget::external() });
+    }
+    let current = super::win_focus::PasteTarget::external();
+    if current != Some(target) {
+        return Err(DispatchFailure::FocusChanged { current });
+    }
+    // SAFETY: both identities are checked directly before submitting input.
+    let actual = unsafe { GetClipboardSequenceNumber() };
+    if Some(actual) != sequence {
+        return Err(DispatchFailure::ClipboardChanged { expected: sequence, actual });
+    }
+    unsafe { send_ctrl_v() }
 }
 
 /// Synthesizes a Ctrl+V keystroke into the foreground window (auto-paste).
@@ -1328,7 +1341,7 @@ fn submit_paste(
 /// Output-only: we synthesize keystrokes and never read key state, so this does
 /// not touch the input-privacy guarantee (golden rule 1). Modifiers are released
 /// up-front and Ctrl in reverse at the end.
-unsafe fn send_ctrl_v() -> bool {
+unsafe fn send_ctrl_v() -> Result<(), DispatchFailure> {
     let mut inputs: [INPUT; 8] = std::mem::zeroed();
     for inp in &mut inputs {
         inp.r#type = INPUT_KEYBOARD;
@@ -1352,11 +1365,18 @@ unsafe fn send_ctrl_v() -> bool {
     inputs[6].Anonymous.ki.dwFlags = KEYEVENTF_KEYUP;
     inputs[7].Anonymous.ki.wVk = VK_CONTROL; // Ctrl up
     inputs[7].Anonymous.ki.dwFlags = KEYEVENTF_KEYUP;
-    SendInput(
+    SetLastError(0);
+    let inserted = SendInput(
         inputs.len() as u32,
         inputs.as_ptr(),
         std::mem::size_of::<INPUT>() as i32,
-    ) == inputs.len() as u32
+    );
+    if inserted == inputs.len() as u32 { Ok(()) } else {
+        // SendInput documents extended error only for zero insertions. UIPI
+        // cannot be identified from the returned count or last-error value.
+        let last_error = (inserted == 0).then(|| GetLastError());
+        Err(DispatchFailure::InputRejected { inserted, last_error })
+    }
 }
 
 // ---- tray ----------------------------------------------------------------------
@@ -2589,25 +2609,35 @@ mod clipboard_tests {
             assert!(!top.is_null() && !edit.is_null());
             ShowWindow(top, SW_SHOW);
             SetForegroundWindow(top);
-            SetFocus(edit);
-            let parent: u32 = std::env::var("CLIPCAT_SYNTHETIC_PARENT")
-                .unwrap()
-                .parse()
-                .unwrap();
-            AllowSetForegroundWindow(parent);
-            std::fs::write(
-                dir.join("handles"),
-                format!("{} {}", top as usize, edit as usize),
-            )
-            .unwrap();
-            let until = std::time::Instant::now() + std::time::Duration::from_secs(20);
-            let mut last = 0;
-            while std::time::Instant::now() < until {
+            let pump = || {
                 let mut msg: MSG = std::mem::zeroed();
                 while PeekMessageW(&mut msg, null_mut(), 0, 0, PM_REMOVE) != 0 {
                     TranslateMessage(&msg);
                     DispatchMessageW(&msg);
                 }
+            };
+            pump();
+            SetFocus(edit);
+            let readiness_deadline = std::time::Instant::now() + std::time::Duration::from_secs(4);
+            let mut stable = 0;
+            while stable < 2 {
+                pump();
+                let foreground = GetForegroundWindow();
+                let focused = windows_sys::Win32::UI::Input::KeyboardAndMouse::GetFocus();
+                assert!(std::time::Instant::now() < readiness_deadline,
+                    "fixture activation timeout: expected top={top:?}/edit={edit:?}, actual foreground={foreground:?}/focus={focused:?}");
+                stable = if foreground == top && focused == edit { stable + 1 } else { 0 };
+                Sleep(10);
+            }
+            let parent: u32 = std::env::var("CLIPCAT_SYNTHETIC_PARENT").unwrap().parse().unwrap();
+            AllowSetForegroundWindow(parent);
+            let tmp = dir.join("handles.tmp");
+            std::fs::write(&tmp, format!("{} {}",top as usize,edit as usize)).unwrap();
+            std::fs::rename(tmp,dir.join("handles")).unwrap();
+            let until = std::time::Instant::now() + std::time::Duration::from_secs(20);
+            let mut last = 0;
+            while std::time::Instant::now() < until {
+                pump();
                 let mut buf = [0u16; 64];
                 // This process owns this dedicated synthetic EDIT. Product
                 // code never reads control text to validate a paste target.
@@ -2685,7 +2715,10 @@ mod clipboard_tests {
         let (sequence, complete) = set_clipboard_rich(owner, SAMPLE, None, true).unwrap();
         assert!(complete);
         // The dedicated shortcut must preserve the control already in focus.
-        assert!(submit_paste(target, false, Some(sequence)));
+        let after_close = GetClipboardSequenceNumber();
+        let original_owner = windows_sys::Win32::System::DataExchange::GetClipboardOwner();
+        let first = submit_paste(target, false, Some(sequence));
+        assert!(first.is_ok(), "first dispatch: {first:?}; captured={target:?}, locked_seq={sequence}, post_close_seq={after_close}, post_close_owner_is_fixture={}", original_owner == owner);
         wait("1");
         let panel = CreateWindowExW(
             0,
@@ -2707,11 +2740,15 @@ mod clipboard_tests {
         SetFocus(panel);
         let previous = GetForegroundWindow();
         let own = super::super::win_focus::PasteTarget::external();
-        let sent = previous == panel && own.is_none() && !submit_paste(target, false, Some(sequence)) && submit_paste(target, true, Some(sequence));
+        assert_eq!(previous,panel);
+        assert!(own.is_none());
+        let refused = submit_paste(target, false, Some(sequence));
+        assert!(matches!(refused,Err(DispatchFailure::FocusChanged { .. })), "unexpected dedicated dispatch: {refused:?}");
+        let restored = submit_paste(target, true, Some(sequence));
         DestroyWindow(panel);
         assert!(
-            sent,
-            "restore captured EDIT after a ClipCat panel took focus"
+            restored.is_ok(),
+            "restore captured EDIT after panel focus: {restored:?}; captured={target:?}"
         );
         wait("2");
         assert!(child.0.wait().unwrap().success());
