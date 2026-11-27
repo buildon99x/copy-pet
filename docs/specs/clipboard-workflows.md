@@ -28,6 +28,15 @@ Expose capture/retention state through localized menus/panel feedback. Existing
 stored content is not retroactively purged just by excluding a source; explain
 the distinction. Exclusion affects ClipCat only, not OS/other apps' history.
 
+Windows honors `ExcludeClipboardContentFromMonitorProcessing` and a zero
+`CanIncludeInClipboardHistory` flag. macOS honors concealed, transient and
+auto-generated pasteboard markers. macOS identifies the foreground application
+when polling. A rapid app switch or background writer can produce a different
+name. X11 uses the selection owner's WM_CLASS when available. Unknown sources
+remain eligible. The portable shortcuts with the panel closed are `]` to cycle
+sources, `E` to toggle exclusion and `R` to cycle retention. Seconds since the
+last copy determine expiry; periodic cleanup runs once per minute.
+
 ## 2. Ordered paste
 
 Select text/history entries into a bounded session-only ordered queue. Provide

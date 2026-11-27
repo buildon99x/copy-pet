@@ -29,6 +29,10 @@ pub struct Persist {
     pub lang: String,
     /// When false, copy events are ignored (privacy pause).
     pub clip_capture: bool,
+    /// Age limit for unpinned clips, or zero for unlimited retention.
+    pub retention_days: u16,
+    /// Application names excluded from future capture.
+    pub excluded_sources: Vec<String>,
     /// Global panel hotkey spec, e.g. "win+shift+v" (see [`crate::hotkey`]).
     /// Editable in state.json; invalid values reset to the default on load.
     pub hotkey: String,
@@ -79,6 +83,8 @@ impl Default for Persist {
             window_level: 0,
             lang: String::new(),
             clip_capture: true,
+            retention_days: 0,
+            excluded_sources: Vec::new(),
             hotkey: crate::hotkey::DEFAULT.to_string(),
             hotkey_version: 1,
             auto_update: true,
@@ -119,8 +125,12 @@ fn dir_named(name: &str) -> Option<PathBuf> {
     }
 }
 
+fn config_override() -> Option<PathBuf> {
+    std::env::var_os("CLIPCAT_CONFIG_DIR").filter(|path| !path.is_empty()).map(PathBuf::from)
+}
+
 pub fn config_dir() -> Option<PathBuf> {
-    dir_named("ClipCat")
+    config_override().or_else(|| dir_named("ClipCat"))
 }
 
 /// Writes a config file atomically (temp file in the same dir + rename) so a
@@ -150,6 +160,7 @@ fn state_file() -> Option<PathBuf> {
 /// One-time migration of a pre-2.0 "DeskCat" config dir: copies the files
 /// into the ClipCat dir if the new one doesn't exist yet.
 fn migrate_legacy_dir() {
+    if config_override().is_some() { return; }
     let (Some(old), Some(new)) = (dir_named("DeskCat"), config_dir()) else {
         return;
     };
@@ -207,6 +218,10 @@ impl Persist {
         st
     }
 
+    pub fn excludes(&self, source: &str) -> bool {
+        self.excluded_sources.iter().any(|name| crate::clipboard::eq_ci(name, source))
+    }
+
     /// Hardens the scalar settings against a hand-edited/corrupt state.json.
     /// An out-of-range value would leave its radio submenu with no checked
     /// item (the `current == i` scan never matches) and hand the backend an
@@ -214,6 +229,13 @@ impl Persist {
     /// defensive, so this only self-heals what the menus display — valid data
     /// is untouched. Mirrors the geometry/hotkey hardening in `load`.
     fn clamp_settings(&mut self) {
+        if ![0, 1, 7, 30].contains(&self.retention_days) { self.retention_days = 0; }
+        for source in std::mem::take(&mut self.excluded_sources) {
+            if self.excluded_sources.len() >= 128 { break; }
+            if !source.is_empty() && source.len() <= 1024 && !self.excludes(&source) {
+                self.excluded_sources.push(source);
+            }
+        }
         self.scale_idx = self.scale_idx.min(crate::pet::SCALES.len() - 1);
         self.sound_mode = self.sound_mode.min(1);
         self.panel_view = self.panel_view.min(1);

@@ -16,6 +16,9 @@ versions follow [SemVer](https://semver.org/). Maintenance rules:
 
 ## [Unreleased]
 
+### Added
+- Exclude future clipboard captures by application and automatically remove unpinned clips after 1, 7 or 30 days. Windows and macOS also skip supported confidential clipboard markers.
+
 ## [2.5.4] - 2026-11-04
 
 ### Changed

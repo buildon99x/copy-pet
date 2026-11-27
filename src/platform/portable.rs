@@ -16,6 +16,8 @@ use crate::viewport::Density;
 /// the plain text plus any rich formats the platform could read (macOS only;
 /// Linux/arboard is text-only, so `formats` is always `None` there).
 struct ClipCapture {
+    capture_epoch: u64,
+    source: Option<String>,
     text: String,
     formats: Option<RichFormats>,
 }
@@ -23,7 +25,7 @@ use crate::state::{Persist};
 #[cfg(not(target_os = "macos"))]
 use std::num::NonZeroU32;
 use std::rc::Rc;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{Receiver, Sender};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -74,9 +76,11 @@ struct PortableApp {
     suppress: Suppress,
     /// Mirror of `st.clip_capture` for the watcher thread: while false the
     /// clipboard is not even read.
-    capture_flag: Arc<AtomicBool>,
+    capture_flag: Arc<AtomicU64>,
     hotkey: RegisteredHotkey,
     hotkey_label: String,
+    #[cfg(not(target_os = "macos"))]
+    privacy_source: Option<String>,
     // interaction
     cursor: PhysicalPosition<f64>,
     mouse_down: bool,
@@ -171,7 +175,7 @@ impl PortableApp {
         pet: Pet,
         clip_rx: Receiver<ClipCapture>,
         suppress: Suppress,
-        capture_flag: Arc<AtomicBool>,
+        capture_flag: Arc<AtomicU64>,
         hotkey: RegisteredHotkey,
         hotkey_label: String,
     ) -> Self {
@@ -191,6 +195,8 @@ impl PortableApp {
             h: h as u32,
             last_frame: Instant::now(),
             clip_rx,
+            #[cfg(not(target_os = "macos"))]
+            privacy_source: None,
             suppress,
             capture_flag,
             hotkey,
@@ -526,6 +532,28 @@ impl PortableApp {
             }
             KeyCode::KeyC => self.pet.toggle_panel(),
             KeyCode::KeyK => self.cycle_hotkey(),
+            #[cfg(not(target_os = "macos"))]
+            KeyCode::KeyR => {
+                let days = match self.pet.st.retention_days { 0 => 1, 1 => 7, 7 => 30, _ => 0 };
+                self.pet.apply_menu_action(crate::menu::MenuAction::SetRetention(days));
+            }
+            #[cfg(not(target_os = "macos"))]
+            KeyCode::BracketRight => {
+                let sources = self.pet.privacy_sources();
+                if !sources.is_empty() {
+                    let index = self.privacy_source.as_ref().and_then(|n| sources.iter().position(|s| s == n))
+                        .map_or(0, |i| (i + 1) % sources.len());
+                    let name = &sources[index];
+                    self.pet.set_toast(crate::i18n::source_status(self.pet.lang(), name, self.pet.st.excludes(name)), 3.0);
+                    self.privacy_source = Some(name.clone());
+                }
+            }
+            #[cfg(not(target_os = "macos"))]
+            KeyCode::KeyE => {
+                if let Some(name) = &self.privacy_source {
+                    self.pet.apply_menu_action(crate::menu::MenuAction::ToggleExcludedSource(name.clone()));
+                }
+            }
             KeyCode::KeyO => self.pet.toggle_panel_autoclose(),
             KeyCode::KeyV => self.pet.toggle_panel_view(),
             KeyCode::KeyU => {
@@ -1200,10 +1228,11 @@ impl ApplicationHandler<HotkeyEvent> for PortableApp {
                 self.pet.notify_update(&v);
             }
             // copy events observed by the clipboard watcher
-            self.capture_flag
-                .store(self.pet.st.clip_capture, Ordering::Relaxed);
+            let epoch = sync_capture_epoch(&self.capture_flag, self.pet.st.clip_capture);
             while let Ok(cap) = self.clip_rx.try_recv() {
-                self.pet.on_copy_rich(cap.text, None, None, cap.formats);
+                if cap.capture_epoch == epoch {
+                    self.pet.on_copy_rich(cap.text, cap.source, None, cap.formats);
+                }
             }
             let redraw = self.pet.advance();
             if self.pet.take_size_changed() {
@@ -1307,48 +1336,67 @@ fn paste_events(mac: bool) -> Vec<rdev::EventType> {
     events
 }
 
-/// Spawns the clipboard watcher: polls `arboard` for text changes and sends
-/// new copies down the channel. Skips (once) whatever we set ourselves via
-/// the shared `suppress` marker, ignores whatever was already on the
-/// clipboard at startup, and — while capture is paused — doesn't read the
-/// clipboard at all (resyncing silently on resume so paused-time copies are
-/// never retroactively captured).
-fn spawn_clipboard_watcher(tx: Sender<ClipCapture>, suppress: Suppress, capture: Arc<AtomicBool>) {
+fn sync_capture_epoch(epoch: &AtomicU64, capture: bool) -> u64 {
+    // The UI thread is the only writer. An even epoch enables capture.
+    let current = epoch.load(Ordering::Acquire);
+    if current.is_multiple_of(2) == capture { return current; }
+    epoch.fetch_add(1, Ordering::AcqRel).wrapping_add(1)
+}
+
+/// Resynchronize silently across pauses. Native generation checks avoid reading
+/// a marked payload on later polls or mistaking an old clipboard for a new copy.
+fn spawn_clipboard_watcher(tx: Sender<ClipCapture>, suppress: Suppress, capture: Arc<AtomicU64>) {
     std::thread::spawn(move || {
-        let Ok(mut cb) = arboard::Clipboard::new() else {
-            return; // no clipboard (e.g. pure Wayland without XWayland)
-        };
-        let mut last: Option<String> = cb.get_text().ok();
-        let mut paused = false;
+        #[cfg(target_os = "macos")]
+        use super::mac_clipboard as native;
+        #[cfg(windows)]
+        use super::win_privacy as native;
+        #[cfg(any(windows, target_os = "macos"))]
+        let mut generation = native::generation();
+        #[cfg(target_os = "linux")]
+        let Ok(mut cb) = arboard::Clipboard::new() else { return };
+        #[cfg(target_os = "linux")]
+        let mut last = None;
+        #[cfg(target_os = "linux")]
+        let source_probe = super::linux_clipboard::SourceProbe::open();
+        let mut seen_epoch = capture.load(Ordering::Acquire);
+        let mut baseline = cfg!(target_os = "linux");
         loop {
             std::thread::sleep(CLIP_POLL);
-            if !capture.load(Ordering::Relaxed) {
-                paused = true;
-                continue;
+            let epoch = capture.load(Ordering::Acquire);
+            if epoch != seen_epoch {
+                baseline = true;
+                seen_epoch = epoch;
             }
-            let Ok(text) = cb.get_text() else { continue };
-            if std::mem::take(&mut paused) {
-                last = Some(text); // resume: resync without emitting
-                continue;
-            }
-            if last.as_deref() == Some(text.as_str()) {
-                continue;
-            }
-            last = Some(text.clone());
+            if !epoch.is_multiple_of(2) { continue; }
+            #[cfg(any(windows, target_os = "macos"))]
+            let (text, source, formats) = {
+                let current = native::generation();
+                let unchanged = generation == current;
+                generation = current;
+                if std::mem::take(&mut baseline) || unchanged { continue; }
+                let Some(copy) = native::observe(current) else { continue };
+                copy
+            };
+            #[cfg(target_os = "linux")]
+            let (text, source, formats) = {
+                let owner = source_probe.as_ref().and_then(|probe| probe.owner());
+                let observed = cb.get_text().ok();
+                let skip = std::mem::take(&mut baseline) || observed == last;
+                last.clone_from(&observed);
+                if skip { continue; }
+                let Some(text) = observed else { continue };
+                let source = source_probe.as_ref().and_then(|probe| {
+                    let id = owner?;
+                    (probe.owner() == Some(id)).then(|| probe.name(id)).flatten()
+                });
+                (text, source, None)
+            };
             // our own copy-back? consume the marker and skip one event
             if let Ok(mut guard) = suppress.lock() {
-                if guard.as_deref() == Some(text.as_str()) {
-                    *guard = None;
-                    continue;
-                }
+                if guard.take().as_deref() == Some(text.as_str()) { continue; }
             }
-            // arboard already told us the text changed; on macOS also grab the
-            // original rich formats for the same content (Linux stays plain).
-            #[cfg(target_os = "macos")]
-            let formats = super::mac_clipboard::read_formats();
-            #[cfg(not(target_os = "macos"))]
-            let formats = None;
-            if tx.send(ClipCapture { text, formats }).is_err() {
+            if tx.send(ClipCapture { text, source, formats, capture_epoch: epoch }).is_err() {
                 return;
             }
         }
@@ -1363,7 +1411,7 @@ pub fn run() {
     let (tx, rx) = std::sync::mpsc::channel();
     let suppress: Suppress = Arc::new(Mutex::new(None));
     let st = Persist::load();
-    let capture_flag = Arc::new(AtomicBool::new(st.clip_capture));
+    let capture_flag = Arc::new(AtomicU64::new(u64::from(!st.clip_capture)));
     spawn_clipboard_watcher(tx, suppress.clone(), capture_flag.clone());
 
     // daily GitHub release check (ADR-0009)
@@ -1386,6 +1434,17 @@ pub fn run() {
 #[cfg(test)]
 mod paste_tests {
     use super::*;
+    #[test]
+    fn privacy_resume_invalidates_pending_events_even_between_polls() {
+        let epoch = AtomicU64::new(0);
+        let pending = sync_capture_epoch(&epoch, true);
+        assert_eq!(sync_capture_epoch(&epoch, false), 1);
+        assert_eq!(sync_capture_epoch(&epoch, false), 1);
+        let resumed = sync_capture_epoch(&epoch, true);
+        assert_ne!(pending, resumed);
+        assert_eq!(sync_capture_epoch(&epoch, true), resumed);
+    }
+
     #[test]
     fn synthesized_paste_clears_hotkey_modifiers_before_clean_paste() {
         use rdev::{EventType::*, Key::*};

@@ -183,10 +183,10 @@ fn capture_pause_ignores_copies() {
 fn find(entries: &[MenuEntry], action: MenuAction) -> Option<&MenuItem> {
     for e in entries {
         if let MenuEntry::Item(it) = e {
-            if it.action == Some(action) {
+            if it.action.as_ref() == Some(&action) {
                 return Some(it);
             }
-            if let Some(found) = find(&it.submenu, action) {
+            if let Some(found) = find(&it.submenu, action.clone()) {
                 return Some(found);
             }
         }
@@ -970,4 +970,41 @@ fn affection_finishes_one_pending_response_and_copy_saves_during_it() {
     assert!(p.fish.is_some(), "deferred copy decorates after bounded affection");
     for _ in 0..40 { p.last_tick -= std::time::Duration::from_millis(100); p.advance(); }
     assert!(!p.advance(), "completed affection and copy settle without repaint");
+}
+
+#[test]
+fn privacy_rejects_excluded_text_and_image_without_feedback() {
+    let mut p = pet();
+    p.st = serde_json::from_str(r#"{"excluded_sources":["Private App"]}"#).unwrap();
+    p.on_copy("synthetic secret".into(), Some("PRIVATE APP".into()), None);
+    let pixels = tiny_skia::Pixmap::new(2, 2).unwrap();
+    let image = ClipImage::from_pixmap(&pixels).unwrap();
+    p.on_copy_image(image, Some("private app".into()), None);
+    assert!(p.clips.is_empty());
+    assert!(p.fish_queue.is_empty());
+    p.on_copy("ordinary".into(), Some("Editor".into()), None);
+    assert_eq!(p.clips.len(), 1);
+}
+
+#[test]
+fn privacy_legacy_settings_default_to_unlimited_capture() {
+    let settings: Persist = serde_json::from_str("{}").unwrap();
+    let json = serde_json::to_value(settings).unwrap();
+    assert_eq!(json["retention_days"], 0);
+    assert_eq!(json["excluded_sources"], serde_json::json!([]));
+}
+
+#[test]
+fn privacy_menu_keeps_existing_clips_and_restores_excluded_sources_after_clear() {
+    let mut p = pet();
+    p.on_copy("synthetic history".into(), Some("Editor".into()), None);
+    let toggle = MenuAction::ToggleExcludedSource("Editor".into());
+    assert!(!find(&p.build_menu("HK", false), toggle.clone()).unwrap().checked);
+    p.apply_menu_action(toggle.clone());
+    assert_eq!(p.clips.len(), 1);
+    p.clips.clear_unpinned();
+    assert!(find(&p.build_menu("HK", false), toggle.clone()).unwrap().checked);
+    p.apply_menu_action(toggle);
+    p.on_copy("allowed again".into(), Some("editor".into()), None);
+    assert_eq!(p.clips.len(), 1);
 }

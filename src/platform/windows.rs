@@ -28,7 +28,7 @@ use windows_sys::Win32::Foundation::*;
 use windows_sys::Win32::Graphics::Gdi::*;
 use windows_sys::Win32::System::DataExchange::{
     AddClipboardFormatListener, CloseClipboard, EmptyClipboard, GetClipboardData,
-    GetClipboardOwner, GetClipboardSequenceNumber, OpenClipboard, RegisterClipboardFormatW,
+    GetClipboardSequenceNumber, OpenClipboard, RegisterClipboardFormatW,
     RemoveClipboardFormatListener, SetClipboardData,
 };
 use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
@@ -37,8 +37,8 @@ use windows_sys::Win32::System::Memory::{
 };
 use windows_sys::Win32::System::Registry::*;
 use windows_sys::Win32::System::Threading::{
-    AttachThreadInput, CreateMutexW, GetCurrentThreadId, OpenProcess, QueryFullProcessImageNameW,
-    Sleep, PROCESS_QUERY_LIMITED_INFORMATION,
+    AttachThreadInput, CreateMutexW, GetCurrentThreadId,
+    Sleep,
 };
 use windows_sys::Win32::UI::HiDpi::SetProcessDpiAwarenessContext;
 use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
@@ -895,6 +895,10 @@ unsafe fn read_clipboard_content(hwnd: HWND) -> Option<CapturedClip> {
         if OpenClipboard(hwnd) == 0 {
             continue;
         }
+        if super::win_privacy::marked_open() {
+            CloseClipboard();
+            return None;
+        }
         let image = read_blob_open(png_atom(), MAX_IMAGE_BYTES)
             .and_then(|b| ClipImage::from_png(&b))
             .or_else(|| {
@@ -1045,39 +1049,8 @@ impl App {
 unsafe fn clipboard_source_at(
     icon_cache: &mut std::collections::HashMap<String, Option<(u32, Vec<u8>)>>,
 ) -> (Option<String>, Option<Badge>) {
-    let mut src = GetClipboardOwner();
-    if src.is_null() {
-        src = GetForegroundWindow();
-    }
-    if src.is_null() {
-        return (None, None);
-    }
-    let mut pid = 0u32;
-    GetWindowThreadProcessId(src, &mut pid);
-    if pid == 0 {
-        return (None, None);
-    }
-    let proc = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid);
-    if proc.is_null() {
-        return (None, None);
-    }
-    let mut buf = [0u16; 1024];
-    let mut len = buf.len() as u32;
-    let ok = QueryFullProcessImageNameW(proc, 0, buf.as_mut_ptr(), &mut len);
-    CloseHandle(proc);
-    if ok == 0 {
-        return (None, None);
-    }
-    let path = String::from_utf16_lossy(&buf[..len as usize]);
-    let name = path
-        .rsplit(['\\', '/'])
-        .next()
-        .map(|n| {
-            n.trim_end_matches(".exe")
-                .trim_end_matches(".EXE")
-                .to_string()
-        })
-        .filter(|n| !n.is_empty());
+    let Some(path) = super::win_privacy::owner_path() else { return (None, None); };
+    let name = super::win_privacy::app_name(&path);
 
     let mut badge = Badge::from_source(name.as_deref());
     let icon = icon_cache
@@ -1408,7 +1381,11 @@ unsafe fn migrate_autostart() {
 
 // ---- context menu -----------------------------------------------------------------
 
+const CMD_RETAIN: usize = 60;
+const CMD_SOURCE: usize = 100;
 struct MenuSnapshot {
+    sources: Vec<(String, bool)>,
+    retention: u16,
     locked: bool,
     scale_idx: usize,
     sound: u8,
@@ -1472,6 +1449,22 @@ unsafe fn show_menu(hwnd: HWND, ms: &MenuSnapshot) -> usize {
         CMD_AUTOCLOSE,
         wz(t(lang, Msg::MenuAutoClose)).as_ptr(),
     );
+    let retention = CreatePopupMenu();
+    for (i, days) in [0, 1, 7, 30].into_iter().enumerate() {
+        AppendMenuW(retention, MF_STRING | chk(ms.retention == days), CMD_RETAIN + i,
+            wz(&i18n::retention_label(lang, days)).as_ptr());
+    }
+    AppendMenuW(menu, MF_POPUP, retention as usize, wz(i18n::retention_title(lang)).as_ptr());
+    if !ms.sources.is_empty() {
+        let sources = CreatePopupMenu();
+        let full = ms.sources.iter().filter(|(_, checked)| *checked).count() >= 128;
+        for (i, (name, checked)) in ms.sources.iter().enumerate() {
+            let disabled = if full && !checked { MF_GRAYED } else { 0 };
+            AppendMenuW(sources, MF_STRING | chk(*checked) | disabled, CMD_SOURCE + i,
+                wz(&name.replace('&', "&&")).as_ptr());
+        }
+        AppendMenuW(menu, MF_POPUP, sources as usize, wz(i18n::exclusion_title(lang)).as_ptr());
+    }
     // Panel hotkey: one click cycles to the next preset (no rebind dialog).
     AppendMenuW(
         menu,
@@ -1595,6 +1588,11 @@ unsafe fn show_menu(hwnd: HWND, ms: &MenuSnapshot) -> usize {
 
 fn menu_snapshot() -> Option<MenuSnapshot> {
     with_app(|a| MenuSnapshot {
+        sources: a.pet.privacy_sources().into_iter().map(|s| {
+            let checked = a.pet.st.excludes(&s);
+            (s, checked)
+        }).collect(),
+        retention: a.pet.st.retention_days,
         locked: a.pet.st.locked,
         scale_idx: a.pet.st.scale_idx,
         sound: a.pet.st.sound_mode,
@@ -1614,6 +1612,15 @@ unsafe fn open_menu(hwnd: HWND) {
     if let Some(ms) = menu_snapshot() {
         let cmd = show_menu(hwnd, &ms);
         match cmd {
+            id if id >= CMD_SOURCE => {
+                if let Some((name, _)) = ms.sources.get(id - CMD_SOURCE) {
+                    with_app(|a| a.pet.apply_menu_action(crate::menu::MenuAction::ToggleExcludedSource(name.clone())));
+                }
+            }
+            60..=63 => {
+                let days = [0, 1, 7, 30][cmd - CMD_RETAIN];
+                with_app(|a| a.pet.apply_menu_action(crate::menu::MenuAction::SetRetention(days)));
+            }
             0 => {}
             CMD_EXIT => {
                 DestroyWindow(hwnd);
@@ -1906,9 +1913,16 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
                 // never suppresses a later external copy of identical content.
                 let own = with_app(|a| a.suppress_clip.take() == Some(GetClipboardSequenceNumber())).unwrap_or(false);
                 if !own {
+                    let seq = GetClipboardSequenceNumber();
+                    let origin = with_app(|a| {
+                        let (name, badge) = a.clipboard_source();
+                        let excluded = name.as_deref().is_some_and(|s| a.pet.st.excludes(s));
+                        (!excluded).then_some((name, badge))
+                    }).flatten();
+                    let Some((source, badge)) = origin else { return 0; };
                     if let Some(content) = read_clipboard_content(hwnd) {
+                        if GetClipboardSequenceNumber() != seq { return 0; }
                         with_app(|a| {
-                            let (source, badge) = a.clipboard_source();
                             match content {
                                 CapturedClip::Text(text, formats) => {
                                     a.pet.on_copy_rich(text, source, badge, formats)
@@ -2464,6 +2478,19 @@ mod clipboard_tests {
                 CapturedClip::Text(text, rich) => { assert_eq!(text,"plain"); assert!(rich.is_none()); }
                 _ => panic!("old image format survived text copy"),
             }
+            for (name, value, expect_private) in [
+                ("CanIncludeInClipboardHistory", 1u32, false),
+                ("CanIncludeInClipboardHistory", 0, true),
+                ("ExcludeClipboardContentFromMonitorProcessing", 1, true),
+            ] {
+                assert!(set_clipboard_rich(hwnd, "synthetic private", None, true).is_some());
+                assert_ne!(OpenClipboard(hwnd), 0);
+                let atom = RegisterClipboardFormatW(wz(name).as_ptr());
+                assert!(write_format(atom, &value.to_ne_bytes()));
+                CloseClipboard();
+                assert_eq!(read_clipboard_content(hwnd).is_none(), expect_private);
+            }
+
         }
     }
 }

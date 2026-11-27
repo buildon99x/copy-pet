@@ -15,6 +15,12 @@ ClipCat은 고양이 캐릭터와 클립보드 관리자를 하나로 묶은 데
 > 이 README는 개발 브랜치 `main`을 기준으로 합니다. 공개 릴리스에는
 > 아직 포함되지 않은 변경이 있을 수 있습니다. 차이는 [Unreleased](CHANGELOG.md#unreleased)를 확인하세요.
 
+## 클립 수집 설정
+
+Windows 트레이 또는 macOS 고양이 메뉴에서 **복사 수집에서 제외할 앱**을 열고 앱 이름을 선택하세요. 체크한 앱의 새 복사는 ClipCat에 저장되지 않습니다. 이미 저장한 항목은 직접 삭제할 수 있습니다. **고정하지 않은 항목 보관 기간**은 무기한, 1일, 7일, 30일 중 선택합니다. 고정 항목은 유지합니다.
+
+Linux 및 Windows portable에서는 패널을 닫고 `]`로 앱을 선택한 뒤 `E`로 제외 여부를 바꿉니다. `R`은 보관 기간을 순환합니다. 앱 식별은 운영체제가 제공하는 정보에 따릅니다. macOS는 복사 감지 시점의 전면 앱을 사용하므로 빠르게 앱을 바꾸면 다른 앱으로 표시될 수 있습니다. 출처를 알 수 없는 복사나 웹사이트·암호 입력란은 앱별 제외로 구분할 수 없습니다. ClipCat 설정은 다른 앱이나 운영체제의 기록에 영향을 주지 않습니다.
+
 ## 만나볼 고양이
 
 | 랙돌 · Ragdoll | 샴 · Siamese | 봄베이 · Bombay | 먼치킨 · Munchkin |
@@ -236,6 +242,14 @@ Rust 공통 코어와 Win32 / winit·softbuffer 백엔드를 사용합니다.
 - [설계 결정](.context/kb/adr/README.md) · [기여 작업 가이드](AGENTS.md)
 
 ## English
+
+### Capture privacy
+
+In the Windows tray menu or macOS cat menu, select **Exclude copies from apps**, then check an observed application. Uncheck it to resume capture. Existing history stays available for manual deletion. **Keep unpinned clips** offers unlimited retention (default), 1 day, 7 days or 30 days. Expired entries also leave the undo history. Linux and Windows portable provide local shortcuts with the panel closed. Press `]` to select an application, `E` to toggle exclusion and `R` to cycle retention.
+
+Source identification is best effort. Windows uses the clipboard owner's executable, with the foreground app as a fallback. macOS samples the foreground app during clipboard polling. X11 reads the selection owner's application class when available. An unidentified source can still be captured. Exclusions apply to ClipCat history at the application level. Websites, password fields and OS clipboard history have separate privacy controls. Supported Windows and macOS privacy markers take precedence over the source name.
+
+Set `CLIPCAT_CONFIG_DIR` to a separate directory for an isolated profile. ClipCat skips legacy profile migration while this override is active.
 
 **A quiet desktop cat that keeps your clipboard close.** Copy text to feed your
 cat and save it locally. Search history, pin useful clips, add tags and copy them

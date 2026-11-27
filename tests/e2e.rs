@@ -34,10 +34,10 @@ fn legacy_accessory_is_ignored_without_changing_the_selected_cat() {
 fn menu_find(entries: &[MenuEntry], action: MenuAction) -> Option<&MenuItem> {
     for e in entries {
         if let MenuEntry::Item(it) = e {
-            if it.action == Some(action) {
+            if it.action.as_ref() == Some(&action) {
                 return Some(it);
             }
-            if let Some(found) = menu_find(&it.submenu, action) {
+            if let Some(found) = menu_find(&it.submenu, action.clone()) {
                 return Some(found);
             }
         }
@@ -1002,4 +1002,29 @@ fn clipboard_footer_keeps_history_and_saved_project_intact() {
         assert_eq!(p.workbench.project().request, "saved project draft");
         assert_eq!(p.panel_nav(NavKey::Enter).unwrap().text, "clipboard stays available");
     }
+}
+
+#[test]
+fn privacy_expiration_on_load_persists_in_the_selected_profile() {
+    const CHILD: &str = "CLIPCAT_TEST_PROFILE_CHILD";
+    if let Some(dir) = std::env::var_os(CHILD) {
+        let path = std::path::PathBuf::from(dir);
+        assert_eq!(clipcat::state::config_dir(), Some(path));
+        let p = Pet::new(Persist::load());
+        assert_eq!(p.clips.len(), 1);
+        assert!(p.clips.get(2).unwrap().pinned);
+        assert_eq!(ClipStore::load().len(), 1);
+        return;
+    }
+    let dir = std::env::temp_dir().join(format!("clipcat-expiration-test-{}", std::process::id()));
+    std::fs::create_dir(&dir).unwrap();
+    std::fs::write(dir.join("state.json"), r#"{"retention_days":1}"#).unwrap();
+    std::fs::write(dir.join("clips.json"), r#"{"clips":[
+        {"id":1,"text":"old","source":null,"pinned":false,"ts":1},
+        {"id":2,"text":"pinned","source":null,"pinned":true,"ts":1}]}"#).unwrap();
+    let result = std::process::Command::new(std::env::current_exe().unwrap())
+        .args(["--exact", "privacy_expiration_on_load_persists_in_the_selected_profile"])
+        .env("CLIPCAT_CONFIG_DIR", &dir).env(CHILD, &dir).status().unwrap();
+    std::fs::remove_dir_all(dir).unwrap();
+    assert!(result.success());
 }

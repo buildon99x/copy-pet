@@ -57,3 +57,9 @@ mod flyout;
 
 #[cfg(target_os = "macos")]
 mod mac_paste;
+
+#[cfg(windows)]
+mod win_privacy;
+
+#[cfg(target_os = "linux")]
+mod linux_clipboard;

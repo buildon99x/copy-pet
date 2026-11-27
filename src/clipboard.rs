@@ -387,9 +387,8 @@ impl ClipStore {
     pub fn save(&mut self) {
         let out = ClipsOut { clips: &self.items };
         if let (Some(file), Ok(json)) = (clips_file(), serde_json::to_string(&out)) {
-            crate::state::write_atomic(&file, &json);
+            if crate::state::write_atomic(&file, &json) { self.dirty = false; }
         }
-        self.dirty = false;
     }
 
     pub fn save_if_dirty(&mut self) {
@@ -543,6 +542,22 @@ impl ClipStore {
     }
 
     /// Marks the store changed: needs saving, and cached views are stale.
+    /// Permanently discard expired entries, including session-only undo copies.
+    pub fn expire_before(&mut self, cutoff: u64) -> bool {
+        let keep = |clip: &Clip| clip.pinned || clip.ts >= cutoff;
+        let previous = self.items.len();
+        self.items.retain(keep);
+        let mut changed = self.items.len() != previous;
+        for batch in &mut self.undo {
+            let size = batch.len();
+            batch.retain(keep);
+            changed |= batch.len() != size;
+        }
+        self.undo.retain(|batch| !batch.is_empty());
+        if changed { self.touch(); }
+        changed
+    }
+
     fn touch(&mut self) {
         self.dirty = true;
         self.version += 1;
@@ -704,6 +719,23 @@ mod tests {
             s.add_copy(t.to_string(), None);
         }
         s
+    }
+
+    #[test]
+    fn privacy_expiration_filters_live_and_undo_clips_and_keeps_pins() {
+        let mut s = store_with(&["pin", "live old", "deleted old", "boundary"]);
+        for c in &mut s.items {
+            c.ts = if c.text == "boundary" { 10 } else { 9 };
+        }
+        let pin = s.visible("pin")[0].id;
+        s.toggle_pin(pin);
+        let deleted = s.visible("deleted old")[0].id;
+        s.delete(deleted);
+        assert!(s.expire_before(10));
+        assert_eq!(s.len(), 2);
+        assert!(s.get(pin).unwrap().pinned);
+        assert!(s.undo_delete().is_none());
+        assert!(!s.expire_before(10));
     }
 
     #[test]

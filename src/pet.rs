@@ -90,6 +90,7 @@ pub struct Pet {
     pub panel: Panel,
     pub dirty: bool,
     last_save: Instant,
+    last_expiration: Instant,
     // timing
     start: Instant,
     last_tick: Instant,
@@ -150,15 +151,18 @@ impl Pet {
         panel.view = st.panel_view.min(1);
         let kind = crate::cat::CatKind::from_id(&st.cat_kind);
         let cat_art = crate::hunter_art::CatArt::load(kind).expect("bundled cat atlas");
+        let mut clips = ClipStore::load();
+        Self::expire_history(&mut clips, st.retention_days);
         Pet {
             cat_art,
             cat_picker: None,
             st,
-            clips: ClipStore::load(),
+            clips,
             workbench: crate::ai_workbench::Workbench::load(),
             panel,
             dirty: false,
             last_save: now,
+            last_expiration: now,
             start: now,
             last_tick: now,
             paw_l: 0.0,
@@ -453,7 +457,7 @@ impl Pet {
         badge: Option<Badge>,
         formats: Option<RichFormats>,
     ) {
-        if !self.st.clip_capture {
+        if !self.st.clip_capture || source.as_deref().is_some_and(|name| self.st.excludes(name)) {
             return;
         }
         let badge = badge.unwrap_or_else(|| Badge::from_source(source.as_deref()));
@@ -464,7 +468,7 @@ impl Pet {
     }
 
     pub fn on_copy_image(&mut self, image: ClipImage, source: Option<String>, badge: Option<Badge>) {
-        if !self.st.clip_capture { return; }
+        if !self.st.clip_capture || source.as_deref().is_some_and(|name| self.st.excludes(name)) { return; }
         let badge = badge.unwrap_or_else(|| Badge::from_source(source.as_deref()));
         if self.clips.add_image(image, source) { self.copy_feedback(badge); }
     }
@@ -1049,10 +1053,21 @@ impl Pet {
 
     // ---- per-frame update --------------------------------------------------
 
+    fn expire_history(clips: &mut ClipStore, days: u16) {
+        if days > 0 {
+            let cutoff = crate::clipboard::now_ts().saturating_sub(u64::from(days) * 86_400);
+            if clips.expire_before(cutoff) { clips.save_if_dirty(); }
+        }
+    }
+
     /// Advances the simulation one frame and returns a
     /// hint of whether the visuals changed enough to be worth presenting.
     /// Only local actions and copies affect the pet.
     pub fn advance(&mut self) -> bool {
+        if self.last_expiration.elapsed().as_secs() >= 60 {
+            self.last_expiration = Instant::now();
+            Self::expire_history(&mut self.clips, self.st.retention_days);
+        }
         let now = Instant::now();
         let t = self.now_t();
         let dt = (now - self.last_tick).as_secs_f32().clamp(0.001, 0.1);
@@ -1453,6 +1468,14 @@ impl Pet {
         }
     }
 
+    pub fn privacy_sources(&self) -> Vec<String> {
+        let mut sources = self.st.excluded_sources.clone();
+        sources.extend(self.clips.sources().into_iter()
+            .filter(|name| !name.is_empty() && name.len() <= 1024 && !self.st.excludes(name))
+            .map(str::to_owned));
+        sources
+    }
+
     /// Builds the right-click / tray context menu for the current state.
     /// `hotkey` is the live panel-hotkey label; `autostart` is the
     /// platform-queried "run at login/startup" state (the core does not track
@@ -1481,6 +1504,18 @@ impl Pet {
             MenuAction::ToggleCapture,
             !self.st.clip_capture, // checked == capture is paused
         ));
+        let sources = self.privacy_sources().into_iter().map(|name| {
+            let checked = self.st.excludes(&name);
+            MenuItem::leaf_enabled(name.clone(), MenuAction::ToggleExcludedSource(name), checked,
+                checked || self.st.excluded_sources.len() < 128)
+        }).collect::<Vec<_>>();
+        if !sources.is_empty() {
+            m.push(MenuItem::parent(i18n::exclusion_title(lang), sources));
+        }
+        let presets = [0, 1, 7, 30].into_iter().map(|days| MenuItem::leaf(
+            i18n::retention_label(lang, days), MenuAction::SetRetention(days),
+            self.st.retention_days == days)).collect();
+        m.push(MenuItem::parent(i18n::retention_title(lang), presets));
         m.push(MenuItem::leaf(
             t(lang, Msg::MenuAutoClose),
             MenuAction::TogglePanelAutoClose,
@@ -1560,6 +1595,25 @@ impl Pet {
     /// backend (about dialog, autostart, update page, quit).
     pub fn apply_menu_action(&mut self, action: MenuAction) -> MenuOutcome {
         match action {
+            MenuAction::SetRetention(days) => {
+                if [0, 1, 7, 30].contains(&days) {
+                    self.st.retention_days = days;
+                    Self::expire_history(&mut self.clips, days);
+                    self.dirty = true;
+                    self.set_toast(format!("{} · {}", i18n::retention_title(self.lang()), i18n::retention_label(self.lang(), days)), 2.0);
+                }
+            }
+            MenuAction::ToggleExcludedSource(name) => {
+                if self.st.excludes(&name) {
+                    self.st.excluded_sources.retain(|s| !crate::clipboard::eq_ci(s, &name));
+                } else if !name.is_empty() && name.len() <= 1024 && self.st.excluded_sources.len() < 128 {
+                    self.st.excluded_sources.push(name.clone());
+                } else {
+                    return MenuOutcome::Handled;
+                }
+                self.dirty = true;
+                self.set_toast(i18n::source_status(self.lang(), &name, self.st.excludes(&name)), 2.0);
+            }
             MenuAction::TogglePanel => self.toggle_panel(),
             MenuAction::ToggleCapture => {
                 self.run_action(PanelAction::ToggleCapture);
@@ -1605,7 +1659,7 @@ impl Pet {
         MenuOutcome::Handled
     }
 
-    fn set_toast(&mut self, text: String, secs: f32) {
+    pub(crate) fn set_toast(&mut self, text: String, secs: f32) {
         let t = self.now_t();
         self.toast = Some((text, t + secs));
     }

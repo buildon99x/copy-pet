@@ -97,7 +97,7 @@ unsafe fn build_into(ns_menu: Id, entries: &[MenuEntry], actions: &mut Vec<MenuA
                         initWithTitle: title
                         action: sel!(menuPicked:)
                         keyEquivalent: empty];
-                    if let Some(action) = item.action {
+                    if let Some(action) = item.action.clone() {
                         let _: () = msg_send![mi, setTarget: target];
                         let _: () = msg_send![mi, setTag: actions.len() as isize];
                         actions.push(action);
@@ -148,7 +148,7 @@ pub fn popup(window: &Window, entries: &[MenuEntry]) -> Option<MenuAction> {
     }
 
     match SELECTED.load(Ordering::SeqCst) {
-        i if i >= 0 => actions.get(i as usize).copied(),
+        i if i >= 0 => actions.get(i as usize).cloned(),
         _ => None,
     }
 }

@@ -830,3 +830,30 @@ pub fn picker(lang: Lang, text: PickerText) -> &'static str {
         (Error, Lang::En) => "Could not load this cat", (Error, Lang::Ko) => "고양이를 불러오지 못했습니다",
     }
 }
+
+pub fn retention_label(lang: Lang, days: u16) -> String {
+    match (lang, days) {
+        (Lang::En, 0) => "Unlimited".into(),
+        (Lang::Ko, 0) => "무기한".into(),
+        (Lang::En, 1) => "1 day".into(),
+        (Lang::En, _) => format!("{days} days"),
+        (Lang::Ko, _) => format!("{days}일"),
+    }
+}
+
+pub fn retention_title(lang: Lang) -> &'static str {
+    match lang { Lang::En => "Keep unpinned clips", Lang::Ko => "고정하지 않은 항목 보관 기간" }
+}
+
+pub fn exclusion_title(lang: Lang) -> &'static str {
+    match lang { Lang::En => "Exclude copies from apps", Lang::Ko => "복사 수집에서 제외할 앱" }
+}
+
+pub fn source_status(lang: Lang, name: &str, excluded: bool) -> String {
+    match (lang, excluded) {
+        (Lang::En, true) => format!("{name} · excluded"),
+        (Lang::En, false) => format!("{name} · capture enabled"),
+        (Lang::Ko, true) => format!("{name} · 수집 제외"),
+        (Lang::Ko, false) => format!("{name} · 수집 허용"),
+    }
+}
