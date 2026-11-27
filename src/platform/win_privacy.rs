@@ -115,6 +115,21 @@ mod tests {
     }
 }
 
+/// Called after the writing CloseClipboard, which can finalize additional
+/// formats and advance the sequence. Reopen without modifying data so a
+/// competing writer cannot change the owner between its check and the sample.
+pub(super) unsafe fn verified_write_sequence(hwnd: windows_sys::Win32::Foundation::HWND) -> Option<u32> {
+    for attempt in 0..5 {
+        if attempt != 0 { std::thread::sleep(std::time::Duration::from_millis(5)); }
+        if OpenClipboard(std::ptr::null_mut()) == 0 { continue; }
+        let own = GetClipboardOwner() == hwnd;
+        let sequence = GetClipboardSequenceNumber();
+        let closed = CloseClipboard() != 0;
+        return (closed && own && sequence != 0 && sequence == GetClipboardSequenceNumber()).then_some(sequence);
+    }
+    None
+}
+
 /// Writes one format's bytes to an already-open, already-emptied clipboard.
 /// SAFETY: the GlobalAlloc'd buffer is handed to the clipboard on success (it
 /// then owns it); on failure we free it ourselves.
@@ -173,16 +188,16 @@ pub fn write_text(
     };
     let wide: Vec<u16> = text.encode_utf16().chain(Some(0)).collect();
     // SAFETY: the window is live; the slice borrows initialized UTF-16.
-    // Sample the sequence under the clipboard lock to bind it to this write.
+    // Verify ownership and the finalized sequence after releasing the write lock.
     unsafe {
         let bytes = std::slice::from_raw_parts(wide.as_ptr().cast(), wide.len() * 2);
         for _ in 0..5 {
             if OpenClipboard(handle.hwnd.get() as _) != 0 {
                 let ok = EmptyClipboard() != 0 && write_format(13, bytes);
                 let complete = ok && formats.is_none_or(|formats| write_rich_formats(formats));
-                let sequence = ok.then(|| (generation(), complete));
-                CloseClipboard();
-                return sequence;
+                if CloseClipboard() == 0 || !ok { return None; }
+                return verified_write_sequence(handle.hwnd.get() as _)
+                    .map(|sequence| (sequence as isize, complete));
             }
             std::thread::sleep(std::time::Duration::from_millis(10));
         }

@@ -1041,19 +1041,17 @@ unsafe fn set_clipboard_image(hwnd: HWND, image: &ClipImage) -> Option<(u32,bool
         let dib_ok = write_format(8, &dib);
         let atom = png_atom();
         let png_ok = atom != 0 && write_format(atom, &png);
-        // Capture the marker while the clipboard is locked, so another app
-        // cannot replace it before we remember our own sequence number.
-        let sequence = crate::paste_queue::image_write_receipt(dib_ok, png_ok, || GetClipboardSequenceNumber());
-        CloseClipboard();
-        return sequence;
+        if CloseClipboard() == 0 { return None; }
+        let sequence = super::win_privacy::verified_write_sequence(hwnd)?;
+        return crate::paste_queue::image_write_receipt(dib_ok, png_ok, || sequence);
     }
     None
 }
 
 /// Replaces the clipboard with `text` (CF_UNICODETEXT, always), plus the
 /// original CF_HTML / CF_RTF when `!plain_only` and present (ADR-0014). One
-/// OpenClipboard for all formats. Return our sequence number while still
-/// holding the clipboard open, for exact self-copy suppression.
+/// OpenClipboard for all formats. Verify the final sequence and owner after
+/// the writing CloseClipboard, for exact self-copy suppression.
 unsafe fn set_clipboard_rich(
     hwnd: HWND,
     text: &str,
@@ -1072,9 +1070,8 @@ unsafe fn set_clipboard_rich(
         if EmptyClipboard() == 0 { CloseClipboard(); return None; }
         let ok = write_format(CF_UNICODETEXT, text_bytes);
         let complete = ok && (plain_only || formats.is_none_or(|formats| super::win_privacy::write_rich_formats(formats)));
-        let sequence = ok.then(|| (GetClipboardSequenceNumber(), complete));
-        CloseClipboard();
-        return sequence;
+        if CloseClipboard() == 0 || !ok { return None; }
+        return super::win_privacy::verified_write_sequence(hwnd).map(|sequence| (sequence, complete));
     }
     None
 }
@@ -2743,7 +2740,7 @@ mod clipboard_tests {
         let after_close = GetClipboardSequenceNumber();
         let original_owner = windows_sys::Win32::System::DataExchange::GetClipboardOwner();
         let first = submit_paste(target, false, Some(sequence));
-        assert!(first.is_ok(), "first dispatch: {first:?}; captured={target:?}, locked_seq={sequence}, post_close_seq={after_close}, post_close_owner_is_fixture={}", original_owner == owner);
+        assert!(first.is_ok(), "first dispatch: {first:?}; captured={target:?}, verified_seq={sequence}, post_close_seq={after_close}, post_close_owner_is_fixture={}", original_owner == owner);
         wait("1");
         let panel = CreateWindowExW(
             0,
@@ -2798,7 +2795,9 @@ mod clipboard_tests {
             }
             let _cleanup = Cleanup(hwnd);
             let formats = RichFormats { html: Some("<b>clip</b>".into()), rtf_b64: Some(b64_encode(b"{\\rtf1 clip}")) };
-            assert!(set_clipboard_rich(hwnd, "클립 text", Some(&formats), false).is_some());
+            let (rich_seq, all_formats) = set_clipboard_rich(hwnd, "클립 text", Some(&formats), false).unwrap();
+            assert!(all_formats);
+            assert_eq!(rich_seq, GetClipboardSequenceNumber());
             match read_clipboard_content(hwnd).unwrap() {
                 CapturedClip::Text(text, rich) => {
                     assert_eq!(text, "클립 text");
@@ -2810,12 +2809,26 @@ mod clipboard_tests {
             pm.fill(tiny_skia::Color::from_rgba8(40,80,120,255));
             let image = ClipImage::from_pixmap(&pm).unwrap();
             let before = GetClipboardSequenceNumber();
-            assert!(set_clipboard_image(hwnd, &image).is_some());
+            let (image_seq, all_formats) = set_clipboard_image(hwnd, &image).unwrap();
+            assert!(all_formats);
+            assert_eq!(image_seq, GetClipboardSequenceNumber());
             assert_ne!(GetClipboardSequenceNumber(), before);
             match read_clipboard_content(hwnd).unwrap() {
                 CapturedClip::Image(captured) => assert_eq!(captured, image),
                 _ => panic!("image clipboard was not captured"),
             }
+            // Model a competing writer between the first close and the
+            // receipt check. Opening for verification must not transfer ownership.
+            let other = CreateWindowExW(0,wz("STATIC").as_ptr(),null(),0,0,0,0,0,
+                HWND_MESSAGE,null_mut(),GetModuleHandleW(null()),null());
+            assert!(!other.is_null());
+            let replacement = set_clipboard_rich(other, "synthetic replacement", None, true).unwrap();
+            assert!(replacement.1);
+            assert_ne!(replacement.0,image_seq);
+            let obsolete = super::super::win_privacy::verified_write_sequence(hwnd);
+            DestroyWindow(other);
+            assert_eq!(obsolete,None,"do not acknowledge another window's clipboard");
+
             // A DIB-only producer such as a bitmap screenshot must work too.
             assert_ne!(OpenClipboard(hwnd), 0);
             assert_ne!(EmptyClipboard(), 0);

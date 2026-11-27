@@ -436,7 +436,7 @@ impl PortableApp {
     }
 
     fn write_and_paste(&mut self, pick: ClipPick) -> bool {
-        #[cfg(target_os = "macos")]
+        #[cfg(any(target_os = "macos", windows))]
         let written_generation;
         #[cfg(not(target_os = "macos"))]
         let destination = if pick.queued {
@@ -480,6 +480,7 @@ impl PortableApp {
                 else {
                     return false;
                 };
+                written_generation = generation;
                 *marker = Some(generation);
                 if pick.queued && !complete {
                     return false;
@@ -534,7 +535,10 @@ impl PortableApp {
             }
             #[cfg(not(target_os = "macos"))]
             {
-                let sent = (!pick.queued || destination == self.external_target()) && paste_synthesize();
+                let ready = !pick.queued || destination == self.external_target();
+                #[cfg(windows)]
+                let ready = ready && written_generation == super::win_privacy::generation();
+                let sent = ready && paste_synthesize();
                 if pick.queued {
                     self.pet.finish_queue_pick(sent);
                 }
