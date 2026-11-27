@@ -1,6 +1,6 @@
 //! Exercise the actual native panel, modal control, clipboard write and capture
-//! listener in a dedicated synthetic profile. Only the child process's windows
-//! and a clipboard owned by its main window are inspected.
+//! listener in a dedicated synthetic profile. Text and clipboard bytes are
+//! read only from the test's own editors or its child process's known output.
 #![cfg(all(windows, not(feature = "portable")))]
 use clipcat::clip_image::ClipImage;
 use serde_json::json;
@@ -98,10 +98,10 @@ unsafe fn clipboard_is(owner: HWND, text: &str) -> bool {
     matches
 }
 
-unsafe fn wait_for_clipboard(owner: HWND, text: &str) {
+unsafe fn wait_for_clipboard(stage: &str, owner: HWND, text: &str) {
     let until = Instant::now() + Duration::from_secs(10);
     while !clipboard_is(owner, text) {
-        assert!(Instant::now() < until, "wrong clipboard after one copy: expected owner={owner:?}, current={:?}, sequence={}, locked_by={:?}",
+        assert!(Instant::now() < until, "{stage}: expected owner={owner:?}, current={:?}, sequence={}, locked_by={:?}",
             GetClipboardOwner(), GetClipboardSequenceNumber(), GetOpenClipboardWindow());
         thread::sleep(Duration::from_millis(15));
     }
@@ -220,10 +220,29 @@ unsafe fn queue_menu_roundtrip(main: HWND) {
         }
     };
     let focus = |label: &str, frame: HWND, edit: HWND| {
-        pump();
-        let mut pt = POINT { x: 10, y: 10 };
-        assert_ne!(windows_sys::Win32::Graphics::Gdi::ClientToScreen(edit, &mut pt), 0);
-        assert_eq!(WindowFromPoint(pt), edit, "synthetic editor {label} must be visible");
+        // A visible frame shown without activation can still be behind other
+        // runner windows. Raise just this fixture frame for its physical click.
+        let placement = SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE;
+        assert_ne!(SetWindowPos(frame, HWND_TOPMOST, 0, 0, 0, 0, placement | SWP_SHOWWINDOW), 0);
+        let deadline = Instant::now() + Duration::from_secs(10);
+        let pt = loop {
+            pump();
+            let mut client: RECT = std::mem::zeroed();
+            assert_ne!(GetClientRect(edit, &mut client), 0);
+            let mut pt = POINT { x: client.right / 2, y: client.bottom / 2 };
+            assert_ne!(windows_sys::Win32::Graphics::Gdi::ClientToScreen(edit, &mut pt), 0);
+            let hit = WindowFromPoint(pt);
+            if hit == edit { break pt; }
+            if Instant::now() >= deadline {
+                let mut pid = 0;
+                GetWindowThreadProcessId(hit, &mut pid);
+                let mut class = [0u16; 256];
+                let len = GetClassNameW(hit, class.as_mut_ptr(), class.len() as i32);
+                panic!("editor {label} before click: expected frame={frame:?}, EDIT={edit:?}; point=({}, {}), hit={hit:?}, pid={pid}, class={}, root={:?}",
+                    pt.x, pt.y, String::from_utf16_lossy(&class[..len as usize]), GetAncestor(hit, GA_ROOT));
+            }
+            thread::sleep(Duration::from_millis(15));
+        };
         click(pt, [MOUSEEVENTF_LEFTDOWN, MOUSEEVENTF_LEFTUP]);
         let deadline = Instant::now() + Duration::from_secs(10);
         let thread_id = GetWindowThreadProcessId(frame, null_mut());
@@ -241,6 +260,7 @@ unsafe fn queue_menu_roundtrip(main: HWND) {
                 gui.hwndActive, gui.hwndFocus, WindowFromPoint(pt));
             thread::sleep(Duration::from_millis(15));
         }
+        assert_ne!(SetWindowPos(frame, HWND_NOTOPMOST, 0, 0, 0, 0, placement), 0);
     };
     let visible_panel = |open| {
         wait("embedded panel activation style", || {
@@ -442,7 +462,7 @@ fn copying_preview_selection_keeps_image_history_and_suppresses_copy_feedback() 
             save_preview_image(dialog, std::path::Path::new(&dir));
         }
         send(edit, WM_COPY, 0, 0); // same command as the read-only context menu
-        wait_for_clipboard(main, "12345");
+        wait_for_clipboard("preview WM_COPY selection", main, "12345");
         send(edit, 0x00b1, 11, 18); // select "receipt" after the focus click
         let mut keys: [INPUT; 4] = std::mem::zeroed();
         for (input, (key, flags)) in keys.iter_mut().zip([
@@ -459,7 +479,7 @@ fn copying_preview_selection_keeps_image_history_and_suppresses_copy_feedback() 
             SendInput(4, keys.as_ptr(), std::mem::size_of::<INPUT>() as i32),
             4
         );
-        wait_for_clipboard(main, "receipt");
+        wait_for_clipboard("preview Ctrl+C selection", main, "receipt");
         // Allow the real asynchronous WM_CLIPBOARDUPDATE to be delivered before
         // shutting down. Receiving later messages in the modal loop is essential.
         PostMessageW(dialog, WM_CLOSE, 0, 0);
@@ -467,28 +487,30 @@ fn copying_preview_selection_keeps_image_history_and_suppresses_copy_feedback() 
             (IsWindow(dialog) == 0).then_some(())
         });
         send(main, WM_NULL, 0, 0);
-        // A normal, external EDIT writes through Windows itself. Confirm that the
-        // live listener captures this positive control with capture enabled.
-        let class: Vec<u16> = "EDIT".encode_utf16().chain(Some(0)).collect();
+        // Publish a single independent Win32 change with an explicit owner.
+        // It must reach the shipping listener after both self-written selections.
+        let class: Vec<u16> = "STATIC".encode_utf16().chain(Some(0)).collect();
         let sample: Vec<u16> = "external fixture".encode_utf16().chain(Some(0)).collect();
         let external = CreateWindowExW(
-            0,
-            class.as_ptr(),
-            sample.as_ptr(),
-            WS_POPUP,
-            0,
-            0,
-            100,
-            30,
-            null_mut(),
-            null_mut(),
-            null_mut(),
-            std::ptr::null(),
+            0, class.as_ptr(), std::ptr::null(), 0, 0, 0, 0, 0,
+            HWND_MESSAGE, null_mut(), null_mut(), std::ptr::null(),
         );
         assert!(!external.is_null());
-        send(external, 0x00b1, 0, -1);
-        send(external, WM_COPY, 0, 0);
-        wait_for_clipboard(external, "external fixture");
+        let data = GlobalAlloc(GMEM_MOVEABLE, std::mem::size_of_val(sample.as_slice()));
+        assert!(!data.is_null());
+        let dst = GlobalLock(data) as *mut u16;
+        if dst.is_null() {
+            GlobalFree(data);
+            panic!("external clipboard fixture could not lock synthetic data");
+        }
+        std::ptr::copy_nonoverlapping(sample.as_ptr(), dst, sample.len());
+        GlobalUnlock(data);
+        wait("external fixture clipboard lock", || (OpenClipboard(external) != 0).then_some(()));
+        let written = EmptyClipboard() != 0 && !SetClipboardData(13, data).is_null();
+        let closed = CloseClipboard() != 0;
+        if !written { GlobalFree(data); } // A successful SetClipboardData transfers ownership to Windows.
+        assert!(written && closed, "external CF_UNICODETEXT write and close");
+        wait_for_clipboard("external positive control", external, "external fixture");
         wait("capture of independent synthetic clipboard change", || {
             // ClipCat's session-query handler flushes history. Only the fixture
             // process receives this message; the test never ends the OS session.
