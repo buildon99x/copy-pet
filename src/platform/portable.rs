@@ -17,14 +17,14 @@ use crate::viewport::Density;
 /// Linux/arboard is text-only, so `formats` is always `None` there).
 struct ClipCapture {
     capture_epoch: u64,
-    permit: crate::capture_policy::Permit,
+    policy: crate::capture_policy::SourceEpoch,
     source: Option<String>,
     text: String,
     formats: Option<RichFormats>,
 }
 impl ClipCapture {
     fn deliver(self, pet: &mut Pet) {
-        if self.capture_epoch == pet.capture_epoch.load(Ordering::Acquire) && self.permit.valid() {
+        if self.capture_epoch == pet.capture_epoch.load(Ordering::Acquire) && self.policy.allows(self.source.as_deref()) {
             pet.on_copy_rich(self.text, self.source, None, self.formats);
         }
     }
@@ -1554,7 +1554,7 @@ fn spawn_clipboard_watcher(tx: Sender<ClipCapture>, suppress: Suppress, capture:
         #[cfg(target_os = "linux")]
         let mut last = None;
         #[cfg(target_os = "linux")]
-        let mut previous_read: Option<(Option<u32>, crate::capture_policy::Permit)> = None;
+        let mut previous_read: Option<(Option<u32>, Option<String>, crate::capture_policy::SourceEpoch)> = None;
         #[cfg(target_os = "linux")]
         let mut excluded_owner = None;
         #[cfg(target_os = "linux")]
@@ -1566,34 +1566,37 @@ fn spawn_clipboard_watcher(tx: Sender<ClipCapture>, suppress: Suppress, capture:
             if epoch != seen_epoch {
                 baseline = true;
                 seen_epoch = epoch;
+                #[cfg(target_os = "linux")]
+                { last = None; previous_read = None; excluded_owner = None; }
             }
             if !epoch.is_multiple_of(2) { continue; }
+            let snapshot = policy.snapshot();
             #[cfg(any(windows, target_os = "macos"))]
-            let (text, source, formats, permit) = {
+            let (text, source, formats) = {
                 let current = native::generation();
                 let Some(copy) = poll_generation(&mut generation, &mut baseline, current, || {
                     #[cfg(windows)]
-                    { native::observe(current, &suppress, |s| policy.permit(s)) }
+                    { native::observe(current, &suppress, |s| snapshot.allows(s)) }
                     #[cfg(target_os = "macos")]
                     {
                         let mut marker = suppress.lock().unwrap_or_else(|e| e.into_inner());
                         if consume_self_copy(&mut marker, Some(current)) { return Ok(None); }
                         drop(marker);
-                        Ok(native::observe(current, |s| policy.permit(s)))
+                        Ok(native::observe(current, |s| snapshot.allows(s)))
                     }
                 }) else { continue };
                 copy
             };
             #[cfg(target_os = "linux")]
-            let (text, source, formats, permit) = {
+            let (text, source, formats) = {
                 let owner = source_probe.as_ref().and_then(|probe| probe.owner());
                 let source = owner.and_then(|id| source_probe.as_ref()?.name(id));
-                if let Some((previous, _)) = previous_read.as_ref().filter(|(_, p)| !p.valid()) {
+                if let Some((previous, _, _)) = previous_read.as_ref().filter(|(_, name, p)| !p.allows(name.as_deref())) {
                     excluded_owner = Some(*previous);
                     last = None;
                     previous_read = None;
                 }
-                let Some(permit) = policy.permit(source.as_deref()) else {
+                if !snapshot.allows(source.as_deref()) {
                     // Clear the old comparison text, and resync this owner's
                     // first permitted observation after restoration.
                     last = None;
@@ -1602,17 +1605,18 @@ fn spawn_clipboard_watcher(tx: Sender<ClipCapture>, suppress: Suppress, capture:
                     continue;
                 };
                 if excluded_owner.take() == Some(owner) { baseline = true; }
-                previous_read = Some((owner, permit.clone()));
+                previous_read = Some((owner, source.clone(), snapshot.clone()));
                 let observed = cb.get_text().ok();
                 let after = source_probe.as_ref().and_then(|probe| probe.owner());
+                if !snapshot.allows(source.as_deref()) { last = None; excluded_owner = Some(owner); continue; }
                 let Some(text) = stable_text(&mut last, &mut baseline, owner, after, observed)
                     else { continue };
                 let mut marker = suppress.lock().unwrap_or_else(|e| e.into_inner());
                 if consume_self_copy(&mut marker, owner.map(|id| id as isize)) { continue; }
-                (text, source, None, permit)
+                (text, source, None)
             };
-            if !permit.valid() { continue; }
-            if tx.send(ClipCapture { text, source, formats, capture_epoch: epoch, permit }).is_err() {
+            if !snapshot.allows(source.as_deref()) { continue; }
+            if tx.send(ClipCapture { text, source, formats, capture_epoch: epoch, policy: snapshot }).is_err() {
                 return;
             }
         }
@@ -1654,15 +1658,20 @@ mod paste_tests {
         let mut pet = Pet::new(Persist::default());
         pet.clips = crate::clipboard::ClipStore::default();
         let policy = pet.source_policy.clone();
-        let pending = |source: &str| policy.permit(Some(source)).map(|permit| ClipCapture {
-            capture_epoch: 0, source: Some(source.into()), text: format!("synthetic {source}"), formats: None, permit,
-        });
+        let pending = |source: &str| {
+            let snapshot = policy.snapshot();
+            snapshot.allows(Some(source)).then(|| ClipCapture {
+                capture_epoch: 0, source: Some(source.into()), text: format!("synthetic {source}"), formats: None, policy: snapshot,
+            })
+        };
         let old = pending("Editor").unwrap();
         let unrelated = pending("Mail").unwrap();
         let toggle = crate::menu::MenuAction::ToggleExcludedSource("EDITOR".into());
         pet.apply_menu_action(toggle.clone());
-        assert!(policy.permit(Some("editor")).map(|_| panic!("excluded payload read")).is_none());
+        let before_source_lookup = policy.snapshot();
+        assert!(pending("editor").is_none());
         pet.apply_menu_action(toggle);
+        assert!(!before_source_lookup.allows(Some("editor")), "lookup delayed across restore must skip the payload");
         old.deliver(&mut pet);
         assert!(pet.clips.is_empty());
         unrelated.deliver(&mut pet);

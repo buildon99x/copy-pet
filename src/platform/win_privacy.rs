@@ -60,8 +60,8 @@ pub fn generation() -> isize {
 }
 
 #[cfg(feature = "portable")]
-pub(super) fn observe<P>(expected: isize, suppression: &std::sync::Mutex<Option<ClipboardIdentity>>,
-    permit: impl FnOnce(Option<&str>) -> Option<P>) -> Result<Option<(String, Option<String>, Option<crate::clipboard::RichFormats>, P)>, ()> {
+pub(super) fn observe(expected: isize, suppression: &std::sync::Mutex<Option<ClipboardIdentity>>,
+    allowed: impl FnOnce(Option<&str>) -> bool) -> Result<Option<(String, Option<String>, Option<crate::clipboard::RichFormats>)>, ()> {
     // SAFETY: the lock spans identity, privacy flags and text. The OS owns the
     // data handle and it is unlocked before closing the clipboard.
     let mut marker = suppression.lock().unwrap_or_else(|e| e.into_inner());
@@ -72,7 +72,7 @@ pub(super) fn observe<P>(expected: isize, suppression: &std::sync::Mutex<Option<
         let result = (|| {
             if skip || marked_open() { return None; }
             let source = owner_path().and_then(|p| app_name(&p));
-            let permit = permit(source.as_deref())?;
+            if !allowed(source.as_deref()) { return None; }
             let handle = GetClipboardData(13);
             if handle.is_null() { return None; }
             let size = GlobalSize(handle);
@@ -83,7 +83,7 @@ pub(super) fn observe<P>(expected: isize, suppression: &std::sync::Mutex<Option<
             let len = slice.iter().position(|v| *v == 0).unwrap_or(slice.len());
             let text = String::from_utf16_lossy(&slice[..len]);
             GlobalUnlock(handle);
-            Some((text, source, None, permit))
+            Some((text, source, None))
         })();
         CloseClipboard();
         Ok(result)
@@ -112,7 +112,7 @@ mod tests {
             });
             if !locked { DestroyWindow(hwnd); panic!("could not acquire test clipboard lock"); }
             let holder = GetOpenClipboardWindow();
-            let busy = std::thread::spawn(|| observe(generation(), &std::sync::Mutex::new(None), |_| Some(())).is_err()).join();
+            let busy = std::thread::spawn(|| observe(generation(), &std::sync::Mutex::new(None), |_| true).is_err()).join();
             CloseClipboard();
             DestroyWindow(hwnd);
             assert_eq!(holder, hwnd);

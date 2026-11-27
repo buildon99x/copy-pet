@@ -1895,7 +1895,7 @@ impl Pet {
                 }
                 self.dirty = true;
                 #[cfg(any(not(windows), feature = "portable"))]
-                self.source_policy.update(&self.st.excluded_sources);
+                self.source_policy.update(&name, &self.st.excluded_sources);
                 #[cfg(all(windows, not(feature = "portable")))]
                 self.capture_epoch.fetch_add(2, std::sync::atomic::Ordering::AcqRel);
                 self.set_toast(i18n::source_status(self.lang(), &name, self.st.excludes(&name)), 2.0);

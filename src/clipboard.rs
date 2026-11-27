@@ -740,6 +740,22 @@ mod tests {
     }
 
     #[test]
+    fn expiration_prunes_inside_a_mixed_undo_batch() {
+        let mut store = store_with(&["pin", "expired", "valid"]);
+        let mut batch = std::mem::take(&mut store.items);
+        for clip in &mut batch {
+            clip.ts = if clip.text == "valid" { 10 } else { 9 };
+            clip.pinned = clip.text == "pin";
+        }
+        store.push_undo(batch);
+        store.expire_before(10);
+        store.undo_delete().unwrap();
+        assert_eq!(store.len(), 2);
+        assert!(store.visible("pin")[0].pinned);
+        assert!(store.visible("valid").len() == 1 && store.visible("expired").is_empty());
+    }
+
+    #[test]
     fn privacy_expiration_filters_live_and_undo_clips_and_keeps_pins() {
         let mut s = store_with(&["pin", "live old", "deleted old", "boundary"]);
         for c in &mut s.items {

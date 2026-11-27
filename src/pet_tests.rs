@@ -1181,20 +1181,25 @@ fn closing_long_image_preview_returns_to_its_original_row_and_panel() {
 }
 
 #[test]
-fn unpin_of_evicted_queued_row_revokes_replay_on_clear() {
-    let mut p = pet();
-    p.open_panel();
-    p.on_copy("queued old pin".into(), None, None);
-    let id = p.panel.selected_id(&p.clips).unwrap();
-    p.run_action(PanelAction::TogglePin(id));
-    p.panel_nav(NavKey::QueueAdd);
-    p.next_queue_pick().unwrap();
-    p.finish_queue_pick(true);
-    for i in 0..crate::clipboard::MAX_HISTORY { p.clips.add_copy(format!("new {i}"), None); }
-    p.run_action(PanelAction::TogglePin(id));
-    assert!(p.clips.get(id).is_none());
-    p.run_action(PanelAction::Clear);
-    assert!(p.panel.queue.previous().is_none());
+fn unpin_of_evicted_queued_row_revokes_replay_on_clear_or_expiry() {
+    for clear in [true, false] {
+        let mut p = pet();
+        p.open_panel();
+        p.on_copy("queued old pin".into(), None, None);
+        let id = p.panel.selected_id(&p.clips).unwrap();
+        p.run_action(PanelAction::TogglePin(id));
+        let mut snapshot = p.clips.get(id).unwrap().clone();
+        snapshot.ts = 1;
+        p.panel.queue.toggle(&snapshot);
+        p.next_queue_pick().unwrap();
+        p.finish_queue_pick(true);
+        for i in 0..crate::clipboard::MAX_HISTORY { p.clips.add_copy(format!("new {i}"), None); }
+        p.run_action(PanelAction::TogglePin(id));
+        assert!(p.clips.get(id).is_none());
+        if clear { p.run_action(PanelAction::Clear); }
+        else { p.apply_menu_action(MenuAction::SetRetention(1)); }
+        assert!(p.panel.queue.previous().is_none());
+    }
 }
 
 #[test]
