@@ -221,13 +221,13 @@ jobs:
       - name: Install X11 validation dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y libx11-dev libxi-dev libxtst-dev libxkbcommon-dev libxkbcommon-x11-dev pkg-config xvfb xclip xdotool imagemagick fonts-noto-cjk python3-tk
+          sudo apt-get install -y libx11-dev libxi-dev libxtst-dev libxkbcommon-dev libxkbcommon-x11-dev pkg-config xvfb xclip xdotool x11-xserver-utils imagemagick fonts-noto-cjk python3-tk
       - name: Build and check Linux
         run: |
           cargo build --locked --release
           cargo clippy --locked --release
           xvfb-run -a cargo test --locked --release
-          xvfb-run -a cargo test --locked --release x11_conflict_rebind_and_cleanup -- --ignored --test-threads=1
+          xvfb-run -a cargo test --locked --release x11_ -- --ignored --test-threads=1
       - name: Exercise clipboard and native panel
         run: xvfb-run -a python3 scripts/validate_linux_workflows.py target/release/clipcat
       - name: Upload Linux validation evidence

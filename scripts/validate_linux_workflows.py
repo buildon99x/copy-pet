@@ -3,6 +3,7 @@
 Never run against a developer's desktop or profile. All text is synthetic; the
 caller owns the X server, so xclip selection owners disappear when it closes.
 """
+import ctypes
 import json
 import os
 from pathlib import Path
@@ -119,8 +120,33 @@ root.mainloop()
                     time.sleep(0.1)
                 raise RuntimeError(f"Native queue paste mismatch: expected {expected!r}, got {actual!r}")
 
-            focus(target_windows[0])
+            # PointerRoot over empty desktop is not an external input target.
+            # The following real shortcut must leave the first queue item ready.
+            subprocess.run(["xdotool", "mousemove", "1", "1"], check=True, timeout=5)
+            x11 = ctypes.CDLL("libX11.so.6")
+            x11.XOpenDisplay.argtypes = [ctypes.c_char_p]
+            x11.XOpenDisplay.restype = ctypes.c_void_p
+            x11.XSetInputFocus.argtypes = [ctypes.c_void_p, ctypes.c_ulong, ctypes.c_int, ctypes.c_ulong]
+            x11.XSync.argtypes = [ctypes.c_void_p, ctypes.c_int]
+            x11.XCloseDisplay.argtypes = [ctypes.c_void_p]
+            display = x11.XOpenDisplay(None)
+            if not display:
+                raise RuntimeError("Cannot open private Xvfb display for focus regression.")
+            try:
+                x11.XSetInputFocus(display, 1, 0, 0)
+                x11.XSync(display, 0)
+            finally:
+                x11.XCloseDisplay(display)
+            time.sleep(0.3)
             key("ctrl+alt+j")
+            expect_text("")
+
+            focus(target_windows[0])
+            subprocess.run(["xset", "r", "on"], check=True, timeout=5)
+            subprocess.run(["xset", "r", "rate", "200", "30"], check=True, timeout=5)
+            subprocess.run(["xdotool", "keydown", "ctrl+alt+j"], check=True, timeout=5)
+            time.sleep(0.95)
+            subprocess.run(["xdotool", "keyup", "ctrl+alt+j"], check=True, timeout=5)
             expect_text(tokens[2])
             key("ctrl+alt+j")
             expect_text(tokens[2] + tokens[1])
@@ -141,7 +167,8 @@ root.mainloop()
             result.update(app_survived=True, captured_synthetic_clips=len(tokens),
                           panel_expanded=True, search_gestures_sent=True,
                           queue_next_order_verified=True, queue_replay_verified=True,
-                          queue_combine_verified=True, pasted_synthetic_text=combined,
+                          queue_combine_verified=True, queue_no_target_retains_item=True,
+                          queue_held_chord_single_item=True, pasted_synthetic_text=combined,
                           captured_sources=sorted({c.get("source") or "unknown" for c in saved}),
                           window_geometry=dimensions, screenshot="native-panel-ko.png")
         finally:
