@@ -60,7 +60,8 @@ pub fn generation() -> isize {
 }
 
 #[cfg(feature = "portable")]
-pub(super) fn observe(expected: isize, suppression: &std::sync::Mutex<Option<ClipboardIdentity>>) -> Result<Option<(String, Option<String>, Option<crate::clipboard::RichFormats>)>, ()> {
+pub(super) fn observe<P>(expected: isize, suppression: &std::sync::Mutex<Option<ClipboardIdentity>>,
+    permit: impl FnOnce(Option<&str>) -> Option<P>) -> Result<Option<(String, Option<String>, Option<crate::clipboard::RichFormats>, P)>, ()> {
     // SAFETY: the lock spans identity, privacy flags and text. The OS owns the
     // data handle and it is unlocked before closing the clipboard.
     let mut marker = suppression.lock().unwrap_or_else(|e| e.into_inner());
@@ -71,6 +72,7 @@ pub(super) fn observe(expected: isize, suppression: &std::sync::Mutex<Option<Cli
         let result = (|| {
             if skip || marked_open() { return None; }
             let source = owner_path().and_then(|p| app_name(&p));
+            let permit = permit(source.as_deref())?;
             let handle = GetClipboardData(13);
             if handle.is_null() { return None; }
             let size = GlobalSize(handle);
@@ -81,7 +83,7 @@ pub(super) fn observe(expected: isize, suppression: &std::sync::Mutex<Option<Cli
             let len = slice.iter().position(|v| *v == 0).unwrap_or(slice.len());
             let text = String::from_utf16_lossy(&slice[..len]);
             GlobalUnlock(handle);
-            Some((text, source, None))
+            Some((text, source, None, permit))
         })();
         CloseClipboard();
         Ok(result)
@@ -110,7 +112,7 @@ mod tests {
             });
             if !locked { DestroyWindow(hwnd); panic!("could not acquire test clipboard lock"); }
             let holder = GetOpenClipboardWindow();
-            let busy = std::thread::spawn(|| observe(generation(), &std::sync::Mutex::new(None)).is_err()).join();
+            let busy = std::thread::spawn(|| observe(generation(), &std::sync::Mutex::new(None), |_| Some(())).is_err()).join();
             CloseClipboard();
             DestroyWindow(hwnd);
             assert_eq!(holder, hwnd);
@@ -131,6 +133,15 @@ impl ClipboardIdentity {
     /// SAFETY: the caller holds the clipboard open across both observations.
     unsafe fn current_open() -> Self {
         Self { owner: GetClipboardOwner() as usize, generation: GetClipboardSequenceNumber() }
+    }
+
+    /// Multiple posted notifications can all refer to the same current clipboard.
+    #[cfg(not(feature = "portable"))]
+    pub(super) unsafe fn skip_notification(observed: &mut Option<Self>, marker: &mut Option<Self>) -> bool {
+        let current = Self::current_open();
+        if current.generation != 0 && *observed == Some(current) { return true; }
+        *observed = Some(current);
+        Self::consume_open(marker)
     }
 
     /// Only a successful lock can resolve a pending receipt. A later owner or
@@ -233,11 +244,20 @@ pub(super) unsafe fn write_rich_formats(formats: &crate::clipboard::RichFormats)
 pub(super) unsafe fn write_text(
     hwnd: HWND, text: &str, formats: Option<&crate::clipboard::RichFormats>,
 ) -> Option<WriteReceipt> {
+    write_text_when(hwnd, text, formats, || true)
+}
+
+/// The read-only preview can expire during a write-lock retry. Authorize the
+/// selection after locking and before touching the destination clipboard.
+pub(super) unsafe fn write_text_when(
+    hwnd: HWND, text: &str, formats: Option<&crate::clipboard::RichFormats>, allowed: impl FnOnce() -> bool,
+) -> Option<WriteReceipt> {
     let wide: Vec<u16> = text.encode_utf16().chain(Some(0)).collect();
     let bytes = std::slice::from_raw_parts(wide.as_ptr().cast(), wide.len() * 2);
     for attempt in 0..5 {
         if attempt != 0 { std::thread::sleep(std::time::Duration::from_millis(10)); }
         if OpenClipboard(hwnd) == 0 { continue; }
+        if !allowed() { CloseClipboard(); return None; }
         let text_written = EmptyClipboard() != 0 && write_format(13, bytes);
         let completeness = text_written.then(|| formats.is_none_or(|formats| write_rich_formats(formats)));
         return close_write(hwnd, completeness);

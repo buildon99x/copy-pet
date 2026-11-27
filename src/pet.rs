@@ -98,6 +98,8 @@ fn seed() -> u32 {
 pub struct Pet {
     /// Even while capture is enabled. Increment on each actual UI toggle so a
     /// watcher event cannot cross a pause/resume pair between frames.
+    #[cfg(any(not(windows), feature = "portable"))]
+    pub(crate) source_policy: crate::capture_policy::SourcePolicy,
     pub(crate) capture_epoch: std::sync::Arc<std::sync::atomic::AtomicU64>,
     pub st: Persist,
     cat_art: crate::hunter_art::CatArt,
@@ -174,6 +176,8 @@ impl Pet {
         Self::expire_history(&mut clips, st.retention_days);
         Pet {
             queue_ticket: None,
+            #[cfg(any(not(windows), feature = "portable"))]
+            source_policy: crate::capture_policy::SourcePolicy::new(&st.excluded_sources),
             capture_epoch: std::sync::Arc::new(std::sync::atomic::AtomicU64::new(u64::from(!st.clip_capture))),
             cat_art,
             cat_picker: None,
@@ -753,6 +757,11 @@ impl Pet {
     /// Executes a panel action. Returns text the backend must put on the
     /// OS clipboard, if any.
     fn run_action(&mut self, action: PanelAction) -> Option<ClipPick> {
+        self.run_action_at(action, crate::clipboard::now_ts())
+    }
+
+    fn run_action_at(&mut self, action: PanelAction, now: u64) -> Option<ClipPick> {
+        Self::expire_history_at(&mut self.clips, self.st.retention_days, now);
         match action {
             PanelAction::Copy(id) => {
                 if self.workbench.adding {
@@ -817,8 +826,9 @@ impl Pet {
                 }
             }
             PanelAction::TogglePin(id) => {
-                self.clips.toggle_pin(id);
-                if let Some(clip) = self.clips.get(id) { self.panel.queue.update_pin(id, clip.pinned); }
+                if let Some(pinned) = self.clips.toggle_pin(id) {
+                    self.panel.queue.update_pin(id, pinned);
+                }
                 // pinning re-orders the list; keep the selection on the clip
                 self.panel.focus_id(&self.clips, id);
             }
@@ -1202,6 +1212,7 @@ impl Pet {
             QueueView | Esc => self.panel.queue_open = !self.panel.queue_open,
             QueueAdd if !self.panel.queue_open => {
                 let id = self.panel.selected_id(&self.clips)?;
+                Self::expire_history(&mut self.clips, self.st.retention_days);
                 let clip = self.clips.get(id)?;
                 if !self.st.excludes(clip.source.as_deref().unwrap_or("")) && self.st.clip_capture {
                     if !self.panel.queue.toggle(clip) {
@@ -1278,17 +1289,29 @@ impl Pet {
     pub(crate) fn restore_image_preview(&mut self, id: u64, generation: u64, flyout: bool) -> bool {
         let active = if flyout { self.flyout_open() } else { self.embedded_panel_open() };
         if !active || self.panel.queue_open || self.workbench.open || self.cat_picker.is_some()
-            || !self.clips.get(id).is_some_and(|clip| clip.image_generation == generation)
+            || self.retained_ocr_text(id, generation, crate::clipboard::now_ts()).is_none()
         { return false; }
         self.panel.focus_id(&self.clips, id);
         self.panel.selected_id(&self.clips) == Some(id)
     }
 
     #[cfg(any(test, all(windows, not(feature = "portable"))))]
-    pub(crate) fn ocr_allowed(&self, clip: &crate::clipboard::Clip) -> bool {
+    pub(crate) fn retained_ocr_text(&self, id: u64, generation: u64, now: u64) -> Option<&str> {
+        let clip = self.clips.get(id)?;
+        (clip.image_generation == generation && clip.image.is_some() && self.retained_at(clip, now))
+            .then_some(clip.ocr_text.as_deref()).flatten()
+    }
+
+    #[cfg(any(test, all(windows, not(feature = "portable"))))]
+    fn retained_at(&self, clip: &crate::clipboard::Clip, now: u64) -> bool {
         let days = self.st.retention_days;
+        clip.pinned || days == 0 || clip.ts >= now.saturating_sub(u64::from(days) * 86_400)
+    }
+
+    #[cfg(any(test, all(windows, not(feature = "portable"))))]
+    pub(crate) fn ocr_allowed(&self, clip: &crate::clipboard::Clip) -> bool {
         self.st.clip_capture && !clip.source.as_deref().is_some_and(|s| self.st.excludes(s))
-            && (clip.pinned || days == 0 || clip.ts >= crate::clipboard::now_ts().saturating_sub(u64::from(days) * 86400))
+            && self.retained_at(clip, crate::clipboard::now_ts())
     }
 
     fn expire_queue(&mut self) {
@@ -1302,8 +1325,12 @@ impl Pet {
     }
 
     fn expire_history(clips: &mut ClipStore, days: u16) {
+        Self::expire_history_at(clips, days, crate::clipboard::now_ts());
+    }
+
+    fn expire_history_at(clips: &mut ClipStore, days: u16, now: u64) {
         if days > 0 {
-            let cutoff = crate::clipboard::now_ts().saturating_sub(u64::from(days) * 86_400);
+            let cutoff = now.saturating_sub(u64::from(days) * 86_400);
             if clips.expire_before(cutoff) { clips.save_if_dirty(); }
         }
     }
@@ -1867,6 +1894,8 @@ impl Pet {
                     return MenuOutcome::Handled;
                 }
                 self.dirty = true;
+                #[cfg(any(not(windows), feature = "portable"))]
+                self.source_policy.update(&self.st.excluded_sources);
                 #[cfg(all(windows, not(feature = "portable")))]
                 self.capture_epoch.fetch_add(2, std::sync::atomic::Ordering::AcqRel);
                 self.set_toast(i18n::source_status(self.lang(), &name, self.st.excludes(&name)), 2.0);

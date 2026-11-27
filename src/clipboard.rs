@@ -508,26 +508,20 @@ impl ClipStore {
     }
 
     /// Toggles a pin; refuses to pin beyond [`MAX_PINNED`].
-    pub fn toggle_pin(&mut self, id: u64) {
-        let mut unpinned = false;
-        if let Some(c) = self.items.iter_mut().find(|c| c.id == id) {
-            if !c.pinned && self.pinned >= MAX_PINNED {
-                return;
-            }
-            c.pinned = !c.pinned;
-            unpinned = !c.pinned;
-            if unpinned {
-                self.pinned -= 1;
-            } else {
-                self.pinned += 1;
-            }
-            self.touch();
-        }
-        // Unpinning can push the unpinned history back over MAX_HISTORY; trim
-        // it now rather than waiting for the next copy to run evict().
-        if unpinned {
+    pub fn toggle_pin(&mut self, id: u64) -> Option<bool> {
+        let c = self.items.iter_mut().find(|c| c.id == id)?;
+        if !c.pinned && self.pinned >= MAX_PINNED { return None; }
+        c.pinned = !c.pinned;
+        let pinned = c.pinned;
+        if pinned {
+            self.pinned += 1;
+        } else {
+            self.pinned -= 1;
+            // This can evict the very row being unpinned.
             self.evict();
         }
+        self.touch();
+        Some(pinned)
     }
 
     pub fn set_tags(&mut self, id: u64, input: &str) -> bool {

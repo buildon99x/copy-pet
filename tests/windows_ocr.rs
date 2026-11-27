@@ -14,7 +14,12 @@ fn installed_profile_recognizer_reads_synthetic_image() {
     };
     let fonts = clipcat::sysfont::diagnostics();
     if language == "ko-KR" {
-        assert!(fonts.lines().any(|l| l.starts_with("SELECTED") && l.contains("hangul=true")), "{fonts}");
+        assert!(
+            fonts
+                .lines()
+                .any(|l| l.starts_with("SELECTED") && l.contains("hangul=true")),
+            "{fonts}"
+        );
     }
     let mut pixels = Pixmap::new(480, 100).unwrap();
     pixels.fill(Color::WHITE);
@@ -39,8 +44,14 @@ fn installed_profile_recognizer_reads_synthetic_image() {
     if let Some(path) = std::env::var_os("CLIPCAT_OCR_EVIDENCE") {
         let dir = std::path::PathBuf::from(path);
         std::fs::create_dir_all(&dir).unwrap();
-        std::fs::write(dir.join(format!("{language}-result.txt")), format!("{text}\n{fonts}")).unwrap();
-        pixels.save_png(dir.join(format!("{language}-fixture.png"))).unwrap();
+        std::fs::write(
+            dir.join(format!("{language}-result.txt")),
+            format!("{text}\n{fonts}"),
+        )
+        .unwrap();
+        pixels
+            .save_png(dir.join(format!("{language}-fixture.png")))
+            .unwrap();
     }
     let normalize = |s: &str| s.split_whitespace().collect::<String>().to_lowercase();
     assert_eq!(normalize(&text), normalize(sample), "{language}: {text:?}");

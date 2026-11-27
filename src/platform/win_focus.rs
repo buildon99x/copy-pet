@@ -37,6 +37,17 @@ impl PasteTarget {
         }
     }
 
+    #[cfg(not(feature = "portable"))]
+    pub fn for_menu() -> Option<Self> {
+        let target = Self::external()?;
+        // Explorer may already own focus when it forwards the notification icon gesture.
+        let mut name = [0u16; 128];
+        let n = unsafe { GetClassNameW(target.top, name.as_mut_ptr(), name.len() as i32) };
+        let class = String::from_utf16_lossy(&name[..n as usize]);
+        (n > 0 && !matches!(class.as_str(), "Shell_TrayWnd" | "Shell_SecondaryTrayWnd" |
+            "NotifyIconOverflowWindow" | "TopLevelWindowForOverflowXamlIsland")).then_some(target)
+    }
+
     #[cfg(all(test, not(feature = "portable")))]
     pub fn control_for_test(self) -> HWND {
         self.control

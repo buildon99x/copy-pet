@@ -1179,3 +1179,56 @@ fn closing_long_image_preview_returns_to_its_original_row_and_panel() {
         assert!(!p.restore_image_preview(id, generation, flyout));
     }
 }
+
+#[test]
+fn unpin_of_evicted_queued_row_revokes_replay_on_clear() {
+    let mut p = pet();
+    p.open_panel();
+    p.on_copy("queued old pin".into(), None, None);
+    let id = p.panel.selected_id(&p.clips).unwrap();
+    p.run_action(PanelAction::TogglePin(id));
+    p.panel_nav(NavKey::QueueAdd);
+    p.next_queue_pick().unwrap();
+    p.finish_queue_pick(true);
+    for i in 0..crate::clipboard::MAX_HISTORY { p.clips.add_copy(format!("new {i}"), None); }
+    p.run_action(PanelAction::TogglePin(id));
+    assert!(p.clips.get(id).is_none());
+    p.run_action(PanelAction::Clear);
+    assert!(p.panel.queue.previous().is_none());
+}
+
+#[test]
+fn action_cutoff_prunes_deleted_and_live_rows_before_restore_or_pin() {
+    let mut p = pet();
+    p.st.retention_days = 1;
+    for text in ["pinned", "live", "deleted"] { p.clips.add_copy(text.into(), None); }
+    let ids = ["pinned", "live", "deleted"].map(|text| p.clips.visible(text)[0].id);
+    let ts = p.clips.get(ids[2]).unwrap().ts;
+    p.run_action_at(PanelAction::TogglePin(ids[0]), ts);
+    p.run_action_at(PanelAction::Delete(ids[0]), ts);
+    p.run_action_at(PanelAction::Delete(ids[2]), ts + 86_400);
+    p.run_action_at(PanelAction::Undo, ts + 86_401);
+    p.run_action_at(PanelAction::TogglePin(ids[1]), ts + 86_401);
+    assert!(p.clips.get(ids[0]).unwrap().pinned);
+    assert!(p.clips.get(ids[1]).is_none() && p.clips.get(ids[2]).is_none());
+    assert!(p.clips.undo_delete().is_none());
+}
+
+#[test]
+fn preview_reads_only_the_retained_generation_even_when_capture_is_paused() {
+    let mut p = pet();
+    let image = ClipImage::from_pixmap(&Pixmap::new(2, 2).unwrap()).unwrap();
+    p.clips.add_image(image.clone(), Some("Paint".into()));
+    let clip = p.clips.visible("")[0];
+    let (id, generation, ts) = (clip.id, clip.image_generation, clip.ts);
+    p.clips.set_ocr_text(id, generation, &image, "receipt".into());
+    p.st.retention_days = 1;
+    p.apply_menu_action(MenuAction::ToggleExcludedSource("Paint".into()));
+    p.apply_menu_action(MenuAction::ToggleCapture);
+    assert_eq!(p.retained_ocr_text(id, generation, ts + 86_400), Some("receipt"));
+    assert_eq!(p.retained_ocr_text(id, generation, ts + 86_401), None);
+    p.clips.delete(id);
+    assert_eq!(p.retained_ocr_text(id, generation, ts), None);
+    p.clips.undo_delete();
+    assert_eq!(p.retained_ocr_text(id, generation, ts), None);
+}

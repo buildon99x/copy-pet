@@ -156,7 +156,7 @@ unsafe extern "system" fn selection_proc(
     let content = &*(data as *const Content);
     match msg {
         WM_COPY => {
-            copy_selected_range(edit, &content.text, content.copy);
+            copy_selected_range(edit, &content.text, |selected| (content.copy)(content.key, selected));
             0
         }
         WM_KEYDOWN if (wp == 0x43 || wp == 0x2d) && GetKeyState(0x11) < 0 => {
@@ -194,7 +194,9 @@ unsafe fn resize(host: HWND, edit: HWND) {
 
 struct Content {
     lang: Lang,
-    copy: fn(String),
+    key: (u64, u64),
+    current: fn((u64, u64)) -> bool,
+    copy: fn((u64, u64), String),
     text: Vec<u16>,
 }
 
@@ -208,12 +210,25 @@ unsafe extern "system" fn dialog_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPAR
                 hwnd,
                 wide(image_text_message(content.lang, ImageTextMessage::Preview)).as_ptr(),
             );
+            SetWindowLongPtrW(hwnd, GWLP_USERDATA, lp);
+            if SetTimer(hwnd, 1, 150, None) == 0 || !(content.current)(content.key) {
+                EndDialog(hwnd, -1);
+                return 0;
+            }
             if let Some(edit) = create_edit(hwnd, content) {
                 SetFocus(edit);
             } else {
                 EndDialog(hwnd, -1);
             }
             0 // assigned the initial focus explicitly
+        }
+        WM_TIMER if wp == 1 => {
+            let content = GetWindowLongPtrW(hwnd, GWLP_USERDATA) as *const Content;
+            if !content.is_null() && !((*content).current)((*content).key) {
+                SetWindowTextW(GetDlgItem(hwnd, EDIT_ID), [0u16].as_ptr());
+                EndDialog(hwnd, 1);
+            }
+            1
         }
         WM_SIZE => {
             let edit = GetDlgItem(hwnd, EDIT_ID);
@@ -241,7 +256,8 @@ struct Template {
     trailing: [u16; 3],
 }
 
-pub(super) unsafe fn show(owner: HWND, lang: Lang, text: &str, copy: fn(String)) -> bool {
+pub(super) unsafe fn show(owner: HWND, lang: Lang, text: &str, key: (u64, u64),
+    current: fn((u64, u64)) -> bool, copy: fn((u64, u64), String)) -> bool {
     let template = Template {
         dialog: DLGTEMPLATE {
             style: WS_POPUP
@@ -261,6 +277,8 @@ pub(super) unsafe fn show(owner: HWND, lang: Lang, text: &str, copy: fn(String))
     };
     let content = Content {
         lang,
+        key,
+        current,
         copy,
         text: edit_text(text),
     };
@@ -302,7 +320,9 @@ mod tests {
             let content = Content {
                 lang: Lang::En,
                 text: expected.clone(),
-                copy: |text| COPIED.with(|copies| copies.borrow_mut().push(text)),
+                key: (1, 1),
+                current: |_| true,
+                copy: |_, text| COPIED.with(|copies| copies.borrow_mut().push(text)),
             };
             let edit = create_edit(host, &content).unwrap();
             assert_eq!(GetWindowTextLengthW(edit) as usize, expected.len() - 1);

@@ -27,6 +27,10 @@ impl SourceProbe {
             && id.value.first() == Some(&std::process::id())).then_some(owner)
     }
 
+    pub fn dispatch_if_owner(&self, written: Option<Window>, dispatch: impl FnOnce() -> bool) -> bool {
+        written.is_some() && written == self.own_selection() && dispatch()
+    }
+
     pub fn name(&self, owner: Window) -> Option<String> {
         let reply = self.connection.get_property(false, owner, AtomEnum::WM_CLASS,
             AtomEnum::STRING, 0, 256).ok()?.reply().ok()?;
@@ -78,6 +82,35 @@ mod tests {
         connection::Connection,
         protocol::xproto::{CreateWindowAux, InputFocus, WindowClass},
     };
+
+    #[test]
+    #[ignore = "requires a private Xvfb desktop"]
+    fn x11_replacement_owner_blocks_dispatch_and_keeps_queue_ticket() {
+        let mut clipboard = arboard::Clipboard::new().unwrap();
+        clipboard.set_text("synthetic queued text").unwrap();
+        let probe = SourceProbe::open().unwrap();
+        let written = probe.own_selection();
+        assert!(written.is_some());
+        assert!(probe.dispatch_if_owner(written, || true));
+
+        let (competing, screen) = x11rb::connect(None).unwrap();
+        let owner = competing.generate_id().unwrap();
+        competing.create_window(0, owner, competing.setup().roots[screen].root, 0, 0, 1, 1, 0,
+            WindowClass::INPUT_OUTPUT, 0, &CreateWindowAux::new()).unwrap().check().unwrap();
+        competing.set_selection_owner(owner, probe.selection, 0u32).unwrap().check().unwrap();
+        assert_eq!(probe.owner(), Some(owner));
+
+        let mut pet = crate::pet::Pet::new(crate::state::Persist::default());
+        pet.clips = crate::clipboard::ClipStore::default();
+        pet.on_copy("synthetic queued text".into(), None, None);
+        pet.open_panel();
+        pet.panel_nav(crate::panel::NavKey::QueueAdd);
+        let pick = pet.next_queue_pick().unwrap();
+        let sent = probe.dispatch_if_owner(written, || panic!("replacement selection must never be pasted"));
+        pet.finish_queue_pick(sent);
+        assert!(!sent);
+        assert_eq!(pet.next_queue_pick(), Some(pick));
+    }
 
     #[test]
     #[ignore = "requires a private Xvfb desktop"]

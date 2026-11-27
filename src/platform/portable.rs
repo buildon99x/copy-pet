@@ -17,10 +17,19 @@ use crate::viewport::Density;
 /// Linux/arboard is text-only, so `formats` is always `None` there).
 struct ClipCapture {
     capture_epoch: u64,
+    permit: crate::capture_policy::Permit,
     source: Option<String>,
     text: String,
     formats: Option<RichFormats>,
 }
+impl ClipCapture {
+    fn deliver(self, pet: &mut Pet) {
+        if self.capture_epoch == pet.capture_epoch.load(Ordering::Acquire) && self.permit.valid() {
+            pet.on_copy_rich(self.text, self.source, None, self.formats);
+        }
+    }
+}
+
 use crate::state::{Persist};
 #[cfg(not(target_os = "macos"))]
 use std::num::NonZeroU32;
@@ -441,6 +450,8 @@ impl PortableApp {
     fn write_and_paste(&mut self, pick: ClipPick) -> bool {
         #[cfg(any(target_os = "macos", windows))]
         let written_generation;
+        #[cfg(target_os = "linux")]
+        let written_selection;
         #[cfg(not(target_os = "macos"))]
         let destination = if pick.queued {
             let Some(target) = self.external_target() else { return false; };
@@ -498,9 +509,10 @@ impl PortableApp {
                 if clipboard.set_text(pick.text.clone()).is_err() {
                     return false;
                 }
-                *marker = super::linux_clipboard::SourceProbe::open()
-                    .and_then(|probe| probe.own_selection())
-                    .map(|id| id as isize);
+                let probe = super::linux_clipboard::SourceProbe::open();
+                let owner = probe.as_ref().and_then(|p| p.own_selection());
+                *marker = owner.map(|id| id as isize);
+                written_selection = (probe, owner);
             }
         }
         if pick.paste {
@@ -536,7 +548,13 @@ impl PortableApp {
                 let ready = !pick.queued || destination == self.external_target();
                 #[cfg(windows)]
                 let ready = ready && written_generation == super::win_privacy::generation();
+                #[cfg(windows)]
                 let sent = ready && paste_synthesize();
+                #[cfg(target_os = "linux")]
+                let sent = ready && if pick.queued {
+                    let (probe, owner) = written_selection;
+                    probe.is_some_and(|p| p.dispatch_if_owner(owner, paste_synthesize))
+                } else { paste_synthesize() };
                 if pick.queued {
                     self.pet.finish_queue_pick(sent);
                 }
@@ -1373,11 +1391,8 @@ impl ApplicationHandler<HotkeyEvent> for PortableApp {
                 self.pet.notify_update(&v);
             }
             // copy events observed by the clipboard watcher
-            let epoch = self.pet.capture_epoch.load(Ordering::Acquire);
             while let Ok(cap) = self.clip_rx.try_recv() {
-                if cap.capture_epoch == epoch {
-                    self.pet.on_copy_rich(cap.text, cap.source, None, cap.formats);
-                }
+                cap.deliver(&mut self.pet);
             }
             let redraw = self.pet.advance();
             if self.pet.take_size_changed() {
@@ -1524,7 +1539,8 @@ fn stable_text(last: &mut Option<(Option<u32>, String)>, baseline: &mut bool, be
 
 /// Resynchronize silently across pauses. Native generation checks avoid reading
 /// a marked payload on later polls or mistaking an old clipboard for a new copy.
-fn spawn_clipboard_watcher(tx: Sender<ClipCapture>, suppress: Suppress, capture: Arc<AtomicU64>) {
+fn spawn_clipboard_watcher(tx: Sender<ClipCapture>, suppress: Suppress, capture: Arc<AtomicU64>,
+    policy: crate::capture_policy::SourcePolicy) {
     let mut seen_epoch = capture.load(Ordering::Acquire);
     std::thread::spawn(move || {
         #[cfg(target_os = "macos")]
@@ -1538,6 +1554,10 @@ fn spawn_clipboard_watcher(tx: Sender<ClipCapture>, suppress: Suppress, capture:
         #[cfg(target_os = "linux")]
         let mut last = None;
         #[cfg(target_os = "linux")]
+        let mut previous_read: Option<(Option<u32>, crate::capture_policy::Permit)> = None;
+        #[cfg(target_os = "linux")]
+        let mut excluded_owner = None;
+        #[cfg(target_os = "linux")]
         let source_probe = super::linux_clipboard::SourceProbe::open();
         let mut baseline = cfg!(target_os = "linux");
         loop {
@@ -1549,34 +1569,50 @@ fn spawn_clipboard_watcher(tx: Sender<ClipCapture>, suppress: Suppress, capture:
             }
             if !epoch.is_multiple_of(2) { continue; }
             #[cfg(any(windows, target_os = "macos"))]
-            let (text, source, formats) = {
+            let (text, source, formats, permit) = {
                 let current = native::generation();
                 let Some(copy) = poll_generation(&mut generation, &mut baseline, current, || {
                     #[cfg(windows)]
-                    { native::observe(current, &suppress) }
+                    { native::observe(current, &suppress, |s| policy.permit(s)) }
                     #[cfg(target_os = "macos")]
                     {
                         let mut marker = suppress.lock().unwrap_or_else(|e| e.into_inner());
                         if consume_self_copy(&mut marker, Some(current)) { return Ok(None); }
                         drop(marker);
-                        Ok(native::observe(current))
+                        Ok(native::observe(current, |s| policy.permit(s)))
                     }
                 }) else { continue };
                 copy
             };
             #[cfg(target_os = "linux")]
-            let (text, source, formats) = {
+            let (text, source, formats, permit) = {
                 let owner = source_probe.as_ref().and_then(|probe| probe.owner());
                 let source = owner.and_then(|id| source_probe.as_ref()?.name(id));
+                if let Some((previous, _)) = previous_read.as_ref().filter(|(_, p)| !p.valid()) {
+                    excluded_owner = Some(*previous);
+                    last = None;
+                    previous_read = None;
+                }
+                let Some(permit) = policy.permit(source.as_deref()) else {
+                    // Clear the old comparison text, and resync this owner's
+                    // first permitted observation after restoration.
+                    last = None;
+                    previous_read = None;
+                    excluded_owner = Some(owner);
+                    continue;
+                };
+                if excluded_owner.take() == Some(owner) { baseline = true; }
+                previous_read = Some((owner, permit.clone()));
                 let observed = cb.get_text().ok();
                 let after = source_probe.as_ref().and_then(|probe| probe.owner());
                 let Some(text) = stable_text(&mut last, &mut baseline, owner, after, observed)
                     else { continue };
                 let mut marker = suppress.lock().unwrap_or_else(|e| e.into_inner());
                 if consume_self_copy(&mut marker, owner.map(|id| id as isize)) { continue; }
-                (text, source, None)
+                (text, source, None, permit)
             };
-            if tx.send(ClipCapture { text, source, formats, capture_epoch: epoch }).is_err() {
+            if !permit.valid() { continue; }
+            if tx.send(ClipCapture { text, source, formats, capture_epoch: epoch, permit }).is_err() {
                 return;
             }
         }
@@ -1603,7 +1639,7 @@ pub fn run() {
     let hotkey = RegisteredHotkey::new(event_loop.create_proxy());
     let spec = st.hotkey.clone();
     let pet = Pet::new(st);
-    spawn_clipboard_watcher(tx, suppress.clone(), pet.capture_epoch.clone());
+    spawn_clipboard_watcher(tx, suppress.clone(), pet.capture_epoch.clone(), pet.source_policy.clone());
     let mut app = PortableApp::new(pet, rx, suppress, hotkey, String::new());
     app.apply_new_hotkey(&spec);
     event_loop.set_control_flow(ControlFlow::WaitUntil(Instant::now() + TICK));
@@ -1613,6 +1649,28 @@ pub fn run() {
 #[cfg(test)]
 mod paste_tests {
     use super::*;
+    #[test]
+    fn excluded_payload_never_reads_and_pending_source_stays_revoked_after_restore() {
+        let mut pet = Pet::new(Persist::default());
+        pet.clips = crate::clipboard::ClipStore::default();
+        let policy = pet.source_policy.clone();
+        let pending = |source: &str| policy.permit(Some(source)).map(|permit| ClipCapture {
+            capture_epoch: 0, source: Some(source.into()), text: format!("synthetic {source}"), formats: None, permit,
+        });
+        let old = pending("Editor").unwrap();
+        let unrelated = pending("Mail").unwrap();
+        let toggle = crate::menu::MenuAction::ToggleExcludedSource("EDITOR".into());
+        pet.apply_menu_action(toggle.clone());
+        assert!(policy.permit(Some("editor")).map(|_| panic!("excluded payload read")).is_none());
+        pet.apply_menu_action(toggle);
+        old.deliver(&mut pet);
+        assert!(pet.clips.is_empty());
+        unrelated.deliver(&mut pet);
+        assert_eq!(pet.clips.len(), 1);
+        pending("Editor").unwrap().deliver(&mut pet);
+        assert_eq!(pet.clips.len(), 2);
+    }
+
     #[test]
     fn privacy_two_capture_gestures_before_frame_invalidate_event() {
         let mut p = Pet::new(Persist::default());
