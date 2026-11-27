@@ -98,13 +98,19 @@ unsafe fn clipboard_is(owner: HWND, text: &str) -> bool {
     matches
 }
 
-unsafe fn click(pt: POINT) {
+unsafe fn wait_for_clipboard(owner: HWND, text: &str) {
+    let until = Instant::now() + Duration::from_secs(10);
+    while !clipboard_is(owner, text) {
+        assert!(Instant::now() < until, "wrong clipboard after one copy: expected owner={owner:?}, current={:?}, sequence={}, locked_by={:?}",
+            GetClipboardOwner(), GetClipboardSequenceNumber(), GetOpenClipboardWindow());
+        thread::sleep(Duration::from_millis(15));
+    }
+}
+
+unsafe fn click(pt: POINT, button: [MOUSE_EVENT_FLAGS; 2]) {
     assert_ne!(SetCursorPos(pt.x, pt.y), 0);
     let mut clicks: [INPUT; 2] = std::mem::zeroed();
-    for (click, flags) in clicks
-        .iter_mut()
-        .zip([MOUSEEVENTF_LEFTDOWN, MOUSEEVENTF_LEFTUP])
-    {
+    for (click, flags) in clicks.iter_mut().zip(button) {
         click.r#type = INPUT_MOUSE;
         click.Anonymous.mi.dwFlags = flags;
     }
@@ -205,7 +211,7 @@ unsafe fn queue_menu_roundtrip(main: HWND) {
         let mut pt = POINT { x: 10, y: 10 };
         windows_sys::Win32::Graphics::Gdi::ClientToScreen(editor, &mut pt);
         assert_eq!(WindowFromPoint(pt), editor);
-        click(pt);
+        click(pt, [MOUSEEVENTF_LEFTDOWN, MOUSEEVENTF_LEFTUP]);
         wait("synthetic editor focus", || {
             pump();
             (GetForegroundWindow() == editor && GetFocus() == editor).then_some(())
@@ -218,19 +224,27 @@ unsafe fn queue_menu_roundtrip(main: HWND) {
                 .then_some(())
         });
     };
-    // The preview left the embedded panel open. Close, then reopen from A.
-    PostMessageW(main, WM_MBUTTONUP, 0, 0);
     visible_panel(false);
     focus(a);
     PostMessageW(main, WM_MBUTTONUP, 0, 0);
     visible_panel(true);
-    send(main, WM_KEYDOWN, 0x24, 0); // Home selects the pinned image
-    send(main, WM_KEYDOWN, 0x28, 0); // Down selects the external text row
+    send(main, WM_KEYDOWN, 0x24, 0); // Home selects the synthetic text row
     send(main, WM_KEYDOWN, 0x72, 0); // F3 adds it to the ordered queue
     PostMessageW(main, WM_MBUTTONUP, 0, 0);
     visible_panel(false);
     focus(b);
-    PostMessageW(main, WM_RBUTTONUP, 0, 0);
+    let mut pet_bounds: RECT = std::mem::zeroed();
+    assert_ne!(GetWindowRect(main, &mut pet_bounds), 0);
+    let point = (pet_bounds.top..pet_bounds.bottom)
+        .step_by(5)
+        .find_map(|y| {
+            (pet_bounds.left..pet_bounds.right)
+                .step_by(5)
+                .map(|x| POINT { x, y })
+                .find(|pt| WindowFromPoint(*pt) == main)
+        })
+        .expect("visible hit-testable part of the synthetic pet");
+    click(point, [MOUSEEVENTF_RIGHTDOWN, MOUSEEVENTF_RIGHTUP]);
     let thread = GetWindowThreadProcessId(main, null_mut());
     wait("native popup owned by the fixture pet", || {
         pump();
@@ -274,7 +288,7 @@ unsafe fn queue_menu_roundtrip(main: HWND) {
         };
         (WindowFromPoint(point) == popup).then_some(point)
     });
-    click(point);
+    click(point, [MOUSEEVENTF_LEFTDOWN, MOUSEEVENTF_LEFTUP]);
     visible_panel(true);
     // Post so the editor thread keeps dispatching during checked focus restore.
     PostMessageW(main, WM_KEYDOWN, VK_RETURN as usize, 0);
@@ -290,7 +304,12 @@ unsafe fn queue_menu_roundtrip(main: HWND) {
     DestroyWindow(b);
 }
 
-fn launch(timestamp: u64, pinned: bool) -> Fixture {
+fn sample_image(timestamp: u64, pinned: bool) -> serde_json::Value {
+    let image = ClipImage::from_pixmap(&tiny_skia::Pixmap::new(2, 2).unwrap()).unwrap();
+    json!({"id":1,"source":"Synthetic","text":"","ts":timestamp,"pinned":pinned,"image":image,"ocr_text":preview_sample()})
+}
+
+fn launch(clips: Vec<serde_json::Value>) -> Fixture {
     let dir = std::env::temp_dir().join(format!(
         "clipcat-preview-selection-{}-{}",
         std::process::id(),
@@ -300,10 +319,7 @@ fn launch(timestamp: u64, pinned: bool) -> Fixture {
             .as_nanos()
     ));
     fs::create_dir(&dir).unwrap();
-    let image = ClipImage::from_pixmap(&tiny_skia::Pixmap::new(2, 2).unwrap()).unwrap();
-    let clip = json!({"id":1,"source":"Synthetic", "text":"", "ts":timestamp,"pinned":pinned,
-        "image":image,"ocr_text":preview_sample()});
-    fs::write(dir.join("clips.json"), json!({"clips":[clip]}).to_string()).unwrap();
+    fs::write(dir.join("clips.json"), json!({"clips":clips}).to_string()).unwrap();
     fs::write(
         dir.join("state.json"),
         json!({"onboarded":true,"auto_update":false,"retention_days":1,"clip_capture":true,"lang":"en"}).to_string(),
@@ -316,8 +332,8 @@ fn launch(timestamp: u64, pinned: bool) -> Fixture {
     Fixture { child, dir }
 }
 
-unsafe fn open_preview(fixture: &mut Fixture) -> (HWND, HWND, HWND) {
-    let main = wait("isolated ClipCat window", || {
+unsafe fn main_window(fixture: &mut Fixture) -> HWND {
+    wait("isolated ClipCat window", || {
         assert!(
             fixture.child.try_wait().unwrap().is_none(),
             "test app exited before window creation; check for another ClipCat in this session"
@@ -325,7 +341,11 @@ unsafe fn open_preview(fixture: &mut Fixture) -> (HWND, HWND, HWND) {
         let mut target = (fixture.child.id(), null_mut() as HWND);
         EnumWindows(Some(find_main), &mut target as *mut (u32, HWND) as LPARAM);
         (!target.1.is_null()).then_some(target.1)
-    });
+    })
+}
+
+unsafe fn open_preview(fixture: &mut Fixture) -> (HWND, HWND, HWND) {
+    let main = main_window(fixture);
     PostMessageW(main, WM_MBUTTONUP, 0, 0);
     wait("embedded panel activation before F9", || {
         (GetWindowLongW(main, GWL_EXSTYLE) as u32 & WS_EX_NOACTIVATE == 0).then_some(())
@@ -347,14 +367,21 @@ unsafe fn open_preview(fixture: &mut Fixture) -> (HWND, HWND, HWND) {
     (main, dialog, edit)
 }
 
+// One normal GUI occupies a Windows logon session. Each scenario gets an
+// independent profile and child, and a failed scenario cannot skip the others.
+fn desktop_session() -> Option<std::sync::MutexGuard<'static, ()>> {
+    static DESKTOP: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    (std::env::var_os("GITHUB_ACTIONS").is_some()
+        || std::env::var_os("CLIPCAT_TEST_DESKTOP").is_some())
+    .then(|| DESKTOP.lock().unwrap_or_else(|e| e.into_inner()))
+}
+
 #[test]
 fn copying_preview_selection_keeps_image_history_and_suppresses_copy_feedback() {
-    if std::env::var_os("GITHUB_ACTIONS").is_none()
-        && std::env::var_os("CLIPCAT_TEST_DESKTOP").is_none()
-    {
+    let Some(_desktop) = desktop_session() else {
         return;
-    }
-    let mut fixture = launch(1, true);
+    };
+    let mut fixture = launch(vec![sample_image(1, true)]);
     unsafe {
         let (main, dialog, edit) = open_preview(&mut fixture);
         // A real user can focus this app-owned selectable control by clicking.
@@ -369,7 +396,7 @@ fn copying_preview_selection_keeps_image_history_and_suppresses_copy_feedback() 
             edit,
             "preview EDIT must be visible before click"
         );
-        click(point);
+        click(point, [MOUSEEVENTF_LEFTDOWN, MOUSEEVENTF_LEFTUP]);
         let until = Instant::now() + Duration::from_secs(5);
         loop {
             let mut gui: GUITHREADINFO = std::mem::zeroed();
@@ -389,9 +416,7 @@ fn copying_preview_selection_keeps_image_history_and_suppresses_copy_feedback() 
             save_preview_image(dialog, std::path::Path::new(&dir));
         }
         send(edit, WM_COPY, 0, 0); // same command as the read-only context menu
-        wait("one WM_COPY through ClipCat's plain-text writer", || {
-            clipboard_is(main, "12345").then_some(())
-        });
+        wait_for_clipboard(main, "12345");
         send(edit, 0x00b1, 11, 18); // select "receipt" after the focus click
         let mut keys: [INPUT; 4] = std::mem::zeroed();
         for (input, (key, flags)) in keys.iter_mut().zip([
@@ -408,10 +433,7 @@ fn copying_preview_selection_keeps_image_history_and_suppresses_copy_feedback() 
             SendInput(4, keys.as_ptr(), std::mem::size_of::<INPUT>() as i32),
             4
         );
-        wait(
-            "Ctrl+C of selected receipt through the native writer",
-            || clipboard_is(main, "receipt").then_some(()),
-        );
+        wait_for_clipboard(main, "receipt");
         // Allow the real asynchronous WM_CLIPBOARDUPDATE to be delivered before
         // shutting down. Receiving later messages in the modal loop is essential.
         PostMessageW(dialog, WM_CLOSE, 0, 0);
@@ -440,7 +462,7 @@ fn copying_preview_selection_keeps_image_history_and_suppresses_copy_feedback() 
         assert!(!external.is_null());
         send(external, 0x00b1, 0, -1);
         send(external, WM_COPY, 0, 0);
-        assert!(clipboard_is(external, "external fixture"));
+        wait_for_clipboard(external, "external fixture");
         wait("capture of independent synthetic clipboard change", || {
             // ClipCat's session-query handler flushes history. Only the fixture
             // process receives this message; the test never ends the OS session.
@@ -454,7 +476,6 @@ fn copying_preview_selection_keeps_image_history_and_suppresses_copy_feedback() 
                 .then_some(())
         });
         DestroyWindow(external);
-        queue_menu_roundtrip(main);
         PostMessageW(main, WM_CLOSE, 0, 0);
         assert!(wait("clean test app exit", || fixture.child.try_wait().unwrap()).success());
     }
@@ -467,12 +488,31 @@ fn copying_preview_selection_keeps_image_history_and_suppresses_copy_feedback() 
     assert!(rows.iter().any(|c| c["ocr_text"] == preview_sample()));
     assert!(rows.iter().any(|c| c["text"] == "external fixture"));
     assert!(!rows.iter().any(|c| c["text"] == "12345"));
+}
 
-    // Run sequentially on the same isolated desktop after the first child
-    // exits. Cross the deadline while the real modal loop is open.
+#[test]
+fn context_menu_queue_returns_to_the_new_external_editor() {
+    let Some(_desktop) = desktop_session() else {
+        return;
+    };
+    let clip = json!({"id":1,"source":"Synthetic", "text":"external fixture","pinned":false,"ts":clipcat::clipboard::now_ts()});
+    let mut fixture = launch(vec![clip]);
+    unsafe {
+        let main = main_window(&mut fixture);
+        queue_menu_roundtrip(main);
+        PostMessageW(main, WM_CLOSE, 0, 0);
+        assert!(wait("queue test app exit", || fixture.child.try_wait().unwrap()).success());
+    }
+}
+
+#[test]
+fn live_preview_closes_and_refuses_copy_at_the_retention_deadline() {
+    let Some(_desktop) = desktop_session() else {
+        return;
+    };
     let now = clipcat::clipboard::now_ts();
     let timestamp = now - 86_400 + 6;
-    let mut expiring = launch(timestamp, false);
+    let mut expiring = launch(vec![sample_image(timestamp, false)]);
     unsafe {
         let (main, dialog, edit) = open_preview(&mut expiring);
         send(edit, 0x00b1, 5, 10);
