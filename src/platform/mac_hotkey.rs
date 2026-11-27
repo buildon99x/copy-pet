@@ -26,6 +26,15 @@ extern "C" {
         data: *mut c_void,
         handler: *mut *mut c_void,
     ) -> i32;
+    fn GetEventParameter(
+        event: *mut c_void,
+        name: u32,
+        kind: u32,
+        actual: *mut u32,
+        size: u32,
+        used: *mut u32,
+        data: *mut c_void,
+    ) -> i32;
     fn RemoveEventHandler(handler: *mut c_void) -> i32;
     fn RegisterEventHotKey(
         key: u32,
@@ -37,15 +46,37 @@ extern "C" {
     ) -> i32;
     fn UnregisterEventHotKey(hotkey: *mut c_void) -> i32;
 }
-unsafe extern "C" fn fired(_: *mut c_void, _: *mut c_void, data: *mut c_void) -> i32 {
+unsafe extern "C" fn fired(_: *mut c_void, event: *mut c_void, data: *mut c_void) -> i32 {
     // SAFETY: boxed proxy outlives the handler; callbacks and drop run on UI thread.
     let proxy = &*(data as *const EventLoopProxy<HotkeyEvent>);
-    let _ = proxy.send_event(HotkeyEvent::OpenPanel);
+    let mut id = HotkeyId {
+        signature: 0,
+        id: 0,
+    };
+    if GetEventParameter(
+        event,
+        u32::from_be_bytes(*b"----"),
+        u32::from_be_bytes(*b"hkid"),
+        std::ptr::null_mut(),
+        std::mem::size_of::<HotkeyId>() as u32,
+        std::ptr::null_mut(),
+        (&mut id as *mut HotkeyId).cast(),
+    ) != 0
+        || id.signature != u32::from_be_bytes(*b"ClCt")
+    {
+        return -9874; // eventNotHandledErr
+    }
+    let action = match id.id {
+        1 => HotkeyEvent::OpenPanel,
+        2 => HotkeyEvent::QueueNext,
+        _ => return -9874,
+    };
+    let _ = proxy.send_event(action);
     0
 }
 pub struct RegisteredHotkey {
     handler: *mut c_void,
-    hotkey: *mut c_void,
+    slots: [*mut c_void; 2],
     _proxy: Box<EventLoopProxy<HotkeyEvent>>,
     // Prevent moving registration/teardown away from the main event loop.
     _main: std::marker::PhantomData<std::rc::Rc<()>>,
@@ -71,12 +102,29 @@ impl RegisteredHotkey {
         }
         Self {
             handler,
-            hotkey: std::ptr::null_mut(),
+            slots: [std::ptr::null_mut(); 2],
             _proxy: proxy,
             _main: std::marker::PhantomData,
         }
     }
     pub fn bind(&mut self, hk: Hotkey) -> bool {
+        self.bind_slot(0, Some(hk))
+    }
+    pub fn bind_queue(&mut self, hk: Option<Hotkey>) -> bool {
+        self.bind_slot(1, hk)
+    }
+
+    fn bind_slot(&mut self, slot: usize, hk: Option<Hotkey>) -> bool {
+        // SAFETY: this registration belongs to the main-thread handler.
+        unsafe {
+            if !self.slots[slot].is_null() {
+                UnregisterEventHotKey(self.slots[slot]);
+                self.slots[slot] = std::ptr::null_mut();
+            }
+        }
+        let Some(hk) = hk else {
+            return true;
+        };
         // Physical ANSI keycodes, same layout-independent convention as the
         // previous shortcut. No text input source lookup or keyboard observation.
         let key = match hk.key {
@@ -120,10 +168,6 @@ impl RegisteredHotkey {
         };
         // SAFETY: the UI thread owns both the registration and application target.
         unsafe {
-            if !self.hotkey.is_null() {
-                UnregisterEventHotKey(self.hotkey);
-                self.hotkey = std::ptr::null_mut();
-            }
             if self.handler.is_null() {
                 return false;
             }
@@ -136,11 +180,11 @@ impl RegisteredHotkey {
                 modifiers,
                 HotkeyId {
                     signature: u32::from_be_bytes(*b"ClCt"),
-                    id: 1,
+                    id: slot as u32 + 1,
                 },
                 GetApplicationEventTarget(),
                 0,
-                &mut self.hotkey,
+                &mut self.slots[slot],
             ) == 0
         }
     }
@@ -149,8 +193,10 @@ impl Drop for RegisteredHotkey {
     fn drop(&mut self) {
         // SAFETY: main-thread teardown removes callbacks before boxed userdata drops.
         unsafe {
-            if !self.hotkey.is_null() {
-                UnregisterEventHotKey(self.hotkey);
+            for handle in self.slots {
+                if !handle.is_null() {
+                    UnregisterEventHotKey(handle);
+                }
             }
             if !self.handler.is_null() {
                 RemoveEventHandler(self.handler);

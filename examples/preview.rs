@@ -73,6 +73,9 @@ fn main() {
         store.add_image(clipcat::clip_image::ClipImage::from_pixmap(&image).unwrap(), Some("SnippingTool".into()));
         let id = store.visible("").iter().find(|c| c.image.is_some()).unwrap().id;
         store.set_tags(id, "디자인, 참고");
+        let clip = store.get(id).unwrap();
+        let (generation, captured) = (clip.image_generation, clip.image.clone().unwrap());
+        store.set_ocr_text(id, generation, &captured, "Receipt 12345 · 영수증".into());
         // Keep the image ahead of the demo's pinned text for this preview.
         store.toggle_pin(id);
         for (lang,name) in [(Lang::Ko,"8-images-tags-ko"),(Lang::En,"8-images-tags-en")] {
@@ -440,6 +443,41 @@ fn main() {
             save(&pm, &dir, &format!("9-ai-{mode}-{}", lang.code()));
         }
     }
+    for lang in [Lang::En, Lang::Ko] {
+        let store = demo_store();
+        let mut panel = Panel::default();
+        panel.toggle();
+        panel.standalone = true;
+        for clip in store.visible("").iter().take(3) {
+            panel.queue.toggle(clip);
+        }
+        for open in [false, true] {
+            panel.queue_open = open;
+            let lt = panel.active_layout();
+            let mut pm = Pixmap::new(lt.canvas_w as u32, lt.canvas_h as u32).unwrap();
+            render::draw_panel(
+                &mut pm,
+                &PanelView {
+                    panel: &panel,
+                    store: &store,
+                    lang,
+                    capture: true,
+                    hint: "",
+                    caret: false,
+                },
+            );
+            save(
+                &pm,
+                &dir,
+                &format!(
+                    "ordered-{}-{}",
+                    if open { "queue" } else { "history" },
+                    lang.code()
+                ),
+            );
+        }
+    }
+
     // Illustrated ragdoll: every motion frame, all pet sizes, and the persistent
     // pause marker. These are renderer previews, distinct from live captures.
     for frame in 0..16 {

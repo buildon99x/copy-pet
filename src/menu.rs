@@ -13,10 +13,13 @@
 use crate::i18n::Lang;
 
 /// What a chosen menu item does.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(Clone, PartialEq, Eq, Debug)]
 pub enum MenuAction {
     TogglePanel,
+    OpenQueue,
     ToggleCapture,
+    ToggleExcludedSource(String),
+    SetRetention(u16),
     /// Close the clipboard panel automatically after copying a clip (on/off).
     TogglePanelAutoClose,
     /// Paste the picked clip into the previous app automatically (on/off).

@@ -10,6 +10,7 @@
 //! `WS_EX_NOACTIVATE` and takes focus so the search box can receive
 //! keyboard input (incl. IME-composed Hangul via WM_CHAR).
 
+use super::win_privacy::write_format;
 use crate::clip_image::{ClipImage, MAX_IMAGE_BYTES};
 use crate::clipboard::{b64_decode, b64_encode, RichFormats};
 use crate::hotkey::{self, Hotkey};
@@ -28,17 +29,17 @@ use windows_sys::Win32::Foundation::*;
 use windows_sys::Win32::Graphics::Gdi::*;
 use windows_sys::Win32::System::DataExchange::{
     AddClipboardFormatListener, CloseClipboard, EmptyClipboard, GetClipboardData,
-    GetClipboardOwner, GetClipboardSequenceNumber, OpenClipboard, RegisterClipboardFormatW,
-    RemoveClipboardFormatListener, SetClipboardData,
+    GetClipboardSequenceNumber, OpenClipboard, RegisterClipboardFormatW,
+    RemoveClipboardFormatListener,
 };
 use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows_sys::Win32::System::Memory::{
-    GlobalAlloc, GlobalLock, GlobalSize, GlobalUnlock, GMEM_MOVEABLE,
+    GlobalLock, GlobalSize, GlobalUnlock,
 };
 use windows_sys::Win32::System::Registry::*;
 use windows_sys::Win32::System::Threading::{
-    AttachThreadInput, CreateMutexW, GetCurrentThreadId, OpenProcess, QueryFullProcessImageNameW,
-    Sleep, PROCESS_QUERY_LIMITED_INFORMATION,
+    CreateMutexW,
+    Sleep,
 };
 use windows_sys::Win32::UI::HiDpi::SetProcessDpiAwarenessContext;
 use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
@@ -68,6 +69,7 @@ const CMD_AUTOSTART: usize = 12;
 const CMD_ABOUT: usize = 14;
 const CMD_EXIT: usize = 15;
 const CMD_PANEL: usize = 16;
+const CMD_QUEUE: usize = 56;
 const CMD_CAPTURE: usize = 17;
 const CMD_UPDATE: usize = 18;
 const CMD_AUTOUPDATE: usize = 19;
@@ -99,7 +101,12 @@ struct App {
     // simulation
     pet: Pet,
     // clipboard
-    suppress_clip: Option<u32>,
+    ocr: Option<super::win_ocr::Job>,
+    ocr_preview_owner: Option<HWND>,
+    queue_active: Option<u8>,
+    suppress_clip: Option<super::win_privacy::ClipboardIdentity>,
+    observed_clip: Option<super::win_privacy::ClipboardIdentity>,
+    retry_capture: Option<(u32, u64)>,
     // interaction
     mouse_down: bool,
     drag_moved: bool,
@@ -119,7 +126,7 @@ struct App {
     hotkey_label: String,
     /// The window that had focus when the panel was opened — where auto-paste
     /// (`paste_on_select`) sends the synthesized Ctrl+V. Null until captured.
-    paste_target: HWND,
+    paste_target: Option<super::win_focus::PasteTarget>,
     // ---- caret-anchored flyout panel (hotkey path): its own layered window --
     /// Second layered window that hosts the panel at the text caret (Win+V
     /// parity), independent of the cat window so the cat never moves.
@@ -213,56 +220,39 @@ impl App {
     /// setting for the embedded panel), it then restores focus to the app that
     /// was active when the panel opened and synthesizes Ctrl+V there.
     fn copy_back(&mut self, pick: ClipPick) {
-        // Arm sequence-based suppression only after a successful write.
-        // This handles image-only clips without comparing or retaining pixels.
-        let sequence = unsafe {
+        self.output_pick(pick, true);
+    }
+
+    fn output_pick(&mut self, pick: ClipPick, restore_panel_target: bool) {
+        if pick.queued
+            && (!self.pet.queue_output_valid()
+                || !self.paste_target.is_some_and(|target| target.valid())
+                || (!restore_panel_target
+                    && super::win_focus::PasteTarget::external() != self.paste_target))
+        {
+            self.pet.finish_queue_pick(false);
+            return;
+        }
+        // A partial write still needs suppression. Paste needs a verified
+        // current generation, and queued paste requires all requested formats.
+        let write = unsafe {
             if let Some(image) = &pick.image {
                 set_clipboard_image(self.hwnd, image)
             } else {
-                set_clipboard_rich(self.hwnd, &pick.text, pick.formats.as_ref(), pick.plain_only)
+                set_clipboard_rich(
+                    self.hwnd,
+                    &pick.text,
+                    pick.formats.as_ref(),
+                    pick.plain_only,
+                )
             }
         };
-        self.suppress_clip = sequence;
-        let ok = sequence.is_some();
-        // Only paste when the write actually landed: on failure the clipboard
-        // still holds the previous content, so synthesizing Ctrl+V would paste
-        // stale text into the target field instead of the picked clip. The
-        // `IsWindow` check skips a target that was closed between capture and
-        // paste (defense-in-depth: with the flyout still foreground, a no-op
-        // Ctrl+V into ourselves is harmless — V isn't a panel key — and the
-        // clip is still on the clipboard).
-        if ok
-            && pick.paste
-            && !self.paste_target.is_null()
-            && self.paste_target != self.hwnd
-            && unsafe { IsWindow(self.paste_target) } != 0
-        {
-            unsafe {
-                // Win+V parity: hand the foreground back to the app that was
-                // active when the panel opened, then synthesize Ctrl+V there.
-                //
-                // SetForegroundWindow is asynchronous and won't promote a
-                // window owned by another thread on demand, so a bare
-                // SetForegroundWindow + SendInput races: the Ctrl+V fires
-                // before focus actually lands on the target and is lost. Attach
-                // our input queue to the target thread first — that
-                // synchronizes the foreground/focus state across both threads,
-                // so the foreground switch takes effect before we synthesize
-                // the keystroke (SetFocus then nails the keyboard focus onto the
-                // target within the shared input state). Always detach after.
-                let target = self.paste_target;
-                let tid = GetWindowThreadProcessId(target, null_mut());
-                let me = GetCurrentThreadId();
-                let attached = tid != 0 && tid != me && AttachThreadInput(me, tid, 1) != 0;
-                SetForegroundWindow(target);
-                if attached {
-                    SetFocus(target);
-                }
-                send_ctrl_v();
-                if attached {
-                    AttachThreadInput(me, tid, 0);
-                }
-            }
+        let sequence = write.and_then(|write| write.acknowledge(&mut self.suppress_clip, pick.queued));
+        let sent = pick.paste && sequence.is_some() && self.paste_target.is_some_and(|target| {
+            submit_paste(target, restore_panel_target, sequence).is_ok()
+        });
+        if pick.queued {
+            self.pet.finish_queue_pick(sent);
         }
     }
 
@@ -274,17 +264,106 @@ impl App {
     /// which foregrounds us before it runs, can never overwrite a good target
     /// with ourselves.
     unsafe fn capture_paste_target(&mut self) {
-        let fg = GetForegroundWindow();
-        if !fg.is_null() && fg != self.hwnd && fg != self.flyout_hwnd {
-            self.paste_target = fg;
+        if let Some(target) = super::win_focus::PasteTarget::external() {
+            self.paste_target = Some(target);
+        } else {
+            let fg = GetForegroundWindow();
+            if fg != self.hwnd && fg != self.flyout_hwnd { self.paste_target = None; }
         }
     }
 
     // ---- per-frame update --------------------------------------------------
 
-    /// One ~33 ms frame. Returns `true` when an installed update is in
-    /// place and the app should relaunch (handled by the WM_TIMER caller).
+    fn ocr_notice(&mut self, id: u64, message: i18n::ImageTextMessage) {
+        if let Some(clip) = self.pet.clips.get(id) {
+            self.pet.panel.ocr_status = Some((id, clip.image_generation, message));
+        }
+        self.pet.set_toast(
+            i18n::image_text_message(self.pet.lang(), message).to_owned(),
+            4.0,
+        );
+    }
+
+    fn ocr_key(&mut self, vk: u16) -> bool {
+        use i18n::ImageTextMessage::*;
+        if !matches!(vk, 0x77 | 0x79)
+            || self.pet.panel.queue_open
+            || self.pet.workbench.open
+            || self.pet.cat_picker.is_some()
+            || self.pet.panel.tag_edit.is_some()
+        {
+            return false;
+        }
+        let Some(id) = self.pet.panel.selected_id(&self.pet.clips) else {
+            return false;
+        };
+        let Some(clip) = self.pet.clips.get(id) else {
+            return false;
+        };
+        let Some(image) = clip.image.as_ref() else {
+            return false;
+        };
+        if vk == 0x77 {
+            if !self.pet.ocr_allowed(clip) {
+                self.ocr_notice(id, Restricted);
+                return true;
+            }
+            if self.ocr.is_some() {
+                self.pet.set_toast(i18n::image_text_message(self.pet.lang(), Busy).to_owned(), 4.0);
+                return true;
+            }
+            self.ocr = Some(super::win_ocr::Job::start(
+                id, clip.image_generation,
+                self.pet.capture_epoch.load(std::sync::atomic::Ordering::Acquire),
+                image.clone(),
+            ));
+            self.ocr_notice(id, Busy);
+        } else if let Some(text) = self.pet.retained_ocr_text(id, clip.image_generation, crate::clipboard::now_ts()) {
+            self.copy_back(ClipPick::recognized_text(text));
+        } else {
+            self.ocr_notice(id, Missing);
+        }
+        true
+    }
+
+    fn poll_ocr(&mut self) {
+        use i18n::ImageTextMessage::*;
+        let Some(job) = self.ocr.as_ref() else { return };
+        let result = match job.result.try_recv() {
+            Ok(value) => value,
+            Err(std::sync::mpsc::TryRecvError::Empty) => return,
+            Err(_) => Err(super::win_ocr::Failure::Failed),
+        };
+        let job = self.ocr.take().unwrap();
+        if !self.pet.ocr_request_current(job.id, job.generation, job.epoch, &job.image) {
+            if self.pet.panel.ocr_status == Some((job.id, job.generation, Busy)) {
+                self.pet.panel.ocr_status = None;
+            }
+            return;
+        }
+        use super::win_ocr::Failure;
+        let message = match result {
+            Ok(text) => {
+                if self
+                    .pet
+                    .clips
+                    .set_ocr_text(job.id, job.generation, &job.image, text)
+                {
+                    Ready
+                } else {
+                    return;
+                }
+            }
+            Err(Failure::Empty) => Empty,
+            Err(Failure::Unavailable) => Unavailable,
+            Err(Failure::Failed) => Failed,
+        };
+        self.ocr_notice(job.id, message);
+    }
+
+    /// One frame. Returns true when a completed update requires a relaunch.
     fn tick(&mut self) -> bool {
+        self.poll_ocr();
         let redraw = self.pet.advance();
 
         // auto-update: surface a found release / a finished install
@@ -391,16 +470,14 @@ impl App {
         let ex = GetWindowLongPtrW(self.hwnd, GWL_EXSTYLE);
         let no_activate = ex & WS_EX_NOACTIVATE as isize != 0;
         if embedded && no_activate {
-            // Remember who had focus before we steal it, so auto-paste can send
-            // the clip back to that app. The hotkey path reveals (and
-            // foregrounds) us *before* this runs, so it already grabbed the
-            // target up-front in WM_HOTKEY — capture_paste_target ignores our
-            // own window and leaves that earlier value intact; the middle-click
-            // path (no reveal) captures the still-active target here.
-            self.capture_paste_target();
+            // The opening gesture has already captured its intended external control.
             SetWindowLongPtrW(self.hwnd, GWL_EXSTYLE, ex & !(WS_EX_NOACTIVATE as isize));
-            SetForegroundWindow(self.hwnd);
-            SetFocus(self.hwnd);
+            // A fast F9 can start the modal loop ahead of this deferred resize.
+            // Its disabled owner must not take focus away from the preview EDIT.
+            if self.ocr_preview_owner.is_none() {
+                SetForegroundWindow(self.hwnd);
+                SetFocus(self.hwnd);
+            }
         } else if !embedded && !no_activate {
             SetWindowLongPtrW(self.hwnd, GWL_EXSTYLE, ex | WS_EX_NOACTIVATE as isize);
         }
@@ -882,42 +959,43 @@ unsafe fn read_format_bytes(fmt: u32) -> Option<Vec<u8>> {
     Some(trim_nul(bytes))
 }
 
-/// Reads PNG/DIB images or CF_UNICODETEXT plus CF_HTML / CF_RTF in one OpenClipboard, retrying
-/// briefly (the copying app may still hold the clipboard open). The CF_HTML blob
-/// is kept verbatim (header included). SAFETY: clipboard-owned handles are only
-/// read between GlobalLock/GlobalUnlock and never freed.
-unsafe fn read_clipboard_content(hwnd: HWND) -> Option<CapturedClip> {
+/// A busy notification must preserve both the clipboard sequence and capture
+/// epoch for the next UI tick. A successful open handles this notification,
+/// including private, unsupported and self-written contents.
+fn poll_capture_lock<T>(request: (u32, u64), open: impl FnOnce() -> bool,
+    read_and_close: impl FnOnce() -> Option<T>) -> (Option<(u32, u64)>, Option<T>) {
+    if open() { (None, read_and_close()) } else { (Some(request), None) }
+}
+
+/// SAFETY: the caller opened the clipboard on this thread. This function
+/// closes it before returning. Clipboard-owned handles are never freed here.
+unsafe fn read_open_clipboard_content(skip_open: impl FnOnce() -> bool) -> Option<CapturedClip> {
     let (cf_html, cf_rtf) = clip_atoms();
-    for attempt in 0..5 {
-        if attempt > 0 {
-            Sleep(15);
-        }
-        if OpenClipboard(hwnd) == 0 {
-            continue;
-        }
-        let image = read_blob_open(png_atom(), MAX_IMAGE_BYTES)
-            .and_then(|b| ClipImage::from_png(&b))
-            .or_else(|| {
-                read_blob_open(17, 64 * 1024 * 1024 + 4096).and_then(|b| ClipImage::from_dib(&b))
-            })
-            .or_else(|| {
-                read_blob_open(8, 64 * 1024 * 1024 + 4096).and_then(|b| ClipImage::from_dib(&b))
-            });
-        if let Some(image) = image {
-            CloseClipboard();
-            return Some(CapturedClip::Image(image));
-        }
-        let text = read_unicode_open();
-        let formats = text.as_ref().and_then(|_| {
-            let html = read_format_bytes(cf_html).and_then(|b| String::from_utf8(b).ok());
-            let rtf_b64 = read_format_bytes(cf_rtf).map(|b| b64_encode(&b));
-            let f = RichFormats { html, rtf_b64 };
-            (!f.is_empty()).then_some(f)
-        });
+    if skip_open() || super::win_privacy::marked_open() {
         CloseClipboard();
-        return text.map(|t| CapturedClip::Text(t, formats));
+        return None;
     }
-    None
+    let image = read_blob_open(png_atom(), MAX_IMAGE_BYTES)
+        .and_then(|b| ClipImage::from_png(&b))
+        .or_else(|| {
+            read_blob_open(17, 64 * 1024 * 1024 + 4096).and_then(|b| ClipImage::from_dib(&b))
+        })
+        .or_else(|| {
+            read_blob_open(8, 64 * 1024 * 1024 + 4096).and_then(|b| ClipImage::from_dib(&b))
+        });
+    if let Some(image) = image {
+        CloseClipboard();
+        return Some(CapturedClip::Image(image));
+    }
+    let text = read_unicode_open();
+    let formats = text.as_ref().and_then(|_| {
+        let html = read_format_bytes(cf_html).and_then(|b| String::from_utf8(b).ok());
+        let rtf_b64 = read_format_bytes(cf_rtf).map(|b| b64_encode(&b));
+        let f = RichFormats { html, rtf_b64 };
+        (!f.is_empty()).then_some(f)
+    });
+    CloseClipboard();
+    text.map(|t| CapturedClip::Text(t, formats))
 }
 
 enum CapturedClip {
@@ -947,7 +1025,7 @@ unsafe fn read_blob_open(format: u32, limit: usize) -> Option<Vec<u8>> {
 
 /// Prepare validated data before emptying the clipboard. PNG preserves alpha;
 /// CF_DIB supplies a broadly compatible bitmap fallback (including Paint).
-unsafe fn set_clipboard_image(hwnd: HWND, image: &ClipImage) -> Option<u32> {
+unsafe fn set_clipboard_image(hwnd: HWND, image: &ClipImage) -> Option<super::win_privacy::WriteReceipt> {
     let dib = image.to_dib()?;
     let png = b64_decode(&image.png_b64)?;
     for attempt in 0..5 {
@@ -957,80 +1035,22 @@ unsafe fn set_clipboard_image(hwnd: HWND, image: &ClipImage) -> Option<u32> {
         let dib_ok = write_format(8, &dib);
         let atom = png_atom();
         let png_ok = atom != 0 && write_format(atom, &png);
-        // Capture the marker while the clipboard is locked, so another app
-        // cannot replace it before we remember our own sequence number.
-        let sequence = (dib_ok || png_ok).then(|| GetClipboardSequenceNumber());
-        CloseClipboard();
-        return sequence;
+        return super::win_privacy::close_write(hwnd, crate::paste_queue::image_write_completeness(dib_ok, png_ok));
     }
     None
 }
 
-/// Writes one format's bytes to an already-open, already-emptied clipboard.
-/// SAFETY: the GlobalAlloc'd buffer is handed to the clipboard on success (it
-/// then owns it); on failure we free it ourselves.
-unsafe fn write_format(fmt: u32, bytes: &[u8]) -> bool {
-    let h = GlobalAlloc(GMEM_MOVEABLE, bytes.len());
-    if h.is_null() {
-        return false;
-    }
-    let p = GlobalLock(h) as *mut u8;
-    if p.is_null() {
-        GlobalFree(h);
-        return false;
-    }
-    std::ptr::copy_nonoverlapping(bytes.as_ptr(), p, bytes.len());
-    GlobalUnlock(h);
-    if SetClipboardData(fmt, h).is_null() {
-        GlobalFree(h);
-        false
-    } else {
-        true
-    }
-}
-
 /// Replaces the clipboard with `text` (CF_UNICODETEXT, always), plus the
 /// original CF_HTML / CF_RTF when `!plain_only` and present (ADR-0014). One
-/// OpenClipboard for all formats. Return our sequence number while still
-/// holding the clipboard open, for exact self-copy suppression.
+/// OpenClipboard for all formats. Verify the final sequence and owner after
+/// the writing CloseClipboard, for exact self-copy suppression.
 unsafe fn set_clipboard_rich(
     hwnd: HWND,
     text: &str,
     formats: Option<&RichFormats>,
     plain_only: bool,
-) -> Option<u32> {
-    let (cf_html, cf_rtf) = clip_atoms();
-    let wide: Vec<u16> = text.encode_utf16().chain(std::iter::once(0)).collect();
-    let text_bytes = std::slice::from_raw_parts(wide.as_ptr() as *const u8, wide.len() * 2);
-    for attempt in 0..5 {
-        if attempt > 0 {
-            Sleep(15);
-        }
-        if OpenClipboard(hwnd) == 0 {
-            continue;
-        }
-        if EmptyClipboard() == 0 { CloseClipboard(); return None; }
-        let ok = write_format(CF_UNICODETEXT, text_bytes);
-        if ok && !plain_only {
-            if let Some(f) = formats {
-                if let Some(html) = &f.html {
-                    let mut b = html.as_bytes().to_vec();
-                    b.push(0);
-                    let _ = write_format(cf_html, &b);
-                }
-                if let Some(rtf_b64) = &f.rtf_b64 {
-                    if let Some(mut b) = b64_decode(rtf_b64) {
-                        b.push(0);
-                        let _ = write_format(cf_rtf, &b);
-                    }
-                }
-            }
-        }
-        let sequence = ok.then(|| GetClipboardSequenceNumber());
-        CloseClipboard();
-        return sequence;
-    }
-    None
+) -> Option<super::win_privacy::WriteReceipt> {
+    super::win_privacy::write_text(hwnd, text, if plain_only { None } else { formats })
 }
 
 impl App {
@@ -1045,39 +1065,8 @@ impl App {
 unsafe fn clipboard_source_at(
     icon_cache: &mut std::collections::HashMap<String, Option<(u32, Vec<u8>)>>,
 ) -> (Option<String>, Option<Badge>) {
-    let mut src = GetClipboardOwner();
-    if src.is_null() {
-        src = GetForegroundWindow();
-    }
-    if src.is_null() {
-        return (None, None);
-    }
-    let mut pid = 0u32;
-    GetWindowThreadProcessId(src, &mut pid);
-    if pid == 0 {
-        return (None, None);
-    }
-    let proc = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid);
-    if proc.is_null() {
-        return (None, None);
-    }
-    let mut buf = [0u16; 1024];
-    let mut len = buf.len() as u32;
-    let ok = QueryFullProcessImageNameW(proc, 0, buf.as_mut_ptr(), &mut len);
-    CloseHandle(proc);
-    if ok == 0 {
-        return (None, None);
-    }
-    let path = String::from_utf16_lossy(&buf[..len as usize]);
-    let name = path
-        .rsplit(['\\', '/'])
-        .next()
-        .map(|n| {
-            n.trim_end_matches(".exe")
-                .trim_end_matches(".EXE")
-                .to_string()
-        })
-        .filter(|n| !n.is_empty());
+    let Some(path) = super::win_privacy::owner_path() else { return (None, None); };
+    let name = super::win_privacy::app_name(&path);
 
     let mut badge = Badge::from_source(name.as_deref());
     let icon = icon_cache
@@ -1266,6 +1255,33 @@ unsafe fn register_panel_hotkey(hwnd: HWND, spec: &str) -> HotkeyReg {
     HotkeyReg::None
 }
 
+#[derive(Debug, PartialEq, Eq)]
+enum DispatchFailure {
+    FocusChanged { current: Option<super::win_focus::PasteTarget> },
+    ClipboardChanged { expected: Option<u32>, actual: u32 },
+    InputRejected { inserted: u32, last_error: Option<u32> },
+}
+
+fn submit_paste(
+    target: super::win_focus::PasteTarget,
+    restore_panel_target: bool,
+    sequence: Option<u32>,
+) -> Result<(), DispatchFailure> {
+    if restore_panel_target && !target.restore() {
+        return Err(DispatchFailure::FocusChanged { current: super::win_focus::PasteTarget::external() });
+    }
+    let current = super::win_focus::PasteTarget::external();
+    if current != Some(target) {
+        return Err(DispatchFailure::FocusChanged { current });
+    }
+    // SAFETY: both identities are checked directly before submitting input.
+    let actual = unsafe { GetClipboardSequenceNumber() };
+    if Some(actual) != sequence {
+        return Err(DispatchFailure::ClipboardChanged { expected: sequence, actual });
+    }
+    unsafe { send_ctrl_v() }
+}
+
 /// Synthesizes a Ctrl+V keystroke into the foreground window (auto-paste).
 ///
 /// The panel hotkey (default Win+Shift+V, and the clash fallback Ctrl+Shift+V)
@@ -1281,7 +1297,7 @@ unsafe fn register_panel_hotkey(hwnd: HWND, spec: &str) -> HotkeyReg {
 /// Output-only: we synthesize keystrokes and never read key state, so this does
 /// not touch the input-privacy guarantee (golden rule 1). Modifiers are released
 /// up-front and Ctrl in reverse at the end.
-unsafe fn send_ctrl_v() {
+unsafe fn send_ctrl_v() -> Result<(), DispatchFailure> {
     let mut inputs: [INPUT; 8] = std::mem::zeroed();
     for inp in &mut inputs {
         inp.r#type = INPUT_KEYBOARD;
@@ -1305,11 +1321,18 @@ unsafe fn send_ctrl_v() {
     inputs[6].Anonymous.ki.dwFlags = KEYEVENTF_KEYUP;
     inputs[7].Anonymous.ki.wVk = VK_CONTROL; // Ctrl up
     inputs[7].Anonymous.ki.dwFlags = KEYEVENTF_KEYUP;
-    SendInput(
+    SetLastError(0);
+    let inserted = SendInput(
         inputs.len() as u32,
         inputs.as_ptr(),
         std::mem::size_of::<INPUT>() as i32,
     );
+    if inserted == inputs.len() as u32 { Ok(()) } else {
+        // SendInput documents extended error only for zero insertions. UIPI
+        // cannot be identified from the returned count or last-error value.
+        let last_error = (inserted == 0).then(|| GetLastError());
+        Err(DispatchFailure::InputRejected { inserted, last_error })
+    }
 }
 
 // ---- tray ----------------------------------------------------------------------
@@ -1408,7 +1431,11 @@ unsafe fn migrate_autostart() {
 
 // ---- context menu -----------------------------------------------------------------
 
+const CMD_RETAIN: usize = 60;
+const CMD_SOURCE: usize = 100;
 struct MenuSnapshot {
+    sources: Vec<(String, bool)>,
+    retention: u16,
     locked: bool,
     scale_idx: usize,
     sound: u8,
@@ -1460,6 +1487,7 @@ unsafe fn show_menu(hwnd: HWND, ms: &MenuSnapshot) -> usize {
         CMD_PANEL,
         wz(&i18n::menu_clipboard(lang, &ms.hotkey_label)).as_ptr(),
     );
+    AppendMenuW(menu, MF_STRING, CMD_QUEUE, wz(i18n::queue_button(lang, NavKey::QueueView, false)).as_ptr());
     AppendMenuW(
         menu,
         MF_STRING | chk(!ms.capture),
@@ -1472,6 +1500,22 @@ unsafe fn show_menu(hwnd: HWND, ms: &MenuSnapshot) -> usize {
         CMD_AUTOCLOSE,
         wz(t(lang, Msg::MenuAutoClose)).as_ptr(),
     );
+    let retention = CreatePopupMenu();
+    for (i, days) in [0, 1, 7, 30].into_iter().enumerate() {
+        AppendMenuW(retention, MF_STRING | chk(ms.retention == days), CMD_RETAIN + i,
+            wz(&i18n::retention_label(lang, days)).as_ptr());
+    }
+    AppendMenuW(menu, MF_POPUP, retention as usize, wz(i18n::retention_title(lang)).as_ptr());
+    if !ms.sources.is_empty() {
+        let sources = CreatePopupMenu();
+        let full = ms.sources.iter().filter(|(_, checked)| *checked).count() >= 128;
+        for (i, (name, checked)) in ms.sources.iter().enumerate() {
+            let disabled = if full && !checked { MF_GRAYED } else { 0 };
+            AppendMenuW(sources, MF_STRING | chk(*checked) | disabled, CMD_SOURCE + i,
+                wz(&name.replace('&', "&&")).as_ptr());
+        }
+        AppendMenuW(menu, MF_POPUP, sources as usize, wz(i18n::exclusion_title(lang)).as_ptr());
+    }
     // Panel hotkey: one click cycles to the next preset (no rebind dialog).
     AppendMenuW(
         menu,
@@ -1595,6 +1639,11 @@ unsafe fn show_menu(hwnd: HWND, ms: &MenuSnapshot) -> usize {
 
 fn menu_snapshot() -> Option<MenuSnapshot> {
     with_app(|a| MenuSnapshot {
+        sources: a.pet.privacy_sources().into_iter().map(|s| {
+            let checked = a.pet.st.excludes(&s);
+            (s, checked)
+        }).collect(),
+        retention: a.pet.st.retention_days,
         locked: a.pet.st.locked,
         scale_idx: a.pet.st.scale_idx,
         sound: a.pet.st.sound_mode,
@@ -1612,8 +1661,18 @@ fn menu_snapshot() -> Option<MenuSnapshot> {
 
 unsafe fn open_menu(hwnd: HWND) {
     if let Some(ms) = menu_snapshot() {
+        let target = super::win_focus::PasteTarget::for_menu();
         let cmd = show_menu(hwnd, &ms);
         match cmd {
+            id if id >= CMD_SOURCE => {
+                if let Some((name, _)) = ms.sources.get(id - CMD_SOURCE) {
+                    with_app(|a| a.pet.apply_menu_action(crate::menu::MenuAction::ToggleExcludedSource(name.clone())));
+                }
+            }
+            60..=63 => {
+                let days = [0, 1, 7, 30][cmd - CMD_RETAIN];
+                with_app(|a| a.pet.apply_menu_action(crate::menu::MenuAction::SetRetention(days)));
+            }
             0 => {}
             CMD_EXIT => {
                 DestroyWindow(hwnd);
@@ -1654,8 +1713,14 @@ unsafe fn open_menu(hwnd: HWND) {
                     a.pet.dirty = true;
                 });
             }
+            CMD_QUEUE => {
+                with_app(|a| {
+                    a.paste_target = target;
+                    a.pet.apply_menu_action(MenuAction::OpenQueue);
+                });
+            }
             CMD_PANEL => {
-                with_app(|a| a.pet.toggle_panel());
+                with_app(|a| { a.paste_target = target; a.pet.toggle_panel(); });
             }
             CMD_CAPTURE => {
                 with_app(|a| {
@@ -1750,6 +1815,12 @@ fn map_nav_key(vk: u16, ctrl: bool) -> Option<NavKey> {
         0x1B => Some(NavKey::Esc),       // VK_ESCAPE
         0x09 => Some(NavKey::Tab),       // VK_TAB: source filter
         0x41 if ctrl => Some(NavKey::SelectAll),
+        0x71 => Some(NavKey::QueueView),
+        0x72 => Some(NavKey::QueueAdd),
+        0x73 => Some(NavKey::QueueReset),
+        0x74 => Some(NavKey::QueueReplay),
+        0x75 => Some(NavKey::QueueCombine),
+        0x76 => Some(NavKey::QueueShortcut),
         0x54 if ctrl => Some(NavKey::Tags), // Ctrl+T: edit tags
         0x50 if ctrl => Some(NavKey::Pin),  // Ctrl+P: pin clip
         0x5A if ctrl => Some(NavKey::Undo), // Ctrl+Z: undo delete
@@ -1817,6 +1888,65 @@ unsafe fn paste_workbench_editor(hwnd: HWND, key: WPARAM) -> bool {
     true
 }
 
+/// Capture the requested row before entering the modal loop, where clipboard changes
+/// can reorder history. The app remains available to dispatch capture and timer events.
+unsafe fn open_ocr_preview(owner: HWND) -> bool {
+    let mut handled = false;
+    let request = with_app(|a| {
+        let flyout = owner == a.flyout_hwnd;
+        let panel_open = if flyout {
+            a.pet.flyout_open()
+        } else {
+            a.pet.embedded_panel_open()
+        };
+        if a.ocr_preview_owner.is_some()
+            || !panel_open
+            || a.pet.panel.queue_open
+            || a.pet.workbench.open
+            || a.pet.cat_picker.is_some()
+            || a.pet.panel.tag_edit.is_some()
+        {
+            return None;
+        }
+        let id = a.pet.panel.selected_id(&a.pet.clips)?;
+        let clip = a.pet.clips.get(id)?;
+        clip.image.as_ref()?;
+        handled = true;
+        let Some(text) = a.pet.retained_ocr_text(id, clip.image_generation, crate::clipboard::now_ts()).map(str::to_owned) else {
+            a.ocr_notice(id, i18n::ImageTextMessage::Missing);
+            return None;
+        };
+        let generation = clip.image_generation;
+        let lang = a.pet.lang();
+        a.ocr_preview_owner = Some(owner);
+        Some((id, generation, flyout, lang, text))
+    })
+    .flatten();
+    if let Some((id, generation, flyout, lang, text)) = request {
+        let shown = super::win_ocr_preview::show(owner, lang, &text, (id, generation),
+            |(id, gen)| with_app(|a| a.pet.retained_ocr_text(id, gen, crate::clipboard::now_ts()).is_some()).unwrap_or(false),
+            |(id, gen), selection| {
+                with_app(|a| {
+                    let write = super::win_privacy::write_text_when(a.hwnd, &selection, None, ||
+                        a.pet.retained_ocr_text(id, gen, crate::clipboard::now_ts()).is_some());
+                    if let Some(write) = write { write.acknowledge(&mut a.suppress_clip, false); }
+                });
+            });
+        with_app(|a| {
+            a.ocr_preview_owner = None;
+            if a.pet.restore_image_preview(id, generation, flyout) {
+                if GetForegroundWindow() == owner {
+                    SetFocus(owner);
+                }
+                if !shown {
+                    a.ocr_notice(id, i18n::ImageTextMessage::Failed);
+                }
+            }
+        });
+    }
+    handled
+}
+
 /// Messages for the flyout window are routed here (it shares the class +
 /// wndproc with the cat window). Only the panel-relevant messages are
 /// handled; everything else defers to `DefWindowProcW`.
@@ -1851,7 +1981,10 @@ unsafe fn flyout_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRESULT {
             with_app(|a| a.panel_char_utf16(wp as u16));
             0
         }
+        WM_SYSKEYDOWN if wp == 0x79 && GetKeyState(0x12) >= 0 && with_app(|a| a.pet.panel_open() && a.ocr_key(wp as u16)).unwrap_or(false) => 0,
+        WM_KEYDOWN if wp == 0x78 && open_ocr_preview(hwnd) => 0,
         WM_KEYDOWN => {
+            if with_app(|a| a.ocr_key(wp as u16)).unwrap_or(false) { return 0; }
             if paste_workbench_editor(hwnd, wp) {
                 return 0;
             }
@@ -1866,11 +1999,41 @@ unsafe fn flyout_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRESULT {
         WM_KILLFOCUS => {
             // clicked away: dismiss the flyout (the borrow guard makes the
             // hide-triggered re-entrant WM_KILLFOCUS a no-op)
-            with_app(|a| a.hide_flyout());
+            with_app(|a| { if a.ocr_preview_owner != Some(hwnd) { a.hide_flyout(); } });
             0
         }
         _ => DefWindowProcW(hwnd, msg, wp, lp),
     }
+}
+
+/// WM_CLIPBOARDUPDATE has no payload. Resolve the owner and generation under
+/// the read lock, and retry on a tick if a competing process still holds it.
+unsafe fn capture_notification(hwnd: HWND, seq: u32, epoch: u64) {
+    let allowed = |a: &App| a.pet.st.clip_capture
+        && a.pet.capture_epoch.load(std::sync::atomic::Ordering::Acquire) == epoch
+        && GetClipboardSequenceNumber() == seq;
+    if !with_app(|a| allowed(a)).unwrap_or(false) { return; }
+    let mut origin = None;
+    let skip_open = || with_app(|a| {
+        if !allowed(a) || super::win_privacy::ClipboardIdentity::skip_notification(
+            &mut a.observed_clip, &mut a.suppress_clip) { return true; }
+        let (source, badge) = a.clipboard_source();
+        if source.as_deref().is_some_and(|s| a.pet.st.excludes(s)) { return true; }
+        origin = Some((source, badge));
+        false
+    }).unwrap_or(true);
+    let (retry, content) = poll_capture_lock((seq, epoch), || OpenClipboard(hwnd) != 0,
+        || read_open_clipboard_content(skip_open));
+    with_app(|a| {
+        if !allowed(a) { return; }
+        a.retry_capture = retry;
+        if let (Some((source, badge)), Some(content)) = (origin, content) {
+            match content {
+                CapturedClip::Text(text, formats) => a.pet.on_copy_rich(text, source, badge, formats),
+                CapturedClip::Image(image) => a.pet.on_copy_image(image, source, badge),
+            }
+        }
+    });
 }
 
 unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRESULT {
@@ -1881,6 +2044,22 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
     match msg {
         WM_TIMER => {
             if wp == TIMER_ID {
+                if let Some((seq, epoch)) = with_app(|a| a.retry_capture.take()).flatten() {
+                    capture_notification(hwnd, seq, epoch);
+                }
+                with_app(|a| {
+                    let active = a.pet.panel.queue.next().map(|_| a.pet.panel.queue_hotkey);
+                    if active != a.queue_active {
+                        a.queue_active = active;
+                        a.pet.panel.queue_conflict = false;
+                        UnregisterHotKey(hwnd, 2);
+                        if let Some(index) = active {
+                            if RegisterHotKey(hwnd, 2, MOD_CONTROL | MOD_ALT | MOD_NOREPEAT, crate::hotkey::queue_hotkey(index).key as u32) == 0 {
+                                a.pet.queue_shortcut_failed();
+                            }
+                        }
+                    }
+                });
                 // restart request must run outside the APP borrow: DestroyWindow
                 // re-enters the wndproc and WM_DESTROY needs `with_app`
                 if with_app(|a| a.tick()).unwrap_or(false) {
@@ -1891,39 +2070,19 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
             0
         }
         WM_CLIPBOARDUPDATE => {
-            // while capture is paused the clipboard is not even read
-            let capture = with_app(|a| {
-                if !a.pet.st.clip_capture {
-                    a.suppress_clip = None; // don't let a stale marker linger
-                    false
-                } else {
-                    true
-                }
-            })
-            .unwrap_or(false);
-            if capture {
-                // Sequence-based suppression also handles image-only copies and
-                // never suppresses a later external copy of identical content.
-                let own = with_app(|a| a.suppress_clip.take() == Some(GetClipboardSequenceNumber())).unwrap_or(false);
-                if !own {
-                    if let Some(content) = read_clipboard_content(hwnd) {
-                        with_app(|a| {
-                            let (source, badge) = a.clipboard_source();
-                            match content {
-                                CapturedClip::Text(text, formats) => {
-                                    a.pet.on_copy_rich(text, source, badge, formats)
-                                }
-                                CapturedClip::Image(image) => {
-                                    a.pet.on_copy_image(image, source, badge)
-                                }
-                            }
-                        });
-                    }
-                }
-            }
+            let epoch = with_app(|a| a.pet.capture_epoch.load(std::sync::atomic::Ordering::Acquire));
+            if let Some(epoch) = epoch { capture_notification(hwnd, GetClipboardSequenceNumber(), epoch); }
             0
         }
         WM_HOTKEY => {
+            if wp as i32 == 2 {
+                with_app(|a| {
+                    if let Some(target) = super::win_focus::PasteTarget::external() {
+                        a.paste_target = Some(target);
+                        if let Some(pick) = a.pet.next_queue_pick() { a.output_pick(pick, false); }
+                    }
+                });
+            }
             if wp as i32 == HOTKEY_ID {
                 with_app(|a| {
                     // The hotkey opens the panel as a caret-anchored flyout in
@@ -2062,6 +2221,7 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
         }
         WM_MBUTTONUP => {
             with_app(|a| {
+                if !a.pet.embedded_panel_open() { a.capture_paste_target(); }
                 a.pet.toggle_panel();
                 a.reconcile_flyout();
             });
@@ -2086,6 +2246,8 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
             });
             0
         }
+        WM_SYSKEYDOWN if wp == 0x79 && GetKeyState(0x12) >= 0 && with_app(|a| a.pet.panel_open() && a.ocr_key(wp as u16)).unwrap_or(false) => 0,
+        WM_KEYDOWN if wp == 0x78 && open_ocr_preview(hwnd) => 0,
         WM_KEYDOWN => {
             if with_app(|a| a.pet.embedded_panel_open()).unwrap_or(false)
                 && paste_workbench_editor(hwnd, wp) {
@@ -2096,6 +2258,7 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
                     return false;
                 }
                 let ctrl = GetKeyState(0x11) < 0; // VK_CONTROL
+                if a.ocr_key(wp as u16) { return true; }
                 let key = map_nav_key(wp as u16, ctrl);
                 if let Some(key) = key {
                     if let Some(pick) = a.pet.panel_nav(key) {
@@ -2166,8 +2329,10 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
             with_app(|a| {
                 let (x, y) = a.window_pos();
                 a.pet.save_pos(x, y);
+                a.ocr.take();
                 KillTimer(hwnd, TIMER_ID);
                 UnregisterHotKey(hwnd, HOTKEY_ID);
+                UnregisterHotKey(hwnd, 2);
                 RemoveClipboardFormatListener(hwnd);
                 tray_remove(hwnd);
             });
@@ -2361,7 +2526,12 @@ pub fn run() {
             h,
             pm: tiny_skia::Pixmap::new(w as u32, h as u32).unwrap(),
             pet,
+            ocr: None,
+            ocr_preview_owner: None,
+            queue_active: None,
             suppress_clip: None,
+            observed_clip: None,
+            retry_capture: None,
             mouse_down: false,
             drag_moved: false,
             panel_drag: false,
@@ -2372,7 +2542,7 @@ pub fn run() {
             icon,
             taskbar_created: RegisterWindowMessageW(wz("TaskbarCreated").as_ptr()),
             hotkey_label,
-            paste_target: null_mut(),
+            paste_target: None,
             flyout_hwnd,
             fly_mem_dc,
             fly_dib,
@@ -2411,6 +2581,372 @@ pub fn run() {
 mod clipboard_tests {
     use super::*;
 
+    // Ordinary round-trip checks tolerate competing OS clipboard consumers.
+    // Product notifications use the UI timer for rescheduling.
+    unsafe fn read_clipboard_content(hwnd: HWND, skip_open: impl FnOnce() -> bool) -> Option<CapturedClip> {
+        for attempt in 0..5 {
+            if attempt > 0 { Sleep(15); }
+            if OpenClipboard(hwnd) != 0 { return read_open_clipboard_content(skip_open); }
+        }
+        None
+    }
+
+    #[test]
+    fn timer_retries_busy_clipboard_once_per_tick() {
+        let request = (23, 8);
+        let mut opens = 0;
+        let (retry, value) = poll_capture_lock::<()>(request, || { opens += 1; false }, || panic!("clipboard still locked"));
+        assert_eq!(opens, 1, "one lock attempt per UI tick");
+        assert_eq!((retry, value), (Some(request), None));
+        let (retry, value) = poll_capture_lock(retry.unwrap(), || { opens += 1; true }, || Some("released"));
+        assert_eq!(opens, 2);
+        assert_eq!((retry, value), (None, Some("released")));
+    }
+
+    const TARGET_ENV: &str = "CLIPCAT_SYNTHETIC_EDIT_DIR";
+    const FIRST: &str = "queue-dedicated";
+    const SECOND: &str = "queue-restored";
+
+    unsafe fn pump_messages(mut observe: impl FnMut(&MSG)) {
+        let mut msg: MSG = std::mem::zeroed();
+        while PeekMessageW(&mut msg, null_mut(), 0, 0, PM_REMOVE) != 0 {
+            observe(&msg);
+            TranslateMessage(&msg);
+            DispatchMessageW(&msg);
+        }
+    }
+
+    thread_local! {
+        static EDITOR_EVENTS: RefCell<std::collections::VecDeque<String>> = const { RefCell::new(std::collections::VecDeque::new()) };
+        static FRAME_ACTIVE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    }
+    fn note_editor_event(message: String) {
+        EDITOR_EVENTS.with(|events| {
+            let mut events = events.borrow_mut();
+            if events.len() == 40 { events.pop_front(); }
+            events.push_back(message);
+        });
+    }
+
+    // A normal single-document editor forwards activation focus to its view.
+    // A stock STATIC top-level keeps focus on itself after asynchronous activation.
+    unsafe extern "system" fn editor_frame(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRESULT {
+        if msg == WM_ACTIVATE { FRAME_ACTIVE.with(|active| active.set(wp as u16 != WA_INACTIVE as u16)); }
+        if matches!(msg, WM_ACTIVATE | WM_ACTIVATEAPP | WM_SETFOCUS | WM_KILLFOCUS | WM_ENTERMENULOOP | WM_EXITMENULOOP | WM_SYSCOMMAND) {
+            note_editor_event(format!("frame({msg:#x},{wp:#x})"));
+        }
+        if msg == WM_SETFOCUS {
+            let edit = GetDlgItem(hwnd, 1);
+            if !edit.is_null() { SetFocus(edit); return 0; }
+        }
+        DefWindowProcW(hwnd, msg, wp, lp)
+    }
+
+    #[test]
+    fn synthetic_external_edit_fixture() {
+        let Some(path) = std::env::var_os(TARGET_ENV) else {
+            return;
+        };
+        let dir = std::path::PathBuf::from(path);
+        unsafe {
+            let module = GetModuleHandleW(null());
+            let class = wz("ClipCatSyntheticEditor");
+            let mut wc: WNDCLASSEXW = std::mem::zeroed();
+            wc.cbSize = std::mem::size_of::<WNDCLASSEXW>() as u32;
+            wc.lpfnWndProc = Some(editor_frame);
+            wc.hInstance = module;
+            wc.lpszClassName = class.as_ptr();
+            assert_ne!(RegisterClassExW(&wc), 0);
+            let top = CreateWindowExW(
+                0,
+                class.as_ptr(),
+                wz("ClipCat test target").as_ptr(),
+                WS_OVERLAPPEDWINDOW,
+                10,
+                10,
+                320,
+                150,
+                null_mut(),
+                null_mut(),
+                module,
+                null(),
+            );
+            let edit = CreateWindowExW(
+                0,
+                wz("EDIT").as_ptr(),
+                null(),
+                WS_CHILD | WS_VISIBLE | WS_TABSTOP,
+                5,
+                5,
+                280,
+                40,
+                top,
+                1usize as HMENU,
+                module,
+                null(),
+            );
+            assert!(!top.is_null() && !edit.is_null());
+            ShowWindow(top, SW_SHOW);
+            SetForegroundWindow(top);
+            pump_messages(|_| {});
+            SetFocus(edit);
+            let readiness_deadline = std::time::Instant::now() + std::time::Duration::from_secs(4);
+            let mut stable = 0;
+            while stable < 2 {
+                pump_messages(|_| {});
+                let foreground = GetForegroundWindow();
+                let focused = windows_sys::Win32::UI::Input::KeyboardAndMouse::GetFocus();
+                assert!(std::time::Instant::now() < readiness_deadline,
+                    "fixture activation timeout: expected top={top:?}/edit={edit:?}, actual foreground={foreground:?}/focus={focused:?}");
+                stable = if foreground == top && focused == edit { stable + 1 } else { 0 };
+                Sleep(10);
+            }
+            let parent: u32 = std::env::var("CLIPCAT_SYNTHETIC_PARENT").unwrap().parse().unwrap();
+            AllowSetForegroundWindow(parent);
+            let tmp = dir.join("handles.tmp");
+            std::fs::write(&tmp, format!("{} {}",top as usize,edit as usize)).unwrap();
+            std::fs::rename(tmp,dir.join("handles")).unwrap();
+            let until = std::time::Instant::now() + std::time::Duration::from_secs(20);
+            let mut reset = false;
+            let mut ctrl_v = 0;
+            let mut last_state = String::new();
+            loop {
+                pump_messages(|msg| {
+                    if matches!(msg.message, WM_KEYDOWN | WM_KEYUP | WM_SYSKEYDOWN | WM_SYSKEYUP) {
+                        note_editor_event(format!("key({},{:#x},{:#x})", if msg.hwnd == edit { "edit" } else { "frame" }, msg.message, msg.wParam));
+                    }
+                    if msg.hwnd == edit && msg.message == WM_KEYDOWN && msg.wParam == b'V' as usize
+                        && GetKeyState(VK_CONTROL as i32) < 0 {
+                        ctrl_v += 1;
+                    }
+                });
+                let mut buf = [0u16; 64];
+                // Only this process inspects its own dedicated synthetic EDIT.
+                let n = GetWindowTextW(edit, buf.as_mut_ptr(), buf.len() as i32);
+                let text = String::from_utf16_lossy(&buf[..n as usize]);
+                let mut caret = POINT { x: 0, y: 0 };
+                let caret_pos = (GetCaretPos(&mut caret) != 0).then_some((caret.x, caret.y));
+                let mut gui: GUITHREADINFO = std::mem::zeroed();
+                gui.cbSize = std::mem::size_of::<GUITHREADINFO>() as u32;
+                GetGUIThreadInfo(GetWindowThreadProcessId(top, null_mut()), &mut gui);
+                let events = EDITOR_EVENTS.with(|events| events.borrow().iter().cloned().collect::<Vec<_>>().join(" "));
+                let state = format!("active_frame={}, focused_frame={}, focus_null={}, gui_flags={:#x}, events={events}; reset={reset}, text={text:?}, foreground_is_target={}, edit_focused={}, caret={caret_pos:?}, edit_ctrl_v_down={ctrl_v}",
+                    gui.hwndActive == top, gui.hwndFocus == top, gui.hwndFocus.is_null(), gui.flags,
+                    GetForegroundWindow() == top, windows_sys::Win32::UI::Input::KeyboardAndMouse::GetFocus() == edit);
+                if state != last_state {
+                    std::fs::write(dir.join("child-state"), &state).unwrap();
+                    last_state = state;
+                }
+                if !reset && text == FIRST {
+                    assert_eq!(windows_sys::Win32::UI::Input::KeyboardAndMouse::GetFocus(), edit);
+                    assert_ne!(SetWindowTextW(edit, wz("").as_ptr()), 0);
+                    assert_eq!(GetWindowTextLengthW(edit), 0);
+                    reset = true;
+                    std::fs::write(dir.join("first-received-and-cleared"), []).unwrap();
+                } else if reset && GetForegroundWindow() != top && !FRAME_ACTIVE.with(std::cell::Cell::get) {
+                    if !dir.join("yielded-to-panel").exists() {
+                        std::fs::write(dir.join("yielded-to-panel"), []).unwrap();
+                    }
+                } else if reset && text == SECOND {
+                    assert_eq!(windows_sys::Win32::UI::Input::KeyboardAndMouse::GetFocus(), edit);
+                    std::fs::write(dir.join("second-received"), []).unwrap();
+                    break;
+                }
+                assert!(std::time::Instant::now() < until, "EDIT did not receive both tokens: {last_state}");
+                Sleep(5);
+            }
+            DestroyWindow(top);
+        }
+    }
+
+    /// Called inside the native clipboard round-trip test so its synthetic
+    /// clipboard writes cannot race the test's image and rich-text writes.
+    unsafe fn native_focus_roundtrip(owner: HWND) {
+        use std::{
+            process::Command,
+            time::{Duration, Instant},
+        };
+        let dir = std::env::temp_dir().join(format!("clipcat-queue-edit-{}", std::process::id()));
+        std::fs::create_dir(&dir).unwrap();
+        let child = Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "platform::windows::clipboard_tests::synthetic_external_edit_fixture",
+            ])
+            .env(TARGET_ENV, &dir)
+            .env("CLIPCAT_SYNTHETIC_PARENT", std::process::id().to_string())
+            .spawn()
+            .unwrap();
+        struct Cleanup(std::process::Child, std::path::PathBuf);
+        impl Drop for Cleanup {
+            fn drop(&mut self) {
+                let _ = self.0.kill();
+                let _ = self.0.wait();
+                let _ = std::fs::remove_dir_all(&self.1);
+            }
+        }
+        let mut child = Cleanup(child, dir);
+        let wait = |name: &str| {
+            let file = child.1.join(name);
+            let until = Instant::now() + Duration::from_secs(8);
+            while !file.exists() && Instant::now() < until {
+                pump_messages(|_| {});
+                std::thread::sleep(Duration::from_millis(10));
+            }
+            assert!(
+                file.exists(),
+                "external fixture timed out waiting for {name}: {}",
+                std::fs::read_to_string(child.1.join("child-state")).unwrap_or_default()
+            );
+        };
+        wait("handles");
+        let ids = std::fs::read_to_string(child.1.join("handles")).unwrap();
+        let mut ids = ids
+            .split_whitespace()
+            .map(|id| id.parse::<usize>().unwrap() as HWND);
+        let top = ids.next().unwrap();
+        let edit = ids.next().unwrap();
+        assert_eq!(GetForegroundWindow(), top);
+        let target = super::super::win_focus::PasteTarget::external().unwrap();
+        assert_eq!(target.control_for_test(), edit);
+        let sequence = set_clipboard_rich(owner, FIRST, None, true).unwrap()
+            .acknowledge(&mut None, true).unwrap();
+        // The dedicated shortcut must preserve the control already in focus.
+        let after_close = GetClipboardSequenceNumber();
+        let original_owner = windows_sys::Win32::System::DataExchange::GetClipboardOwner();
+        let first = submit_paste(target, false, Some(sequence));
+        assert!(first.is_ok(), "first dispatch: {first:?}; captured={target:?}, verified_seq={sequence}, post_close_seq={after_close}, post_close_owner_is_fixture={}", original_owner == owner);
+        wait("first-received-and-cleared");
+        let panel = CreateWindowExW(
+            0,
+            wz("STATIC").as_ptr(),
+            null(),
+            WS_OVERLAPPEDWINDOW,
+            0,
+            0,
+            200,
+            100,
+            null_mut(),
+            null_mut(),
+            GetModuleHandleW(null()),
+            null(),
+        );
+        assert!(!panel.is_null());
+        ShowWindow(panel, SW_SHOW);
+        SetForegroundWindow(panel);
+        SetFocus(panel);
+        let previous = GetForegroundWindow();
+        let own = super::super::win_focus::PasteTarget::external();
+        assert_eq!(previous,panel);
+        assert!(own.is_none());
+        // A normal user chooses the queue action after the editor has yielded to
+        // the panel. Pump the parent and await the editor's own deactivation.
+        wait("yielded-to-panel");
+        let second = set_clipboard_rich(owner, SECOND, None, true).unwrap()
+            .acknowledge(&mut None, true).unwrap();
+        assert_ne!(sequence, second);
+        let refused = submit_paste(target, false, Some(second));
+        assert!(matches!(refused,Err(DispatchFailure::FocusChanged { .. })), "unexpected dedicated dispatch: {refused:?}");
+        let restored = submit_paste(target, true, Some(second));
+        assert!(
+            restored.is_ok(),
+            "restore captured EDIT after panel focus: {restored:?}; captured={target:?}; last child state={}",
+            std::fs::read_to_string(child.1.join("child-state")).unwrap_or_default()
+        );
+        wait("second-received");
+        DestroyWindow(panel);
+        assert!(child.0.wait().unwrap().success());
+    }
+
+    /// Competing readers can hold the clipboard across every verification
+    /// retry without replacing our data. Run inside the serialized round trip.
+    unsafe fn reader_contended_write(owner: HWND, other: HWND) {
+        use super::super::win_privacy::ClipboardIdentity;
+        use std::sync::mpsc;
+        let capture = |marker: &mut Option<ClipboardIdentity>| {
+            read_clipboard_content(owner, || ClipboardIdentity::consume_open(marker))
+        };
+        let partial = RichFormats { html: Some("<b>same</b>".into()), rtf_b64: Some("!".into()) };
+        for (formats, replaced_before_capture) in [(None, false), (Some(&partial), false), (None, true)] {
+            // A partial rich write really produced text and HTML, but a verified
+            // generation can only dispatch when all requested formats succeeded.
+            if formats.is_some() {
+                let partial = set_clipboard_rich(owner, "same synthetic text", formats, false).unwrap();
+                let mut partial_marker = None;
+                assert_eq!(partial.acknowledge(&mut partial_marker, true), None);
+                assert!(capture(&mut partial_marker).is_none());
+            }
+            let write = set_clipboard_rich(owner, "same synthetic text", formats, false).unwrap();
+            let (locked, acquired) = mpsc::sync_channel(0);
+            let (release, released) = mpsc::channel();
+            let reader = std::thread::spawn(move || {
+                let reader_hwnd = CreateWindowExW(0, wz("STATIC").as_ptr(), null(), 0,
+                    0, 0, 0, 0, HWND_MESSAGE, null_mut(), GetModuleHandleW(null()), null());
+                assert!(!reader_hwnd.is_null());
+                let locked_clipboard = (0..20).any(|_| {
+                    if OpenClipboard(reader_hwnd) != 0 { return true; }
+                    Sleep(10);
+                    false
+                });
+                assert!(locked_clipboard, "could not acquire the competing reader lock");
+                assert_eq!(windows_sys::Win32::System::DataExchange::GetOpenClipboardWindow(), reader_hwnd);
+                locked.send(()).unwrap();
+                let _ = released.recv();
+                assert_ne!(CloseClipboard(), 0);
+                DestroyWindow(reader_hwnd);
+            });
+            acquired.recv().unwrap();
+            let mut marker = None;
+            assert_eq!(write.acknowledge(&mut marker, true), None, "unverified writes cannot dispatch");
+            assert!(marker.is_some(), "successful writes must retain a pending capture receipt");
+            let request = (GetClipboardSequenceNumber(), 8);
+            let tick = |request, marker: &mut Option<ClipboardIdentity>| {
+                poll_capture_lock(request, || OpenClipboard(owner) != 0,
+                    || read_open_clipboard_content(|| ClipboardIdentity::consume_open(marker)))
+            };
+            let (retry, content) = tick(request, &mut marker);
+            assert_eq!(retry, Some(request), "retain the sequence and epoch across contention");
+            assert!(content.is_none());
+            assert!(marker.is_some(), "a blocked read must preserve the receipt");
+            release.send(()).unwrap();
+            reader.join().unwrap();
+            if !replaced_before_capture {
+                let mut pending = retry;
+                for _ in 0..30 {
+                    let (retry, content) = tick(pending.unwrap(), &mut marker);
+                    assert!(content.is_none(), "own content reached capture");
+                    pending = retry;
+                    if pending.is_none() { break; }
+                    Sleep(TICK_MS);
+                }
+                assert_eq!(pending, None, "acquiring the lock completes the pending request");
+                assert!(marker.is_none(), "consume the matching receipt once");
+            }
+            set_clipboard_rich(other, "same synthetic text", None, true).unwrap();
+            assert!(matches!(capture(&mut marker),
+                Some(CapturedClip::Text(text, _)) if text == "same synthetic text"));
+            assert!(marker.is_none());
+        }
+    }
+
+    unsafe fn overlapping_clipboard_notifications(owner: HWND, external: HWND) {
+        use super::super::win_privacy::ClipboardIdentity;
+        let mut observed = None;
+        let mut marker = None;
+        // Both changes precede handling the two notifications. Both handlers
+        // therefore see the finalized second generation.
+        let mut write = |token| set_clipboard_rich(owner, token, None, true).unwrap()
+            .acknowledge(&mut marker, true).unwrap();
+        let first = write("first synthetic selection");
+        assert_ne!(first, write("second synthetic selection"));
+        let mut capture = || read_clipboard_content(owner, || ClipboardIdentity::skip_notification(&mut observed, &mut marker));
+        assert!(capture().is_none());
+        assert!(capture().is_none());
+        set_clipboard_rich(external, "second synthetic selection", None, true).unwrap();
+        assert!(matches!(capture(), Some(CapturedClip::Text(text, _)) if text == "second synthetic selection"));
+        assert!(capture().is_none());
+    }
+
     /// Exercises actual Win32 allocation/ownership and format conversion. A
     /// message-only window owns the clipboard without presenting test UI.
     #[test]
@@ -2430,8 +2966,10 @@ mod clipboard_tests {
             }
             let _cleanup = Cleanup(hwnd);
             let formats = RichFormats { html: Some("<b>clip</b>".into()), rtf_b64: Some(b64_encode(b"{\\rtf1 clip}")) };
-            assert!(set_clipboard_rich(hwnd, "클립 text", Some(&formats), false).is_some());
-            match read_clipboard_content(hwnd).unwrap() {
+            let rich_seq = set_clipboard_rich(hwnd, "클립 text", Some(&formats), false).unwrap()
+                .acknowledge(&mut None, true).unwrap();
+            assert_eq!(rich_seq, GetClipboardSequenceNumber());
+            match read_clipboard_content(hwnd, || false).unwrap() {
                 CapturedClip::Text(text, rich) => {
                     assert_eq!(text, "클립 text");
                     assert_eq!(rich, Some(formats));
@@ -2442,28 +2980,65 @@ mod clipboard_tests {
             pm.fill(tiny_skia::Color::from_rgba8(40,80,120,255));
             let image = ClipImage::from_pixmap(&pm).unwrap();
             let before = GetClipboardSequenceNumber();
-            assert!(set_clipboard_image(hwnd, &image).is_some());
+            let image_seq = set_clipboard_image(hwnd, &image).unwrap().acknowledge(&mut None, true).unwrap();
+            assert_eq!(image_seq, GetClipboardSequenceNumber());
             assert_ne!(GetClipboardSequenceNumber(), before);
-            match read_clipboard_content(hwnd).unwrap() {
+            match read_clipboard_content(hwnd, || false).unwrap() {
                 CapturedClip::Image(captured) => assert_eq!(captured, image),
                 _ => panic!("image clipboard was not captured"),
             }
+            // Model a competing writer between the first close and the
+            // receipt check. Opening for verification must not transfer ownership.
+            let other = CreateWindowExW(0,wz("STATIC").as_ptr(),null(),0,0,0,0,0,
+                HWND_MESSAGE,null_mut(),GetModuleHandleW(null()),null());
+            assert!(!other.is_null());
+            let superseded = set_clipboard_image(hwnd, &image).unwrap();
+            let replaced_by = set_clipboard_rich(other, "synthetic replacement", None, true).unwrap()
+                .acknowledge(&mut None, true).unwrap();
+            assert_ne!(replaced_by, image_seq);
+            let mut marker = None;
+            assert_eq!(superseded.acknowledge(&mut marker, true), None);
+            assert!(marker.is_none(), "do not acknowledge another window's clipboard");
+            reader_contended_write(hwnd, other);
+            overlapping_clipboard_notifications(hwnd, other);
+            DestroyWindow(other);
+
             // A DIB-only producer such as a bitmap screenshot must work too.
             assert_ne!(OpenClipboard(hwnd), 0);
             assert_ne!(EmptyClipboard(), 0);
             assert!(write_format(8, &image.to_dib().unwrap()));
             CloseClipboard();
-            match read_clipboard_content(hwnd).unwrap() {
+            match read_clipboard_content(hwnd, || false).unwrap() {
                 CapturedClip::Image(captured) => {
                     assert_eq!(captured.pixmap().unwrap().data(), pm.data())
                 }
                 _ => panic!("DIB-only clipboard was not captured"),
             }
             assert!(set_clipboard_rich(hwnd, "plain", None, true).is_some());
-            match read_clipboard_content(hwnd).unwrap() {
+            match read_clipboard_content(hwnd, || false).unwrap() {
                 CapturedClip::Text(text, rich) => { assert_eq!(text,"plain"); assert!(rich.is_none()); }
                 _ => panic!("old image format survived text copy"),
             }
+            for (name, value, expect_private) in [
+                ("CanIncludeInClipboardHistory", 1u32, false),
+                ("CanIncludeInClipboardHistory", 0, true),
+                ("ExcludeClipboardContentFromMonitorProcessing", 1, true),
+            ] {
+                assert!(set_clipboard_rich(hwnd, "synthetic private", None, true).is_some());
+                assert_ne!(OpenClipboard(hwnd), 0);
+                let atom = RegisterClipboardFormatW(wz(name).as_ptr());
+                assert!(write_format(atom, &value.to_ne_bytes()));
+                CloseClipboard();
+                assert_eq!(read_clipboard_content(hwnd, || false).is_none(), expect_private);
+            }
+
+            // Full desktop injection is exercised on CI runners and opt-in
+            // development desktops, with only the synthetic EDIT as its target.
+            if std::env::var_os("GITHUB_ACTIONS").is_some()
+                || std::env::var_os("CLIPCAT_TEST_DESKTOP").is_some() {
+                native_focus_roundtrip(hwnd);
+            }
+
         }
     }
 }

@@ -19,6 +19,22 @@ pub const PRESETS: &[&str] = &[DEFAULT, "ctrl+shift+v", "alt+shift+v", "ctrl+shi
 #[cfg(target_os = "macos")]
 pub const PRESETS: &[&str] = &[DEFAULT, "win+shift+v", "alt+shift+v", "ctrl+shift+c"];
 
+/// Dedicated queue presets, all distinct from ordinary paste and panel presets.
+pub const QUEUE_KEYS: [char; 3] = ['J', 'K', 'L'];
+
+pub fn queue_hotkey(index: u8) -> Hotkey {
+    Hotkey {
+        ctrl: true,
+        alt: true,
+        shift: false,
+        win: false,
+        key: QUEUE_KEYS
+            .get(usize::from(index))
+            .copied()
+            .unwrap_or(QUEUE_KEYS[0]),
+    }
+}
+
 /// The result of the current registration attempt. Backends unregister the old
 /// chord before calling `rebind`; a failure must clear the visible live label.
 #[derive(Default)]

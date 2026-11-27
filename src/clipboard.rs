@@ -87,6 +87,11 @@ pub struct Clip {
     pub tags: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub image: Option<ClipImage>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ocr_text: Option<String>,
+    /// Session-only capture/restore generation. Late work cannot cross a delete and undo.
+    #[serde(skip)]
+    pub image_generation: u64,
     #[serde(skip, default)]
     thumbnail: OnceCell<Option<tiny_skia::Pixmap>>,
     /// Memoized [`Clip::flattened`] result. `text` never changes after
@@ -98,6 +103,8 @@ pub struct Clip {
 }
 
 // ---- base64 (inline; no crate, per the "no heavy deps" golden rule) ---------
+
+pub const MAX_OCR_TEXT: usize = 64 * 1024;
 
 const B64: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 
@@ -341,6 +348,9 @@ impl ClipStore {
         let mut image_bytes = 0usize;
         items.retain_mut(|c| {
             c.tags = parse_tags(&c.tags.join(",")).unwrap_or_default();
+            if c.image.is_none() || c.ocr_text.as_ref().is_some_and(|t| t.len() > MAX_OCR_TEXT || t.trim().is_empty()) {
+                c.ocr_text = None;
+            }
             if let Some(image) = &c.image {
                 image_bytes = image_bytes.saturating_add(image.png_b64.len());
                 image_bytes <= MAX_STORED_IMAGES && image.pixmap().is_some()
@@ -387,9 +397,8 @@ impl ClipStore {
     pub fn save(&mut self) {
         let out = ClipsOut { clips: &self.items };
         if let (Some(file), Ok(json)) = (clips_file(), serde_json::to_string(&out)) {
-            crate::state::write_atomic(&file, &json);
+            if crate::state::write_atomic(&file, &json) { self.dirty = false; }
         }
-        self.dirty = false;
     }
 
     pub fn save_if_dirty(&mut self) {
@@ -443,6 +452,7 @@ impl ClipStore {
             // same text copied again: bump to top, refresh meta
             let mut clip = self.items.remove(i);
             clip.ts = ts;
+            clip.image_generation = self.version + 1;
             clip.source = source.or(clip.source);
             clip.formats = formats.or(clip.formats);
             self.items.insert(0, clip);
@@ -456,6 +466,8 @@ impl ClipStore {
                 formats,
                 tags: Vec::new(),
                 image,
+                ocr_text: None,
+                image_generation: self.version + 1,
                 thumbnail: OnceCell::new(),
                 flat: OnceCell::new(),
             };
@@ -463,6 +475,15 @@ impl ClipStore {
             self.items.insert(0, clip);
             self.evict();
         }
+        self.touch();
+        true
+    }
+
+    /// Attach local recognition to the same retained image without altering copy formats.
+    pub fn set_ocr_text(&mut self, id: u64, generation: u64, image: &ClipImage, text: String) -> bool {
+        if text.trim().is_empty() || text.len() > MAX_OCR_TEXT { return false; }
+        let Some(clip) = self.items.iter_mut().find(|c| c.id == id && c.image_generation == generation && c.image.as_ref() == Some(image)) else { return false };
+        clip.ocr_text = Some(text);
         self.touch();
         true
     }
@@ -487,26 +508,20 @@ impl ClipStore {
     }
 
     /// Toggles a pin; refuses to pin beyond [`MAX_PINNED`].
-    pub fn toggle_pin(&mut self, id: u64) {
-        let mut unpinned = false;
-        if let Some(c) = self.items.iter_mut().find(|c| c.id == id) {
-            if !c.pinned && self.pinned >= MAX_PINNED {
-                return;
-            }
-            c.pinned = !c.pinned;
-            unpinned = !c.pinned;
-            if unpinned {
-                self.pinned -= 1;
-            } else {
-                self.pinned += 1;
-            }
-            self.touch();
-        }
-        // Unpinning can push the unpinned history back over MAX_HISTORY; trim
-        // it now rather than waiting for the next copy to run evict().
-        if unpinned {
+    pub fn toggle_pin(&mut self, id: u64) -> Option<bool> {
+        let c = self.items.iter_mut().find(|c| c.id == id)?;
+        if !c.pinned && self.pinned >= MAX_PINNED { return None; }
+        c.pinned = !c.pinned;
+        let pinned = c.pinned;
+        if pinned {
+            self.pinned += 1;
+        } else {
+            self.pinned -= 1;
+            // This can evict the very row being unpinned.
             self.evict();
         }
+        self.touch();
+        Some(pinned)
     }
 
     pub fn set_tags(&mut self, id: u64, input: &str) -> bool {
@@ -543,6 +558,22 @@ impl ClipStore {
     }
 
     /// Marks the store changed: needs saving, and cached views are stale.
+    /// Permanently discard expired entries, including session-only undo copies.
+    pub fn expire_before(&mut self, cutoff: u64) -> bool {
+        let keep = |clip: &Clip| clip.pinned || clip.ts >= cutoff;
+        let previous = self.items.len();
+        self.items.retain(keep);
+        let mut changed = self.items.len() != previous;
+        for batch in &mut self.undo {
+            let size = batch.len();
+            batch.retain(keep);
+            changed |= batch.len() != size;
+        }
+        self.undo.retain(|batch| !batch.is_empty());
+        if changed { self.touch(); }
+        changed
+    }
+
     fn touch(&mut self) {
         self.dirty = true;
         self.version += 1;
@@ -560,7 +591,8 @@ impl ClipStore {
     pub fn undo_delete(&mut self) -> Option<u64> {
         let batch = self.undo.pop_back()?;
         let first = batch.first().map(|c| c.id);
-        for clip in batch {
+        for mut clip in batch {
+            clip.image_generation = self.version + 1;
             // re-insert at the ts-sorted spot (items are newest first)
             let i = self
                 .items
@@ -638,6 +670,7 @@ impl ClipStore {
                     c.tags.iter().any(|t| eq_ci(t, tag)).then_some(1000)
                 } else {
                     match_score(&c.text, tok)
+                        .max(c.ocr_text.as_deref().and_then(|s| match_score(s, tok)))
                         .max(c.source.as_deref().and_then(|s| match_score(s, tok)))
                         .max(c.tags.iter().filter_map(|tag| match_score(tag, tok)).max())
                 };
@@ -646,7 +679,7 @@ impl ClipStore {
                     None => return None, // a token matched nowhere => hide the clip
                 }
             }
-            if tokens.len() > 1 && contains_ci(&c.text, q) {
+            if tokens.len() > 1 && (contains_ci(&c.text, q) || c.ocr_text.as_deref().is_some_and(|s| contains_ci(s, q))) {
                 total += PHRASE_BONUS;
             }
             Some(total)
@@ -704,6 +737,39 @@ mod tests {
             s.add_copy(t.to_string(), None);
         }
         s
+    }
+
+    #[test]
+    fn expiration_prunes_inside_a_mixed_undo_batch() {
+        let mut store = store_with(&["pin", "expired", "valid"]);
+        let mut batch = std::mem::take(&mut store.items);
+        for clip in &mut batch {
+            clip.ts = if clip.text == "valid" { 10 } else { 9 };
+            clip.pinned = clip.text == "pin";
+        }
+        store.push_undo(batch);
+        store.expire_before(10);
+        store.undo_delete().unwrap();
+        assert_eq!(store.len(), 2);
+        assert!(store.visible("pin")[0].pinned);
+        assert!(store.visible("valid").len() == 1 && store.visible("expired").is_empty());
+    }
+
+    #[test]
+    fn privacy_expiration_filters_live_and_undo_clips_and_keeps_pins() {
+        let mut s = store_with(&["pin", "live old", "deleted old", "boundary"]);
+        for c in &mut s.items {
+            c.ts = if c.text == "boundary" { 10 } else { 9 };
+        }
+        let pin = s.visible("pin")[0].id;
+        s.toggle_pin(pin);
+        let deleted = s.visible("deleted old")[0].id;
+        s.delete(deleted);
+        assert!(s.expire_before(10));
+        assert_eq!(s.len(), 2);
+        assert!(s.get(pin).unwrap().pinned);
+        assert!(s.undo_delete().is_none());
+        assert!(!s.expire_before(10));
     }
 
     #[test]
@@ -930,6 +996,8 @@ mod tests {
             formats: None,
             tags: Vec::new(),
             image: None,
+            ocr_text: None,
+            image_generation: 0,
             thumbnail: OnceCell::new(),
             flat: OnceCell::new(),
         };
@@ -1131,6 +1199,8 @@ mod tests {
         let image = ClipImage::from_pixmap(&pm).unwrap();
         assert!(s.add_image(image.clone(), Some("Paint".into())));
         let id = s.visible("")[0].id;
+        let generation = s.get(id).unwrap().image_generation;
+        assert!(s.set_ocr_text(id, generation, &image, "Receipt 42 영수증".into()));
         assert!(s.set_tags(id, "사진"));
         s.toggle_pin(id);
         assert!(s.add_image(image.clone(), None));
@@ -1142,10 +1212,35 @@ mod tests {
         let loaded = ClipStore::from_items(serde_json::from_str::<ClipsFile>(&json).unwrap().clips);
         assert_eq!(loaded.get(id).unwrap().image.as_ref(), Some(&image));
         assert_eq!(loaded.visible("#사진").len(), 1);
+        assert_eq!(loaded.visible("receipt 영수증")[0].id, id);
+        assert_eq!(loaded.get(id).unwrap().text, "");
+        assert!(!s.set_ocr_text(id + 1000, generation, &image, "late".into()));
         let old = r#"{"clips":[{"id":1,"text":"old","source":null,"pinned":false,"ts":0}]}"#;
         let old = ClipStore::from_items(serde_json::from_str::<ClipsFile>(old).unwrap().clips);
         assert!(old.get(1).unwrap().image.is_none());
         assert!(old.get(1).unwrap().tags.is_empty());
+    }
+
+    #[test]
+    fn stale_ocr_cannot_cross_deletion_undo_or_expiration() {
+        let mut store = store_with(&[]);
+        let image = ClipImage::from_pixmap(&tiny_skia::Pixmap::new(2, 2).unwrap()).unwrap();
+        store.add_image(image.clone(), None);
+        let clip = &store.items[0];
+        let (id, generation) = (clip.id, clip.image_generation);
+        store.delete(id);
+        assert!(!store.set_ocr_text(id, generation, &image, "deleted".into()));
+        assert_eq!(store.undo_delete(), Some(id));
+        assert!(!store.set_ocr_text(id, generation, &image, "restored".into()));
+        let generation = store.items[0].image_generation;
+        store.add_copy("unrelated".into(), None);
+        let wrong = ClipImage::from_pixmap(&tiny_skia::Pixmap::new(3, 3).unwrap()).unwrap();
+        assert!(!store.set_ocr_text(id, generation, &wrong, "wrong image".into()));
+        assert!(!store.set_ocr_text(id, generation, &image, "  ".into()));
+        assert!(!store.set_ocr_text(id, generation, &image, "a".repeat(MAX_OCR_TEXT + 1)));
+        assert!(store.set_ocr_text(id, generation, &image, "retained".into()));
+        store.expire_before(now_ts() + 1);
+        assert!(!store.set_ocr_text(id, generation, &image, "expired".into()));
     }
 
     #[test]

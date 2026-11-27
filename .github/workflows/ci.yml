@@ -107,8 +107,51 @@ jobs:
       - name: Clippy
         run: cargo clippy --release
 
+      - name: Select English Windows OCR profile
+        if: runner.os == 'Windows'
+        shell: powershell
+        run: ./scripts/ci_windows_ocr.ps1 en-US
+
       - name: Test
-        run: cargo test --release
+        if: runner.os != 'Windows'
+        run: cargo test --locked --release --no-fail-fast
+
+      - name: Test native Windows
+        if: runner.os == 'Windows'
+        shell: bash
+        env:
+          CLIPCAT_TEST_DESKTOP: '1'
+          CLIPCAT_OCR_EVIDENCE: ${{ runner.temp }}/clipcat-windows-ocr
+        run: |
+          set -o pipefail
+          cargo test --locked --release --no-fail-fast 2>&1 | tee native-test.log
+
+      - name: Upload native test diagnostics before language provisioning
+        if: "!cancelled() && runner.os == 'Windows'"
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-native-test-log
+          path: native-test.log
+          if-no-files-found: error
+
+      - name: Recognize synthetic Hangul with the Korean Windows profile
+        timeout-minutes: 18
+        if: "!cancelled() && runner.os == 'Windows'"
+        shell: powershell
+        env:
+          CLIPCAT_OCR_LANGUAGE: ko-KR
+          CLIPCAT_OCR_EVIDENCE: ${{ runner.temp }}/clipcat-windows-ocr
+        run: |
+          ./scripts/ci_windows_ocr.ps1 ko-KR
+          cargo test --locked --release --test windows_ocr installed_profile_recognizer_reads_synthetic_image -- --exact --nocapture
+
+      - name: Upload native OCR evidence
+        if: "!cancelled() && runner.os == 'Windows'"
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-ocr-languages
+          path: ${{ runner.temp }}/clipcat-windows-ocr
+          if-no-files-found: error
 
       - name: Validate macOS cat assets and rendering
         if: runner.os == 'macOS'
@@ -163,8 +206,20 @@ jobs:
 
       # Also exercise the portable backend on Windows so it can't bit-rot.
       - name: Clippy (portable backend on Windows)
-        if: runner.os == 'Windows'
-        run: cargo clippy --release --features portable
+        if: "!cancelled() && runner.os == 'Windows'"
+        env:
+          CARGO_TARGET_DIR: target/portable
+        run: cargo clippy --locked --release --features portable
+
+      - name: Test portable clipboard and hotkey contracts on Windows
+        if: "!cancelled() && runner.os == 'Windows'"
+        env:
+          CARGO_TARGET_DIR: target/portable
+        run: cargo test --locked --release --features portable
+
+      - name: Verify native update executable through its OCR worker
+        if: "!cancelled() && runner.os == 'Windows'"
+        run: python -c "import subprocess, sys; result = subprocess.run(['target/release/clipcat.exe','--ocr-worker'], input=b'{}', timeout=10); sys.exit(0 if result.returncode == 3 else 1)"
 
       # The in-app updater (src/update.rs) downloads release assets from
       # github.com/<repo>/releases/download/<tag>/<name>; these names are
@@ -197,6 +252,42 @@ jobs:
           name: release-${{ matrix.os }}
           path: dist/release/*
           if-no-files-found: error
+
+  # PR validation for shared clipboard/hotkey code. Separate from release assets.
+  linux-workflows:
+    name: Linux X11 workflows
+    needs: [changes, changelog]
+    if: >-
+      (github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch') &&
+      needs.changes.outputs.source == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Select isolated Linux test profile
+        run: echo "CLIPCAT_CONFIG_DIR=$RUNNER_TEMP/clipcat-linux-tests" >> "$GITHUB_ENV"
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+      - name: Install X11 validation dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libx11-dev libxi-dev libxtst-dev libxkbcommon-dev libxkbcommon-x11-dev pkg-config xvfb xclip xdotool x11-xserver-utils imagemagick fonts-noto-cjk python3-tk
+      - name: Build and check Linux
+        run: |
+          cargo build --locked --release
+          cargo clippy --locked --release
+          xvfb-run -a -s '-screen 0 1280x1024x24 -noreset' cargo test --locked --release
+          xvfb-run -a -s '-screen 0 1280x1024x24 -noreset' cargo test --locked --release x11_ -- --ignored --test-threads=1
+      - name: Exercise clipboard and native panel
+        run: xvfb-run -a -s '-screen 0 1280x1024x24 -noreset' python3 scripts/validate_linux_workflows.py target/release/clipcat
+      - name: Upload Linux validation evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: clipcat-linux-validation
+          path: ${{ runner.temp }}/clipcat-linux-validation
+          if-no-files-found: warn
 
   # Publishes the GitHub Release the in-app updater checks against. Runs on
   # an ubuntu runner but builds nothing — it only attaches the artifacts.

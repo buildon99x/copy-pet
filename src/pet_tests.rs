@@ -183,10 +183,10 @@ fn capture_pause_ignores_copies() {
 fn find(entries: &[MenuEntry], action: MenuAction) -> Option<&MenuItem> {
     for e in entries {
         if let MenuEntry::Item(it) = e {
-            if it.action == Some(action) {
+            if it.action.as_ref() == Some(&action) {
                 return Some(it);
             }
-            if let Some(found) = find(&it.submenu, action) {
+            if let Some(found) = find(&it.submenu, action.clone()) {
                 return Some(found);
             }
         }
@@ -970,4 +970,270 @@ fn affection_finishes_one_pending_response_and_copy_saves_during_it() {
     assert!(p.fish.is_some(), "deferred copy decorates after bounded affection");
     for _ in 0..40 { p.last_tick -= std::time::Duration::from_millis(100); p.advance(); }
     assert!(!p.advance(), "completed affection and copy settle without repaint");
+}
+
+#[test]
+fn privacy_rejects_excluded_text_and_image_without_feedback() {
+    let mut p = pet();
+    p.st = serde_json::from_str(r#"{"excluded_sources":["Private App"]}"#).unwrap();
+    p.on_copy("synthetic secret".into(), Some("PRIVATE APP".into()), None);
+    let pixels = tiny_skia::Pixmap::new(2, 2).unwrap();
+    let image = ClipImage::from_pixmap(&pixels).unwrap();
+    p.on_copy_image(image, Some("private app".into()), None);
+    assert!(p.clips.is_empty());
+    assert!(p.fish_queue.is_empty());
+    p.on_copy("ordinary".into(), Some("Editor".into()), None);
+    assert_eq!(p.clips.len(), 1);
+}
+
+#[test]
+fn privacy_legacy_settings_default_to_unlimited_capture() {
+    let settings: Persist = serde_json::from_str("{}").unwrap();
+    let json = serde_json::to_value(settings).unwrap();
+    assert_eq!(json["retention_days"], 0);
+    assert_eq!(json["excluded_sources"], serde_json::json!([]));
+}
+
+#[test]
+fn privacy_menu_keeps_existing_clips_and_restores_excluded_sources_after_clear() {
+    let mut p = pet();
+    p.on_copy("synthetic history".into(), Some("Editor".into()), None);
+    let toggle = MenuAction::ToggleExcludedSource("Editor".into());
+    assert!(!find(&p.build_menu("HK", false), toggle.clone()).unwrap().checked);
+    p.apply_menu_action(toggle.clone());
+    assert_eq!(p.clips.len(), 1);
+    p.clips.clear_unpinned();
+    assert!(find(&p.build_menu("HK", false), toggle.clone()).unwrap().checked);
+    p.apply_menu_action(toggle);
+    p.on_copy("allowed again".into(), Some("editor".into()), None);
+    assert_eq!(p.clips.len(), 1);
+}
+
+#[test]
+fn ordered_queue_keeps_rich_and_image_snapshots_rejects_mixed_combine() {
+    let mut p = pet();
+    p.open_panel();
+    let rich = RichFormats {
+        html: Some("<b>test</b>".into()),
+        rtf_b64: None,
+    };
+    p.on_copy_rich(
+        "test".into(),
+        Some("Writer".into()),
+        None,
+        Some(rich.clone()),
+    );
+    p.panel_nav(NavKey::QueueAdd);
+    let image = ClipImage::from_pixmap(&Pixmap::new(2, 2).unwrap()).unwrap();
+    p.on_copy_image(image.clone(), Some("Paint".into()), None);
+    p.panel_nav(NavKey::QueueAdd);
+    p.panel_nav(NavKey::QueueView);
+    assert!(p.panel_nav(NavKey::QueueCombine).is_none());
+    assert_eq!(p.next_queue_pick().unwrap().formats, Some(rich));
+    p.finish_queue_pick(true);
+    assert_eq!(p.next_queue_pick().unwrap().image, Some(image.clone()));
+    p.finish_queue_pick(false);
+    assert_eq!(p.next_queue_pick().unwrap().image, Some(image));
+    p.finish_queue_pick(true);
+    assert!(p.next_queue_pick().is_none());
+    assert!(p.panel_nav(NavKey::QueueReplay).unwrap().image.is_some());
+}
+
+#[test]
+fn ordered_queue_invalidation_rejects_pending_output_and_history_eviction_keeps_snapshot() {
+    let mut p = pet();
+    p.open_panel();
+    p.on_copy("sensitive".into(), Some("Writer".into()), None);
+    p.panel_nav(NavKey::QueueAdd);
+    for i in 0..crate::clipboard::MAX_HISTORY {
+        p.clips.add_copy(format!("safe {i}"), None);
+    }
+    assert_eq!(p.next_queue_pick().unwrap().text, "sensitive");
+    p.apply_menu_action(MenuAction::ToggleExcludedSource("writer".into()));
+    assert!(!p.queue_output_valid());
+    p.finish_queue_pick(false);
+    assert!(p.next_queue_pick().is_none());
+    p.panel_nav(NavKey::QueueAdd);
+    p.run_action(PanelAction::Clear);
+    assert!(p.panel.queue.entries().is_empty());
+    p.on_copy("delete".into(), None, None);
+    p.panel_nav(NavKey::QueueAdd);
+    let id = p.panel.queue.next().unwrap().id;
+    p.run_action(PanelAction::Delete(id));
+    assert!(p.next_queue_pick().is_none());
+}
+
+#[test]
+fn ordered_queue_retention_pin_and_explicit_pause_apply_to_snapshots() {
+    let mut p = pet();
+    let clip = |id, pinned| {
+        serde_json::from_value(serde_json::json!({
+            "id": id, "text":"old", "source":null, "ts":1, "pinned":pinned
+        }))
+        .unwrap()
+    };
+    p.panel.queue.toggle(&clip(1, false));
+    p.panel.queue.toggle(&clip(2, true));
+    p.apply_menu_action(MenuAction::SetRetention(1));
+    assert_eq!(p.panel.queue.next().unwrap().id, 2);
+    p.apply_menu_action(MenuAction::ToggleCapture);
+    assert!(p.panel.queue.entries().is_empty());
+    assert!(p.next_queue_pick().is_none());
+}
+
+#[test]
+fn ordered_queue_bounds_and_staged_combination_are_stable() {
+    let mut p = pet();
+    p.open_panel();
+    for i in 0..=crate::paste_queue::PasteQueue::LIMIT {
+        p.on_copy(format!("line-{i}"), None, None);
+        p.panel_nav(NavKey::QueueAdd);
+    }
+    assert_eq!(
+        p.panel.queue.entries().len(),
+        crate::paste_queue::PasteQueue::LIMIT
+    );
+    p.panel_nav(NavKey::QueueView);
+    let pick = p.panel_nav(NavKey::QueueCombine).unwrap();
+    assert!(pick.plain_only && pick.queued);
+    assert_eq!(p.staged_queue_pick(true).unwrap(), pick);
+    p.panel_nav(NavKey::QueueReset);
+    assert!(p.staged_queue_pick(true).is_none());
+}
+
+#[test]
+fn ordered_queue_shortcut_presets_keep_legacy_panel_binding_untouched() {
+    let state: Persist = serde_json::from_str("{}").unwrap();
+    assert_eq!(state.queue_hotkey, 0);
+    let panel_hotkey = state.hotkey.clone();
+    let mut p = Pet::new(state);
+    p.open_panel();
+    p.panel_nav(NavKey::QueueView);
+    for key in ['K', 'L', 'J'] {
+        p.panel_nav(NavKey::QueueShortcut);
+        assert_eq!(crate::hotkey::queue_hotkey(p.st.queue_hotkey).key, key);
+        assert_eq!(p.st.hotkey, panel_hotkey);
+    }
+}
+
+#[test]
+fn ocr_result_requires_eligible_source_and_copies_only_recognized_plain_text() {
+    let mut p = pet();
+    let image = ClipImage::from_pixmap(&Pixmap::new(3, 2).unwrap()).unwrap();
+    p.clips.add_image(image.clone(), Some("Paint".into()));
+    let clip = p.clips.visible("")[0].clone();
+    assert!(p.ocr_allowed(&clip));
+    p.apply_menu_action(MenuAction::ToggleExcludedSource("paint".into()));
+    assert!(!p.ocr_allowed(&clip));
+    p.apply_menu_action(MenuAction::ToggleExcludedSource("paint".into()));
+    p.apply_menu_action(MenuAction::ToggleCapture);
+    assert!(!p.ocr_allowed(&clip));
+    let pick = ClipPick::recognized_text("Receipt 12345");
+    assert_eq!(pick.text, "Receipt 12345");
+    assert!(pick.plain_only && !pick.queued && !pick.paste);
+    assert!(pick.image.is_none() && pick.formats.is_none());
+    assert_eq!(clip.image, Some(image));
+}
+
+#[test]
+fn recognition_request_identity_expires_before_any_completion_status() {
+    let mut p = pet();
+    let image = ClipImage::from_pixmap(&Pixmap::new(2, 2).unwrap()).unwrap();
+    p.clips.add_image(image.clone(), Some("Paint".into()));
+    let clip = p.clips.visible("")[0];
+    let (id, generation) = (clip.id, clip.image_generation);
+    let epoch = p.capture_epoch.load(std::sync::atomic::Ordering::Acquire);
+    assert!(p.ocr_request_current(id, generation, epoch, &image));
+    p.clips.delete(id);
+    p.clips.undo_delete();
+    assert!(!p.ocr_request_current(id, generation, epoch, &image));
+    let generation = p.clips.get(id).unwrap().image_generation;
+    p.clips.add_image(image.clone(), None);
+    assert!(!p.ocr_request_current(id, generation, epoch, &image));
+    let generation = p.clips.get(id).unwrap().image_generation;
+    let wrong = ClipImage::from_pixmap(&Pixmap::new(1, 1).unwrap()).unwrap();
+    assert!(!p.ocr_request_current(id, generation, epoch, &wrong));
+    assert!(!p.ocr_request_current(id, generation, epoch.wrapping_add(1), &image));
+}
+
+#[test]
+fn closing_long_image_preview_returns_to_its_original_row_and_panel() {
+    for flyout in [true, false] {
+        let mut p = pet();
+        let image = ClipImage::from_pixmap(&Pixmap::new(3, 2).unwrap()).unwrap();
+        p.clips.add_image(image.clone(), None);
+        let clip = p.clips.visible("")[0];
+        let (id, generation) = (clip.id, clip.image_generation);
+        let text = "Artwork • 영수증\n".repeat(2000);
+        assert!(p.clips.set_ocr_text(id, generation, &image, text.clone()));
+        if flyout { p.open_flyout(); } else { p.open_panel(); }
+        p.clips.add_copy("another row".into(), None);
+        assert_ne!(p.panel.selected_id(&p.clips), Some(id));
+        assert!(p.restore_image_preview(id, generation, flyout));
+        assert_eq!(p.panel.selected_id(&p.clips), Some(id));
+        assert_eq!(p.flyout_open(), flyout);
+        assert_eq!(p.embedded_panel_open(), !flyout);
+        assert_eq!(p.clips.get(id).unwrap().ocr_text.as_deref(), Some(text.as_str()));
+        p.clips.delete(id);
+        p.clips.undo_delete();
+        assert!(!p.restore_image_preview(id, generation, flyout));
+    }
+}
+
+#[test]
+fn unpin_of_evicted_queued_row_revokes_replay_on_clear_or_expiry() {
+    for clear in [true, false] {
+        let mut p = pet();
+        p.open_panel();
+        p.on_copy("queued old pin".into(), None, None);
+        let id = p.panel.selected_id(&p.clips).unwrap();
+        p.run_action(PanelAction::TogglePin(id));
+        let mut snapshot = p.clips.get(id).unwrap().clone();
+        snapshot.ts = 1;
+        p.panel.queue.toggle(&snapshot);
+        p.next_queue_pick().unwrap();
+        p.finish_queue_pick(true);
+        for i in 0..crate::clipboard::MAX_HISTORY { p.clips.add_copy(format!("new {i}"), None); }
+        p.run_action(PanelAction::TogglePin(id));
+        assert!(p.clips.get(id).is_none());
+        if clear { p.run_action(PanelAction::Clear); }
+        else { p.apply_menu_action(MenuAction::SetRetention(1)); }
+        assert!(p.panel.queue.previous().is_none());
+    }
+}
+
+#[test]
+fn action_cutoff_prunes_deleted_and_live_rows_before_restore_or_pin() {
+    let mut p = pet();
+    p.st.retention_days = 1;
+    for text in ["pinned", "live", "deleted"] { p.clips.add_copy(text.into(), None); }
+    let ids = ["pinned", "live", "deleted"].map(|text| p.clips.visible(text)[0].id);
+    let ts = p.clips.get(ids[2]).unwrap().ts;
+    p.run_action_at(PanelAction::TogglePin(ids[0]), ts);
+    p.run_action_at(PanelAction::Delete(ids[0]), ts);
+    p.run_action_at(PanelAction::Delete(ids[2]), ts + 86_400);
+    p.run_action_at(PanelAction::Undo, ts + 86_401);
+    p.run_action_at(PanelAction::TogglePin(ids[1]), ts + 86_401);
+    assert!(p.clips.get(ids[0]).unwrap().pinned);
+    assert!(p.clips.get(ids[1]).is_none() && p.clips.get(ids[2]).is_none());
+    assert!(p.clips.undo_delete().is_none());
+}
+
+#[test]
+fn preview_reads_only_the_retained_generation_even_when_capture_is_paused() {
+    let mut p = pet();
+    let image = ClipImage::from_pixmap(&Pixmap::new(2, 2).unwrap()).unwrap();
+    p.clips.add_image(image.clone(), Some("Paint".into()));
+    let clip = p.clips.visible("")[0];
+    let (id, generation, ts) = (clip.id, clip.image_generation, clip.ts);
+    p.clips.set_ocr_text(id, generation, &image, "receipt".into());
+    p.st.retention_days = 1;
+    p.apply_menu_action(MenuAction::ToggleExcludedSource("Paint".into()));
+    p.apply_menu_action(MenuAction::ToggleCapture);
+    assert_eq!(p.retained_ocr_text(id, generation, ts + 86_400), Some("receipt"));
+    assert_eq!(p.retained_ocr_text(id, generation, ts + 86_401), None);
+    p.clips.delete(id);
+    assert_eq!(p.retained_ocr_text(id, generation, ts), None);
+    p.clips.undo_delete();
+    assert_eq!(p.retained_ocr_text(id, generation, ts), None);
 }

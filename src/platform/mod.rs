@@ -57,3 +57,19 @@ mod flyout;
 
 #[cfg(target_os = "macos")]
 mod mac_paste;
+
+#[cfg(windows)]
+mod win_privacy;
+#[cfg(windows)]
+mod win_focus;
+
+#[cfg(target_os = "linux")]
+mod linux_clipboard;
+
+#[cfg(all(windows, not(feature = "portable")))]
+mod win_ocr;
+#[cfg(all(windows, not(feature = "portable")))]
+pub use win_ocr::worker as ocr_worker;
+
+#[cfg(all(windows, not(feature = "portable")))]
+mod win_ocr_preview;

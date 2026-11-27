@@ -830,3 +830,118 @@ pub fn picker(lang: Lang, text: PickerText) -> &'static str {
         (Error, Lang::En) => "Could not load this cat", (Error, Lang::Ko) => "고양이를 불러오지 못했습니다",
     }
 }
+
+pub fn retention_label(lang: Lang, days: u16) -> String {
+    match (lang, days) {
+        (Lang::En, 0) => "Unlimited".into(),
+        (Lang::Ko, 0) => "무기한".into(),
+        (Lang::En, 1) => "1 day".into(),
+        (Lang::En, _) => format!("{days} days"),
+        (Lang::Ko, _) => format!("{days}일"),
+    }
+}
+
+pub fn retention_title(lang: Lang) -> &'static str {
+    match lang { Lang::En => "Keep unpinned clips", Lang::Ko => "고정하지 않은 항목 보관 기간" }
+}
+
+pub fn exclusion_title(lang: Lang) -> &'static str {
+    match lang { Lang::En => "Exclude copies from apps", Lang::Ko => "복사 수집에서 제외할 앱" }
+}
+
+pub fn source_status(lang: Lang, name: &str, excluded: bool) -> String {
+    match (lang, excluded) {
+        (Lang::En, true) => format!("{name} · excluded"),
+        (Lang::En, false) => format!("{name} · capture enabled"),
+        (Lang::Ko, true) => format!("{name} · 수집 제외"),
+        (Lang::Ko, false) => format!("{name} · 수집 허용"),
+    }
+}
+
+#[derive(Clone, Copy)]
+pub enum QueueText {
+    ImageUnsupported,
+    Failed,
+    Full,
+    Excluded,
+    TextOnly,
+    NextKey,
+    ShortcutFailed,
+    Target,
+}
+
+pub fn queue_text(lang: Lang, msg: QueueText) -> &'static str {
+    use QueueText::*;
+    match (lang, msg) {
+        (Lang::En, ImageUnsupported) => "Queued images require Windows native. Item kept.",
+        (Lang::Ko, ImageUnsupported) => "이미지는 Windows 네이티브에서 붙여넣으세요. 항목을 유지합니다.",
+        (Lang::En, Failed) => "Paste failed. The item is still queued.",
+        (Lang::Ko, Failed) => "붙여넣기에 실패했습니다. 항목은 대기 중입니다.",
+        (Lang::En, Target) => "Focus the destination, then press the queue shortcut.",
+        (Lang::Ko, Target) => "대상 창에서 대기열 단축키를 누르세요.",
+        (Lang::En, Full) => "Queue full (16 items)",
+        (Lang::Ko, Full) => "대기열이 가득 찼습니다 (16개)",
+        (Lang::En, Excluded) => "Capture privacy settings prevent adding this clip.",
+        (Lang::Ko, Excluded) => "수집 보호 설정으로 이 항목을 추가할 수 없습니다.",
+        (Lang::En, TextOnly) => "Combine requires one or more text clips.",
+        (Lang::Ko, TextOnly) => "합치려면 텍스트 항목만 선택하세요.",
+        (Lang::En, ShortcutFailed) => "Shortcut unavailable · change F7",
+        (Lang::Ko, ShortcutFailed) => "단축키 등록 실패 · 변경 F7",
+        (Lang::En, NextKey) => "Next paste · change F7",
+        (Lang::Ko, NextKey) => "다음 붙여넣기 · 변경 F7",
+    }
+}
+
+pub fn queue_button(lang: Lang, key: crate::panel::NavKey, open: bool) -> &'static str {
+    use crate::panel::NavKey::*;
+    let (en, ko) = match key {
+        QueueView if open => ("Back F2", "목록 F2"),
+        QueueView => ("Queue F2", "대기열 F2"),
+        QueueAdd => ("Add/remove F3", "추가/제거 F3"),
+        Left => ("Earlier ←", "앞으로 ←"),
+        Right => ("Later →", "뒤로 →"),
+        Delete => ("Remove Del", "제거 Del"),
+        QueueReset => ("Clear F4", "비우기 F4"),
+        Enter => ("Next Enter", "다음 Enter"),
+        QueueReplay => ("Replay F5", "다시 F5"),
+        QueueCombine => ("Combine F6", "합치기 F6"),
+        _ => ("", ""),
+    };
+    if lang == Lang::Ko {
+        ko
+    } else {
+        en
+    }
+}
+
+#[cfg(all(windows, not(feature = "portable")))]
+#[derive(Clone, Copy, Hash, PartialEq, Eq)]
+pub(crate) enum ImageTextMessage { Actions, Busy, Ready, Empty, Unavailable, Failed, Missing, Restricted, Preview, CopySelection, SelectAll }
+#[cfg(all(windows, not(feature = "portable")))]
+pub(crate) fn image_text_message(lang: Lang, msg: ImageTextMessage) -> &'static str {
+    use ImageTextMessage::*;
+    match (lang, msg) {
+        (Lang::En, CopySelection) => "Copy",
+        (Lang::Ko, CopySelection) => "복사",
+        (Lang::En, SelectAll) => "Select all",
+        (Lang::Ko, SelectAll) => "모두 선택",
+        (Lang::En, Preview) => "Recognized image text",
+        (Lang::Ko, Preview) => "인식한 이미지 글자",
+        (Lang::En, Actions) => "F8 Read · F9 Preview · F10 Copy text",
+        (Lang::Ko, Actions) => "F8 인식 · F9 미리보기 · F10 글자 복사",
+        (Lang::En, Busy) => "Reading image text…",
+        (Lang::Ko, Busy) => "이미지 글자를 인식하는 중…",
+        (Lang::En, Ready) => "Image text ready · F9 preview",
+        (Lang::Ko, Ready) => "글자 인식 완료 · F9 미리보기",
+        (Lang::En, Empty) => "No text found · F8 retry",
+        (Lang::Ko, Empty) => "찾은 글자가 없습니다 · F8 재시도",
+        (Lang::En, Unavailable) => "Windows OCR unavailable. Check installed OCR languages and app package.",
+        (Lang::Ko, Unavailable) => "Windows 글자 인식을 사용할 수 없습니다. 설치된 인식 언어와 앱 패키지를 확인하세요.",
+        (Lang::En, Failed) => "Image recognition failed · F8 retry",
+        (Lang::Ko, Failed) => "글자 인식 실패 · F8 재시도",
+        (Lang::En, Missing) => "Press F8 to recognize image text first",
+        (Lang::Ko, Missing) => "먼저 F8을 눌러 이미지 글자를 인식하세요",
+        (Lang::En, Restricted) => "Recognition blocked by capture privacy settings",
+        (Lang::Ko, Restricted) => "수집 개인정보 설정으로 글자 인식이 차단되었습니다",
+    }
+}

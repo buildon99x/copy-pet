@@ -11,5 +11,9 @@
 #![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
 
 fn main() {
+    #[cfg(all(windows, not(feature = "portable")))]
+    if std::env::args_os().nth(1).as_deref() == Some(std::ffi::OsStr::new("--ocr-worker")) {
+        std::process::exit(clipcat::platform::ocr_worker());
+    }
     clipcat::platform::run();
 }

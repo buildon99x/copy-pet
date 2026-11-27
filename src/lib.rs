@@ -9,6 +9,8 @@ pub mod ai_workbench;
 pub mod brand_icon;
 pub mod cat;
 pub mod clip_image;
+#[cfg(any(not(windows), feature = "portable"))]
+mod capture_policy;
 pub mod clipboard;
 pub mod hotkey;
 pub mod hunter_art;
@@ -26,3 +28,4 @@ pub mod update;
 pub mod viewport;
 
 pub mod cat_picker;
+pub mod paste_queue;

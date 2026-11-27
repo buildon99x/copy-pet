@@ -31,3 +31,4 @@ rather than rewrite.
 | [0022](0022-art-source-and-prompt-provenance.md) | Versioned artwork originals, prompt provenance and frozen generation inputs | Accepted |
 | [0023](0023-production-release-promotion.md) | main development and verified published-release promotion to production | Accepted |
 | [0024](0024-selected-illustrated-brand-icon.md) | User-selected illustrated app icon with code-owned native packaging | Accepted |
+| [0025](0025-local-windows-ocr.md) | Explicit local Windows image recognition in a bounded worker | Accepted |

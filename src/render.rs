@@ -525,6 +525,107 @@ pub fn draw_panel_scaled(pm: &mut Pixmap, v: &PanelView, density: f32) {
     cv.fill(&card, (255, 255, 255, 247));
     cv.stroke(&card, OUTLINE, 2.5);
 
+    if v.panel.ai_view.is_none() {
+        for (key, x, y, w) in v.panel.queue_buttons() {
+            let label = i18n::queue_button(lang, key, v.panel.queue_open);
+            let label = if key == pl::NavKey::QueueView && !v.panel.queue_open {
+                format!("{} ({})", label, v.panel.queue.entries().len())
+            } else {
+                label.to_owned()
+            };
+            cv.fill(
+                &round_rect(
+                    x + 1.0,
+                    y,
+                    w - 2.0,
+                    if v.panel.queue_open { 20.0 } else { 15.0 },
+                    3.0,
+                ),
+                (229, 239, 251, 255),
+            );
+            let size = if v.panel.queue_open { 1.6 } else { 1.4 };
+            cv.ui_text(
+                &sysfont::truncate_to_width(&label, size, w - 6.0),
+                x + 3.0,
+                y + 2.0,
+                size,
+                TEXT,
+            );
+        }
+        if v.panel.queue_open {
+            let entries = v.panel.queue.entries();
+            let title = format!(
+                "{} ({})",
+                i18n::queue_button(lang, pl::NavKey::QueueView, false),
+                entries.len()
+            );
+            cv.ui_text_bold(&title, lt.row_x, lt.btn_y, 1.8, TEXT);
+            let shortcut = crate::hotkey::queue_hotkey(v.panel.queue_hotkey).display();
+            let binding = i18n::queue_text(
+                lang,
+                if v.panel.queue_conflict {
+                    i18n::QueueText::ShortcutFailed
+                } else {
+                    i18n::QueueText::NextKey
+                },
+            );
+            let label = format!("{shortcut} · {binding}");
+            cv.fill(
+                &round_rect(lt.search_x, lt.search_y, lt.search_w, lt.search_h, 3.0),
+                (229, 239, 251, 255),
+            );
+            cv.ui_text(
+                &sysfont::truncate_to_width(&label, 1.55, lt.search_w - 8.0),
+                lt.search_x + 4.0,
+                lt.search_y + 2.0,
+                1.55,
+                TEXT,
+            );
+            let next = v.panel.queue.next().map(|entry| entry.id);
+            for (row, (index, entry)) in entries
+                .iter()
+                .enumerate()
+                .skip(v.panel.queue_start())
+                .enumerate()
+            {
+                let y = lt.rows_y + row as f32 * 22.0;
+                if y + 22.0 > lt.footer_y - 46.0 {
+                    break;
+                }
+                if index == v.panel.queue_sel.min(entries.len().saturating_sub(1)) {
+                    cv.fill(
+                        &round_rect(lt.row_x, y, lt.row_w, 21.0, 3.0),
+                        (223, 237, 252, 255),
+                    );
+                }
+                let preview = if entry.image.is_some() {
+                    t(lang, Msg::ImageClip)
+                } else {
+                    entry.flattened()
+                };
+                let label = format!(
+                    "{} {}. {}",
+                    if next == Some(entry.id) { "▶" } else { " " },
+                    index + 1,
+                    preview
+                );
+                cv.ui_text(
+                    &sysfont::truncate_to_width(&label, 1.55, lt.row_w - 8.0),
+                    lt.row_x + 4.0,
+                    y + 3.0,
+                    1.55,
+                    TEXT,
+                );
+            }
+            if let Some(status) = v.panel.queue_status {
+                let text =
+                    sysfont::truncate_to_width(i18n::queue_text(lang, status), 1.3, lt.row_w);
+                cv.ui_text(&text, lt.row_x, lt.footer_y + 2.0, 1.3, TEXT_DIM);
+            }
+            return;
+        }
+    }
+
     if let Some(view) = &v.panel.ai_view {
         let title = sysfont::truncate_to_width(&view.title, 1.8, lt.btn_view_x - lt.row_x - 8.0);
         cv.ui_text(&title, lt.row_x + 4.0, lt.btn_y + 2.0, 1.8, TEXT);
@@ -826,6 +927,11 @@ pub fn draw_panel_scaled(pm: &mut Pixmap, v: &PanelView, density: f32) {
         } else {
             pl::OVF_ZONE + pl::PIN_ZONE + if quick { 16.0 } else { 0.0 }
         };
+        if let Some(pos) = v.panel.queue.entries().iter().position(|entry| entry.id == clip.id) {
+            let order = format!("[{}]", pos+1);
+            cv.ui_text_bold(&order,tx,ry+4.5,BODY_PX,TEXT);
+            tx += sysfont::measure(&order,BODY_PX)+4.0;
+        }
         let tmax = right - cluster - tx - 6.0;
         let image_label = clip.image.as_ref().map(|image| {
             format!(
@@ -835,7 +941,16 @@ pub fn draw_panel_scaled(pm: &mut Pixmap, v: &PanelView, density: f32) {
                 image.height
             )
         });
-        let flat = image_label.as_deref().unwrap_or_else(|| clip.flattened());
+        let flat = clip.ocr_text.as_deref().map(|s| {
+            // Bound per-frame shaping of potentially long OCR output.
+            &s[..s.char_indices().nth(160).map_or(s.len(), |(end, _)| end)]
+        }).or(image_label.as_deref()).unwrap_or_else(|| clip.flattened());
+        #[cfg(all(windows, not(feature = "portable")))]
+        let flat = match v.panel.ocr_status {
+            Some((id, generation, msg)) if id == clip.id && generation == clip.image_generation && msg != i18n::ImageTextMessage::Ready =>
+                i18n::image_text_message(lang, msg),
+            _ => flat,
+        };
         let (line1, line2) = if thumb {
             sysfont::wrap_two(flat, BODY_PX, tmax)
         } else {
@@ -946,7 +1061,12 @@ pub fn draw_panel_scaled(pm: &mut Pixmap, v: &PanelView, density: f32) {
     );
     let count = i18n::clip_count(lang, v.store.len(), v.store.pinned_count());
     cv.ui_text(&count, lt.card_x + 10.0, lt.footer_y + 3.0, 1.4, TEXT_DIM);
-    let keys = sysfont::truncate_to_width(t(lang, if v.panel.tag_edit.is_some() { Msg::TagEditKeys } else { Msg::FooterKeys }), 1.25, lt.row_w);
+    let keys = t(lang, if v.panel.tag_edit.is_some() { Msg::TagEditKeys } else { Msg::FooterKeys });
+    #[cfg(all(windows, not(feature = "portable")))]
+    let keys = if v.panel.tag_edit.is_none() && visible.get(v.panel.sel).is_some_and(|clip| clip.image.is_some()) {
+        i18n::image_text_message(lang, i18n::ImageTextMessage::Actions)
+    } else { keys };
+    let keys = sysfont::truncate_to_width(keys, 1.25, lt.row_w);
     let kw = sysfont::measure(&keys, 1.25);
     cv.ui_text(
         &keys,

@@ -31,9 +31,23 @@ pub const SCALES: [f32; 3] = [0.78, 1.0, 1.3];
 pub struct ClipPick {
     pub text: String,
     pub paste: bool,
+    pub queued: bool,
     pub formats: Option<RichFormats>,
     pub plain_only: bool,
     pub image: Option<ClipImage>,
+}
+
+#[cfg(any(test, all(windows, not(feature = "portable"))))]
+impl ClipPick {
+    pub(crate) fn recognized_text(text: &str) -> Self {
+        Self { text: text.to_owned(), paste: false, queued: false, plain_only: true, formats: None, image: None }
+    }
+}
+
+struct QueueTicket {
+    ids: Vec<u64>,
+    revision: u64,
+    advance: bool,
 }
 
 /// At most this many fish queue up during copy bursts.
@@ -82,14 +96,21 @@ fn seed() -> u32 {
 }
 
 pub struct Pet {
+    /// Even while capture is enabled. Increment on each actual UI toggle so a
+    /// watcher event cannot cross a pause/resume pair between frames.
+    #[cfg(any(not(windows), feature = "portable"))]
+    pub(crate) source_policy: crate::capture_policy::SourcePolicy,
+    pub(crate) capture_epoch: std::sync::Arc<std::sync::atomic::AtomicU64>,
     pub st: Persist,
     cat_art: crate::hunter_art::CatArt,
     pub cat_picker: Option<crate::cat_picker::CatPicker>,
     pub clips: ClipStore,
+    queue_ticket: Option<QueueTicket>,
     pub workbench: crate::ai_workbench::Workbench,
     pub panel: Panel,
     pub dirty: bool,
     last_save: Instant,
+    last_expiration: Instant,
     // timing
     start: Instant,
     last_tick: Instant,
@@ -148,17 +169,25 @@ impl Pet {
         let mut panel = Panel::with_geometry(st.panel_w, st.panel_h, (st.panel_off_x, st.panel_off_y));
         panel.cat_scale = SCALES[st.scale_idx.min(2)];
         panel.view = st.panel_view.min(1);
+        panel.queue_hotkey = st.queue_hotkey.min(crate::hotkey::QUEUE_KEYS.len() as u8-1);
         let kind = crate::cat::CatKind::from_id(&st.cat_kind);
         let cat_art = crate::hunter_art::CatArt::load(kind).expect("bundled cat atlas");
+        let mut clips = ClipStore::load();
+        Self::expire_history(&mut clips, st.retention_days);
         Pet {
+            queue_ticket: None,
+            #[cfg(any(not(windows), feature = "portable"))]
+            source_policy: crate::capture_policy::SourcePolicy::new(&st.excluded_sources),
+            capture_epoch: std::sync::Arc::new(std::sync::atomic::AtomicU64::new(u64::from(!st.clip_capture))),
             cat_art,
             cat_picker: None,
             st,
-            clips: ClipStore::load(),
+            clips,
             workbench: crate::ai_workbench::Workbench::load(),
             panel,
             dirty: false,
             last_save: now,
+            last_expiration: now,
             start: now,
             last_tick: now,
             paw_l: 0.0,
@@ -453,7 +482,7 @@ impl Pet {
         badge: Option<Badge>,
         formats: Option<RichFormats>,
     ) {
-        if !self.st.clip_capture {
+        if !self.st.clip_capture || source.as_deref().is_some_and(|name| self.st.excludes(name)) {
             return;
         }
         let badge = badge.unwrap_or_else(|| Badge::from_source(source.as_deref()));
@@ -464,7 +493,7 @@ impl Pet {
     }
 
     pub fn on_copy_image(&mut self, image: ClipImage, source: Option<String>, badge: Option<Badge>) {
-        if !self.st.clip_capture { return; }
+        if !self.st.clip_capture || source.as_deref().is_some_and(|name| self.st.excludes(name)) { return; }
         let badge = badge.unwrap_or_else(|| Badge::from_source(source.as_deref()));
         if self.clips.add_image(image, source) { self.copy_feedback(badge); }
     }
@@ -728,6 +757,11 @@ impl Pet {
     /// Executes a panel action. Returns text the backend must put on the
     /// OS clipboard, if any.
     fn run_action(&mut self, action: PanelAction) -> Option<ClipPick> {
+        self.run_action_at(action, crate::clipboard::now_ts())
+    }
+
+    fn run_action_at(&mut self, action: PanelAction, now: u64) -> Option<ClipPick> {
+        Self::expire_history_at(&mut self.clips, self.st.retention_days, now);
         match action {
             PanelAction::Copy(id) => {
                 if self.workbench.adding {
@@ -748,6 +782,7 @@ impl Pet {
                         text: clip.text.clone(),
                         paste: self.st.paste_on_select || self.flyout,
                         formats: clip.formats.clone(),
+                        queued: false,
                         plain_only: false,
                         image: clip.image.clone(),
                     };
@@ -771,6 +806,7 @@ impl Pet {
                         text: clip.text.clone(),
                         paste: true,
                         formats: None,
+                        queued: false,
                         plain_only: true,
                         image: None,
                     };
@@ -790,11 +826,14 @@ impl Pet {
                 }
             }
             PanelAction::TogglePin(id) => {
-                self.clips.toggle_pin(id);
+                if let Some(pinned) = self.clips.toggle_pin(id) {
+                    self.panel.queue.update_pin(id, pinned);
+                }
                 // pinning re-orders the list; keep the selection on the clip
                 self.panel.focus_id(&self.clips, id);
             }
             PanelAction::Delete(id) => {
+                self.panel.queue.retain(|clip| clip.id != id);
                 if self.clips.delete(id) {
                     self.panel.refresh(&self.clips);
                     self.toast_msg(Msg::ToastDeleted, 2.2);
@@ -804,6 +843,7 @@ impl Pet {
                 self.toast_msg(Msg::ToastClearConfirm, 2.6);
             }
             PanelAction::Clear => {
+                self.panel.queue.retain(|clip| clip.pinned);
                 let n = self.clips.clear_unpinned();
                 if n > 0 {
                     self.panel.refresh(&self.clips);
@@ -817,8 +857,10 @@ impl Pet {
                 }
             }
             PanelAction::ToggleCapture => {
+                self.capture_epoch.fetch_add(1, std::sync::atomic::Ordering::AcqRel);
                 self.st.clip_capture = !self.st.clip_capture;
                 if !self.st.clip_capture {
+                    self.panel.queue.clear();
                     self.affection = None;
                     self.affection_pending = false;
                     self.cat_press = None;
@@ -914,6 +956,19 @@ impl Pet {
             return None;
         }
         let lt = self.panel.active_layout();
+        if !self.workbench.open {
+            if let Some(button) = self.panel.queue_button_at(cx, cy) {
+                return self.queue_action(button);
+            }
+            if self.panel.queue_open {
+                if cy >= lt.rows_y && cy < lt.footer_y - 46.0 {
+                    let start = self.panel.queue_start();
+                    let index = start + ((cy - lt.rows_y) / 22.0) as usize;
+                    if index < self.panel.queue.entries().len() { self.panel.queue_sel = index; }
+                }
+                return None;
+            }
+        }
         if self.workbench.open {
             if self.panel.workbench_footer_hit(cx, cy, self.lang()) {
                 self.workbench.nav(NavKey::Esc, self.lang(), lt.rows);
@@ -929,6 +984,7 @@ impl Pet {
                     text,
                     paste: false,
                     formats: None,
+                    queued: false,
                     plain_only: true,
                     image: None,
                 });
@@ -951,6 +1007,11 @@ impl Pet {
     }
     /// Mouse wheel over the panel (positive rows = scroll down).
     pub fn panel_wheel(&mut self, rows: i32) {
+        if self.panel.queue_open {
+            self.panel.queue_sel = self.panel.queue_sel.saturating_add_signed(rows as isize)
+                .min(self.panel.queue.entries().len().saturating_sub(1));
+            return;
+        }
         if self.cat_picker.is_some() { return; }
         if self.workbench.open {
             self.workbench
@@ -963,6 +1024,7 @@ impl Pet {
 
     /// Printable character while the panel is open (search input).
     pub fn panel_char(&mut self, c: char) {
+        if self.panel.queue_open { return; }
         if let Some(picker)=self.cat_picker.as_mut() {
             if ('1'..='3').contains(&c) { picker.preview_mode(c as u8-b'1'); self.last_visual=None; }
             return;
@@ -987,6 +1049,9 @@ impl Pet {
             self.last_visual=None;
             return None;
         }
+        if self.panel.queue_open || matches!(key, NavKey::QueueView | NavKey::QueueAdd) {
+            return self.queue_action(key);
+        }
         if key == NavKey::Workbench {
             if self.workbench.open {
                 self.workbench.toggle();
@@ -1005,6 +1070,7 @@ impl Pet {
                 text,
                 paste: false,
                 formats: None,
+                queued: false,
                 plain_only: true,
                 image: None,
             });
@@ -1049,10 +1115,235 @@ impl Pet {
 
     // ---- per-frame update --------------------------------------------------
 
+    pub fn next_queue_pick(&mut self) -> Option<ClipPick> {
+        self.expire_queue();
+        if self.queue_ticket.is_some() {
+            return None;
+        }
+        let entry = self.panel.queue.next()?;
+        self.queue_ticket = Some(QueueTicket {
+            ids: vec![entry.id],
+            advance: true,
+            revision: self.panel.queue.revision(),
+        });
+        Some(Self::queue_pick(entry))
+    }
+
+    fn queue_pick(entry: &crate::clipboard::Clip) -> ClipPick {
+        ClipPick {
+            text: entry.text.clone(),
+            paste: true,
+            formats: entry.formats.clone(),
+            queued: true,
+            plain_only: false,
+            image: entry.image.clone(),
+        }
+    }
+
+    pub fn finish_queue_pick(&mut self, success: bool) {
+        if let Some(ticket) = self.queue_ticket.take() {
+            if ticket.advance && ticket.revision == self.panel.queue.revision() {
+                self.panel.queue.acknowledge(ticket.ids[0], success);
+            }
+            if !success {
+                self.queue_message(i18n::QueueText::Failed);
+            }
+        }
+    }
+
+    #[cfg(any(not(target_os = "macos"), test))]
+    pub fn staged_queue_pick(&mut self, plain: bool) -> Option<ClipPick> {
+        if !self.queue_output_valid() {
+            self.finish_queue_pick(false);
+            return None;
+        }
+        let ticket = self.queue_ticket.as_ref()?;
+        let mut clips = ticket.ids.iter().filter_map(|id| {
+            self.panel
+                .queue
+                .entries()
+                .iter()
+                .find(|entry| entry.id == *id)
+        });
+        if plain {
+            let text = clips
+                .map(|entry| entry.text.as_str())
+                .collect::<Vec<_>>()
+                .join("\n");
+            Some(ClipPick {
+                text,
+                paste: true,
+                queued: true,
+                formats: None,
+                image: None,
+                plain_only: true,
+            })
+        } else {
+            clips.next().map(Self::queue_pick)
+        }
+    }
+
+    pub fn queue_output_valid(&mut self) -> bool {
+        self.expire_queue();
+        self.queue_ticket
+            .as_ref()
+            .is_some_and(|ticket| ticket.revision == self.panel.queue.revision())
+    }
+
+    pub fn queue_shortcut_failed(&mut self) {
+        self.panel.queue_conflict = true;
+        self.queue_message(i18n::QueueText::ShortcutFailed);
+    }
+
+    pub(crate) fn queue_message(&mut self, msg: i18n::QueueText) {
+        self.panel.queue_status = Some(msg);
+        self.set_toast(i18n::queue_text(self.lang(), msg).to_owned(), 2.5);
+    }
+
+    fn queue_action(&mut self, key: NavKey) -> Option<ClipPick> {
+        use NavKey::*;
+        self.expire_queue();
+        self.panel.queue_status = None;
+        let queue = &mut self.panel.queue;
+        let count = queue.entries().len();
+        let index = self.panel.queue_sel.min(count.saturating_sub(1));
+        let id = queue.entries().get(index).map(|entry| entry.id);
+        match key {
+            QueueView | Esc => self.panel.queue_open = !self.panel.queue_open,
+            QueueAdd if !self.panel.queue_open => {
+                let id = self.panel.selected_id(&self.clips)?;
+                Self::expire_history(&mut self.clips, self.st.retention_days);
+                let clip = self.clips.get(id)?;
+                if !self.st.excludes(clip.source.as_deref().unwrap_or("")) && self.st.clip_capture {
+                    if !self.panel.queue.toggle(clip) {
+                        self.queue_message(i18n::QueueText::Full);
+                    }
+                } else {
+                    self.queue_message(i18n::QueueText::Excluded);
+                }
+            }
+            Up => self.panel.queue_sel = index.saturating_sub(1),
+            Down => self.panel.queue_sel = (index + 1).min(count.saturating_sub(1)),
+            Left | Right => {
+                if let Some(id) = id {
+                    let delta = if key == Left { -1 } else { 1 };
+                    queue.shift(id, delta);
+                    self.panel.queue_sel = index.saturating_add_signed(delta).min(count - 1);
+                }
+            }
+            Delete => {
+                if let Some(id) = id {
+                    queue.retain(|entry| entry.id != id);
+                }
+            }
+            QueueReset => queue.clear(),
+            QueueShortcut => {
+                self.panel.queue_hotkey =
+                    (self.panel.queue_hotkey + 1) % crate::hotkey::QUEUE_KEYS.len() as u8;
+                self.st.queue_hotkey = self.panel.queue_hotkey;
+                self.dirty = true;
+            }
+            Enter => return self.next_queue_pick(),
+            QueueReplay if self.queue_ticket.is_none() => {
+                let entry = queue.previous()?;
+                self.queue_ticket = Some(QueueTicket {
+                    ids: vec![entry.id],
+                    advance: false,
+                    revision: queue.revision(),
+                });
+                return Some(Self::queue_pick(entry));
+            }
+            QueueCombine if self.queue_ticket.is_none() => {
+                if let Some(text) = queue.combined() {
+                    self.queue_ticket = Some(QueueTicket {
+                        ids: queue.entries().iter().map(|entry| entry.id).collect(),
+                        advance: false,
+                        revision: queue.revision(),
+                    });
+                    return Some(ClipPick {
+                        text,
+                        paste: true,
+                        formats: None,
+                        queued: true,
+                        plain_only: true,
+                        image: None,
+                    });
+                }
+                self.queue_message(i18n::QueueText::TextOnly);
+            }
+            _ => {}
+        }
+        self.last_visual = None;
+        None
+    }
+
+    #[cfg(any(test, all(windows, not(feature = "portable"))))]
+    pub(crate) fn ocr_request_current(&self, id: u64, generation: u64, epoch: u64, image: &ClipImage) -> bool {
+        self.capture_epoch.load(std::sync::atomic::Ordering::Acquire) == epoch
+            && self.clips.get(id).is_some_and(|clip| {
+                clip.image_generation == generation && clip.image.as_ref() == Some(image) && self.ocr_allowed(clip)
+            })
+    }
+
+    #[cfg(any(test, all(windows, not(feature = "portable"))))]
+    pub(crate) fn restore_image_preview(&mut self, id: u64, generation: u64, flyout: bool) -> bool {
+        let active = if flyout { self.flyout_open() } else { self.embedded_panel_open() };
+        if !active || self.panel.queue_open || self.workbench.open || self.cat_picker.is_some()
+            || self.retained_ocr_text(id, generation, crate::clipboard::now_ts()).is_none()
+        { return false; }
+        self.panel.focus_id(&self.clips, id);
+        self.panel.selected_id(&self.clips) == Some(id)
+    }
+
+    #[cfg(any(test, all(windows, not(feature = "portable"))))]
+    pub(crate) fn retained_ocr_text(&self, id: u64, generation: u64, now: u64) -> Option<&str> {
+        let clip = self.clips.get(id)?;
+        (clip.image_generation == generation && clip.image.is_some() && self.retained_at(clip, now))
+            .then_some(clip.ocr_text.as_deref()).flatten()
+    }
+
+    #[cfg(any(test, all(windows, not(feature = "portable"))))]
+    fn retained_at(&self, clip: &crate::clipboard::Clip, now: u64) -> bool {
+        let days = self.st.retention_days;
+        clip.pinned || days == 0 || clip.ts >= now.saturating_sub(u64::from(days) * 86_400)
+    }
+
+    #[cfg(any(test, all(windows, not(feature = "portable"))))]
+    pub(crate) fn ocr_allowed(&self, clip: &crate::clipboard::Clip) -> bool {
+        self.st.clip_capture && !clip.source.as_deref().is_some_and(|s| self.st.excludes(s))
+            && self.retained_at(clip, crate::clipboard::now_ts())
+    }
+
+    fn expire_queue(&mut self) {
+        if self.st.retention_days > 0 {
+            let cutoff = crate::clipboard::now_ts()
+                .saturating_sub(u64::from(self.st.retention_days) * 86_400);
+            self.panel
+                .queue
+                .retain(|clip| clip.pinned || clip.ts >= cutoff);
+        }
+    }
+
+    fn expire_history(clips: &mut ClipStore, days: u16) {
+        Self::expire_history_at(clips, days, crate::clipboard::now_ts());
+    }
+
+    fn expire_history_at(clips: &mut ClipStore, days: u16, now: u64) {
+        if days > 0 {
+            let cutoff = now.saturating_sub(u64::from(days) * 86_400);
+            if clips.expire_before(cutoff) { clips.save_if_dirty(); }
+        }
+    }
+
     /// Advances the simulation one frame and returns a
     /// hint of whether the visuals changed enough to be worth presenting.
     /// Only local actions and copies affect the pet.
     pub fn advance(&mut self) -> bool {
+        if self.last_expiration.elapsed().as_secs() >= 60 {
+            self.last_expiration = Instant::now();
+            self.expire_queue();
+            Self::expire_history(&mut self.clips, self.st.retention_days);
+        }
         let now = Instant::now();
         let t = self.now_t();
         let dt = (now - self.last_tick).as_secs_f32().clamp(0.001, 0.1);
@@ -1200,6 +1491,9 @@ impl Pet {
             let p = &self.panel;
             (&p.query, &p.source, &p.tag_edit, p.scroll, p.sel, p.clear_armed,
                 p.expanded, p.view, p.ai_adding, self.clips.version()).hash(&mut h);
+            (p.queue_open,p.queue_sel,p.queue.revision(),p.queue.next().map(|entry| entry.id)).hash(&mut h);
+            #[cfg(all(windows, not(feature = "portable")))]
+            p.ocr_status.hash(&mut h);
             p.tag_select_all.hash(&mut h);
             (p.w.to_bits(), p.h.to_bits(), p.off.0.to_bits(), p.off.1.to_bits()).hash(&mut h);
             p.cursor.map(|(x, y)| (x.to_bits(), y.to_bits())).hash(&mut h);
@@ -1453,6 +1747,14 @@ impl Pet {
         }
     }
 
+    pub fn privacy_sources(&self) -> Vec<String> {
+        let mut sources = self.st.excluded_sources.clone();
+        sources.extend(self.clips.sources().into_iter()
+            .filter(|name| !name.is_empty() && name.len() <= 1024 && !self.st.excludes(name))
+            .map(str::to_owned));
+        sources
+    }
+
     /// Builds the right-click / tray context menu for the current state.
     /// `hotkey` is the live panel-hotkey label; `autostart` is the
     /// platform-queried "run at login/startup" state (the core does not track
@@ -1481,6 +1783,19 @@ impl Pet {
             MenuAction::ToggleCapture,
             !self.st.clip_capture, // checked == capture is paused
         ));
+        m.push(MenuItem::leaf(i18n::queue_button(lang, NavKey::QueueView, false), MenuAction::OpenQueue, self.panel.queue_open && self.panel.open));
+        let sources = self.privacy_sources().into_iter().map(|name| {
+            let checked = self.st.excludes(&name);
+            MenuItem::leaf_enabled(name.clone(), MenuAction::ToggleExcludedSource(name), checked,
+                checked || self.st.excluded_sources.len() < 128)
+        }).collect::<Vec<_>>();
+        if !sources.is_empty() {
+            m.push(MenuItem::parent(i18n::exclusion_title(lang), sources));
+        }
+        let presets = [0, 1, 7, 30].into_iter().map(|days| MenuItem::leaf(
+            i18n::retention_label(lang, days), MenuAction::SetRetention(days),
+            self.st.retention_days == days)).collect();
+        m.push(MenuItem::parent(i18n::retention_title(lang), presets));
         m.push(MenuItem::leaf(
             t(lang, Msg::MenuAutoClose),
             MenuAction::TogglePanelAutoClose,
@@ -1560,6 +1875,32 @@ impl Pet {
     /// backend (about dialog, autostart, update page, quit).
     pub fn apply_menu_action(&mut self, action: MenuAction) -> MenuOutcome {
         match action {
+            MenuAction::SetRetention(days) => {
+                if [0, 1, 7, 30].contains(&days) {
+                    self.st.retention_days = days;
+                    self.expire_queue();
+                    Self::expire_history(&mut self.clips, days);
+                    self.dirty = true;
+                    self.set_toast(format!("{} · {}", i18n::retention_title(self.lang()), i18n::retention_label(self.lang(), days)), 2.0);
+                }
+            }
+            MenuAction::ToggleExcludedSource(name) => {
+                if self.st.excludes(&name) {
+                    self.st.excluded_sources.retain(|s| !crate::clipboard::eq_ci(s, &name));
+                } else if !name.is_empty() && name.len() <= 1024 && self.st.excluded_sources.len() < 128 {
+                    self.st.excluded_sources.push(name.clone());
+                    self.panel.queue.retain(|clip| !clip.source.as_deref().is_some_and(|s| crate::clipboard::eq_ci(s, &name)));
+                } else {
+                    return MenuOutcome::Handled;
+                }
+                self.dirty = true;
+                #[cfg(any(not(windows), feature = "portable"))]
+                self.source_policy.update(&name, &self.st.excluded_sources);
+                #[cfg(all(windows, not(feature = "portable")))]
+                self.capture_epoch.fetch_add(2, std::sync::atomic::Ordering::AcqRel);
+                self.set_toast(i18n::source_status(self.lang(), &name, self.st.excludes(&name)), 2.0);
+            }
+            MenuAction::OpenQueue => { self.open_panel(); self.panel.queue_open = true; }
             MenuAction::TogglePanel => self.toggle_panel(),
             MenuAction::ToggleCapture => {
                 self.run_action(PanelAction::ToggleCapture);
@@ -1605,7 +1946,7 @@ impl Pet {
         MenuOutcome::Handled
     }
 
-    fn set_toast(&mut self, text: String, secs: f32) {
+    pub(crate) fn set_toast(&mut self, text: String, secs: f32) {
         let t = self.now_t();
         self.toast = Some((text, t + secs));
     }
