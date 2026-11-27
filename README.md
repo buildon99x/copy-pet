@@ -111,7 +111,7 @@ Linux Wayland에서는 전역 단축키를 등록하지 못할 수 있으며,
   서식을 빼려면 항목의 텍스트 붙여넣기 동작 또는 `Ctrl/Cmd+Enter`를 사용하세요.
 - **이미지 기록** — **Windows 네이티브 전용**입니다. 복사한 PNG·지원 DIB 이미지를
   썸네일로 보고 다시 복사·붙여넣기합니다. 이미지에도 고정·태그를 적용할 수 있습니다.
-  파일 탐색기의 파일 복사나 OCR은 지원하지 않습니다.
+  이미지 행에서 F8로 글자를 인식해 검색할 수 있습니다. 파일 탐색기에서 복사한 파일 목록은 수집하지 않습니다.
 - **보기와 크기** — 카드/목록 보기를 전환하고 패널 헤더를 드래그해 이동하거나
   오른쪽 아래 모서리로 크기를 조절합니다. 설정은 다음 실행에도 유지됩니다.
 - **수집 일시정지** — 패널의 일시정지 버튼이나 설정 메뉴에서 수집을 멈춥니다.
@@ -125,7 +125,7 @@ Linux Wayland에서는 전역 단축키를 등록하지 못할 수 있으며,
 
 영문 대소문자는 구분하지 않습니다. 일반 검색은 태그 일부에도 일치하지만,
 `#tag`는 태그 전체가 일치해야 합니다.
-Windows 기본판에서 이미지 행을 선택한 후 **F8**을 누르면 설치된 Windows 인식 언어로 글자를 읽습니다. 같은 키로 재시도할 수 있습니다. 검색창에 인식된 단어를 입력하세요. **F9**는 인식 결과를 보여 주고 **F10**은 글자만 복사합니다. 이미지 행을 평소처럼 선택하면 원본 이미지를 복사합니다. Windows 글자 인식 기능 또는 해당 언어가 없으면 설정을 확인하세요.
+Windows 기본판에서 이미지 행을 선택한 후 **F8**을 누르면 설치된 Windows 인식 언어로 글자를 읽습니다. 같은 키로 재시도할 수 있습니다. 검색창에 인식된 단어를 입력하세요. **F9**로 인식 결과를 스크롤하거나 선택할 수 있습니다. Esc로 미리보기를 닫으면 같은 이미지 행으로 돌아갑니다. **F10**은 글자만 복사합니다. 이미지 행을 평소처럼 선택하면 원본 이미지를 복사합니다. Windows 글자 인식 기능 또는 해당 언어가 없으면 설정을 확인하세요.
 
 [태그·이미지 지원 형식과 저장 한도](docs/specs/clipboard-tags-images.md)
 
@@ -262,7 +262,7 @@ Source identification is best effort. Windows uses the clipboard owner's executa
 
 Set `CLIPCAT_CONFIG_DIR` to a separate directory for an isolated profile. ClipCat skips legacy profile migration while this override is active.
 
-**Image text on native Windows.** Select an image and press F8 to recognize or retry using installed Windows OCR languages. Search for recognized words in history, press F9 to preview the result, or F10 to copy the text. Selecting the row normally still copies the original image. Recognition runs only on request and needs an available Windows OCR engine.
+**Image text on native Windows.** Select an image and press F8 to recognize or retry using installed Windows OCR languages. Search for recognized words in history, press F9 to scroll or select the recognized text, then Esc to return to the same image. F10 copies its text. Selecting the row normally still copies the original image. Recognition runs only on request and needs an available Windows OCR engine.
 
 **Ordered paste.** In clipboard history, F3 adds or removes the selected row.
 F2 shows the queue. Use the arrows to select or reorder, Delete to remove,

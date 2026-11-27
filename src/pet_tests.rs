@@ -1134,3 +1134,48 @@ fn ocr_result_requires_eligible_source_and_copies_only_recognized_plain_text() {
     assert!(pick.image.is_none() && pick.formats.is_none());
     assert_eq!(clip.image, Some(image));
 }
+
+#[test]
+fn recognition_request_identity_expires_before_any_completion_status() {
+    let mut p = pet();
+    let image = ClipImage::from_pixmap(&Pixmap::new(2, 2).unwrap()).unwrap();
+    p.clips.add_image(image.clone(), Some("Paint".into()));
+    let clip = p.clips.visible("")[0];
+    let (id, generation) = (clip.id, clip.image_generation);
+    let epoch = p.capture_epoch.load(std::sync::atomic::Ordering::Acquire);
+    assert!(p.ocr_request_current(id, generation, epoch, &image));
+    p.clips.delete(id);
+    p.clips.undo_delete();
+    assert!(!p.ocr_request_current(id, generation, epoch, &image));
+    let generation = p.clips.get(id).unwrap().image_generation;
+    p.clips.add_image(image.clone(), None);
+    assert!(!p.ocr_request_current(id, generation, epoch, &image));
+    let generation = p.clips.get(id).unwrap().image_generation;
+    let wrong = ClipImage::from_pixmap(&Pixmap::new(1, 1).unwrap()).unwrap();
+    assert!(!p.ocr_request_current(id, generation, epoch, &wrong));
+    assert!(!p.ocr_request_current(id, generation, epoch.wrapping_add(1), &image));
+}
+
+#[test]
+fn closing_long_image_preview_returns_to_its_original_row_and_panel() {
+    for flyout in [true, false] {
+        let mut p = pet();
+        let image = ClipImage::from_pixmap(&Pixmap::new(3, 2).unwrap()).unwrap();
+        p.clips.add_image(image.clone(), None);
+        let clip = p.clips.visible("")[0];
+        let (id, generation) = (clip.id, clip.image_generation);
+        let text = "Artwork • 영수증\n".repeat(2000);
+        assert!(p.clips.set_ocr_text(id, generation, &image, text.clone()));
+        if flyout { p.open_flyout(); } else { p.open_panel(); }
+        p.clips.add_copy("another row".into(), None);
+        assert_ne!(p.panel.selected_id(&p.clips), Some(id));
+        assert!(p.restore_image_preview(id, generation, flyout));
+        assert_eq!(p.panel.selected_id(&p.clips), Some(id));
+        assert_eq!(p.flyout_open(), flyout);
+        assert_eq!(p.embedded_panel_open(), !flyout);
+        assert_eq!(p.clips.get(id).unwrap().ocr_text.as_deref(), Some(text.as_str()));
+        p.clips.delete(id);
+        p.clips.undo_delete();
+        assert!(!p.restore_image_preview(id, generation, flyout));
+    }
+}

@@ -947,7 +947,7 @@ pub fn draw_panel_scaled(pm: &mut Pixmap, v: &PanelView, density: f32) {
         }).or(image_label.as_deref()).unwrap_or_else(|| clip.flattened());
         #[cfg(all(windows, not(feature = "portable")))]
         let flat = match v.panel.ocr_status {
-            Some((id, msg)) if id == clip.id && msg != i18n::ImageTextMessage::Ready =>
+            Some((id, generation, msg)) if id == clip.id && generation == clip.image_generation && msg != i18n::ImageTextMessage::Ready =>
                 i18n::image_text_message(lang, msg),
             _ => flat,
         };

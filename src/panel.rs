@@ -223,7 +223,7 @@ pub enum PanelDrag {
 
 pub struct Panel {
     #[cfg(all(windows, not(feature = "portable")))]
-    pub(crate) ocr_status: Option<(u64, crate::i18n::ImageTextMessage)>,
+    pub(crate) ocr_status: Option<(u64, u64, crate::i18n::ImageTextMessage)>,
     pub queue: crate::paste_queue::PasteQueue,
     pub queue_open: bool,
     pub queue_conflict: bool,

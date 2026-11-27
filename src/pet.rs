@@ -1267,6 +1267,24 @@ impl Pet {
     }
 
     #[cfg(any(test, all(windows, not(feature = "portable"))))]
+    pub(crate) fn ocr_request_current(&self, id: u64, generation: u64, epoch: u64, image: &ClipImage) -> bool {
+        self.capture_epoch.load(std::sync::atomic::Ordering::Acquire) == epoch
+            && self.clips.get(id).is_some_and(|clip| {
+                clip.image_generation == generation && clip.image.as_ref() == Some(image) && self.ocr_allowed(clip)
+            })
+    }
+
+    #[cfg(any(test, all(windows, not(feature = "portable"))))]
+    pub(crate) fn restore_image_preview(&mut self, id: u64, generation: u64, flyout: bool) -> bool {
+        let active = if flyout { self.flyout_open() } else { self.embedded_panel_open() };
+        if !active || self.panel.queue_open || self.workbench.open || self.cat_picker.is_some()
+            || !self.clips.get(id).is_some_and(|clip| clip.image_generation == generation)
+        { return false; }
+        self.panel.focus_id(&self.clips, id);
+        self.panel.selected_id(&self.clips) == Some(id)
+    }
+
+    #[cfg(any(test, all(windows, not(feature = "portable"))))]
     pub(crate) fn ocr_allowed(&self, clip: &crate::clipboard::Clip) -> bool {
         let days = self.st.retention_days;
         self.st.clip_capture && !clip.source.as_deref().is_some_and(|s| self.st.excludes(s))

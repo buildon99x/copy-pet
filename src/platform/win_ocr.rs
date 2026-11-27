@@ -154,7 +154,8 @@ pub(crate) struct Job {
     pub id: u64,
     pub generation: u64,
     pub epoch: u64,
-    pub result: mpsc::Receiver<(ClipImage, Outcome)>,
+    pub image: Arc<ClipImage>,
+    pub result: mpsc::Receiver<Outcome>,
     cancel: Arc<AtomicBool>,
     thread: Option<std::thread::JoinHandle<()>>,
 }
@@ -163,14 +164,17 @@ impl Job {
         let cancel = Arc::new(AtomicBool::new(false));
         let flag = cancel.clone();
         let (tx, result) = mpsc::channel();
+        let image = Arc::new(image);
+        let input = image.clone();
         let thread = std::thread::spawn(move || {
-            let outcome = run(&image, &flag);
-            let _ = tx.send((image, outcome));
+            let outcome = run(&input, &flag);
+            let _ = tx.send(outcome);
         });
         Self {
             id,
             generation,
             epoch,
+            image,
             result,
             cancel,
             thread: Some(thread),

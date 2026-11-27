@@ -916,7 +916,7 @@ pub fn queue_button(lang: Lang, key: crate::panel::NavKey, open: bool) -> &'stat
 
 #[cfg(all(windows, not(feature = "portable")))]
 #[derive(Clone, Copy, Hash, PartialEq, Eq)]
-pub(crate) enum ImageTextMessage { Actions, Busy, Ready, Empty, Unavailable, Failed, Missing, Restricted, Changed, Preview }
+pub(crate) enum ImageTextMessage { Actions, Busy, Ready, Empty, Unavailable, Failed, Missing, Restricted, Preview }
 #[cfg(all(windows, not(feature = "portable")))]
 pub(crate) fn image_text_message(lang: Lang, msg: ImageTextMessage) -> &'static str {
     use ImageTextMessage::*;
@@ -939,7 +939,5 @@ pub(crate) fn image_text_message(lang: Lang, msg: ImageTextMessage) -> &'static 
         (Lang::Ko, Missing) => "먼저 F8을 눌러 이미지 글자를 인식하세요",
         (Lang::En, Restricted) => "Recognition blocked by capture privacy settings",
         (Lang::Ko, Restricted) => "수집 개인정보 설정으로 글자 인식이 차단되었습니다",
-        (Lang::En, Changed) => "History changed · F8 retry",
-        (Lang::Ko, Changed) => "기록이 바뀌었습니다 · F8 재시도",
     }
 }

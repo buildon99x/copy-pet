@@ -70,3 +70,6 @@ mod linux_clipboard;
 mod win_ocr;
 #[cfg(all(windows, not(feature = "portable")))]
 pub use win_ocr::worker as ocr_worker;
+
+#[cfg(all(windows, not(feature = "portable")))]
+mod win_ocr_preview;
