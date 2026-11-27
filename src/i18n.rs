@@ -916,11 +916,15 @@ pub fn queue_button(lang: Lang, key: crate::panel::NavKey, open: bool) -> &'stat
 
 #[cfg(all(windows, not(feature = "portable")))]
 #[derive(Clone, Copy, Hash, PartialEq, Eq)]
-pub(crate) enum ImageTextMessage { Actions, Busy, Ready, Empty, Unavailable, Failed, Missing, Restricted, Preview }
+pub(crate) enum ImageTextMessage { Actions, Busy, Ready, Empty, Unavailable, Failed, Missing, Restricted, Preview, CopySelection, SelectAll }
 #[cfg(all(windows, not(feature = "portable")))]
 pub(crate) fn image_text_message(lang: Lang, msg: ImageTextMessage) -> &'static str {
     use ImageTextMessage::*;
     match (lang, msg) {
+        (Lang::En, CopySelection) => "Copy",
+        (Lang::Ko, CopySelection) => "복사",
+        (Lang::En, SelectAll) => "Select all",
+        (Lang::Ko, SelectAll) => "모두 선택",
         (Lang::En, Preview) => "Recognized image text",
         (Lang::Ko, Preview) => "인식한 이미지 글자",
         (Lang::En, Actions) => "F8 Read · F9 Preview · F10 Copy text",

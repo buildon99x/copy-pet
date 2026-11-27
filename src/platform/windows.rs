@@ -1934,13 +1934,15 @@ unsafe fn open_ocr_preview(owner: HWND) -> bool {
             return None;
         };
         let generation = clip.image_generation;
-        let title = i18n::image_text_message(a.pet.lang(), i18n::ImageTextMessage::Preview);
+        let lang = a.pet.lang();
         a.ocr_preview_owner = Some(owner);
-        Some((id, generation, flyout, title, text))
+        Some((id, generation, flyout, lang, text))
     })
     .flatten();
-    if let Some((id, generation, flyout, title, text)) = request {
-        let shown = super::win_ocr_preview::show(owner, title, &text);
+    if let Some((id, generation, flyout, lang, text)) = request {
+        let shown = super::win_ocr_preview::show(owner, lang, &text, |selection| {
+            with_app(|a| a.copy_back(ClipPick::recognized_text(&selection)));
+        });
         with_app(|a| {
             a.ocr_preview_owner = None;
             if a.pet.restore_image_preview(id, generation, flyout) {
