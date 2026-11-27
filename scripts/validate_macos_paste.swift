@@ -92,7 +92,19 @@ later(9.8) { key(76) } // keypad Enter, reused flyout window
 later(11) { checks.append(text.string == token); text.string = "" }
 open(12)
 later(13.5) { key(125) }
+later(13.6) {
+    // Model the real chord, including the modifier-state notification consumed
+    // by winit. Return flags alone do not establish a held Command key.
+    let command = CGEvent(keyboardEventSource: nil, virtualKey: 55, keyDown: true)!
+    command.flags = .maskCommand
+    command.post(tap: .cghidEventTap)
+}
 later(13.8) { key(36, .maskCommand) } // Cmd+Return, plain-text paste
+later(14.0) {
+    let command = CGEvent(keyboardEventSource: nil, virtualKey: 55, keyDown: false)!
+    command.flags = []
+    command.post(tap: .cghidEventTap)
+}
 later(15) {
     checks.append(text.string == token && NSPasteboard.general.string(forType: .string) == token
                   && NSPasteboard.general.string(forType: .html) == nil
