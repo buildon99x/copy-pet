@@ -21,7 +21,7 @@ try {
     if ($missing.Count -gt 0) {
         if ([Environment]::OSVersion.Version.Build -ne 26100) { throw 'Runner needs matching language media for its OS build.' }
         Write-Host "Missing capabilities: $($missing -join ', '); acquiring official Server 2025 media"
-        & curl.exe --fail --location --silent --show-error --max-time 420 --output $iso 'https://go.microsoft.com/fwlink/?linkid=2273506'
+        & curl.exe --fail --location --silent --show-error --max-time 900 --output $iso 'https://go.microsoft.com/fwlink/?linkid=2273506'
         if ($LASTEXITCODE -ne 0) { throw 'Language media download failed.' }
         $disk = Mount-DiskImage -ImagePath $iso -Access ReadOnly -PassThru
         $mounted = $true

@@ -959,46 +959,43 @@ unsafe fn read_format_bytes(fmt: u32) -> Option<Vec<u8>> {
     Some(trim_nul(bytes))
 }
 
-/// Reads PNG/DIB images or CF_UNICODETEXT plus CF_HTML / CF_RTF in one OpenClipboard, retrying
-/// briefly (the copying app may still hold the clipboard open). The CF_HTML blob
-/// is kept verbatim (header included). SAFETY: clipboard-owned handles are only
-/// read between GlobalLock/GlobalUnlock and never freed.
-unsafe fn read_clipboard_content(hwnd: HWND, skip_open: impl FnOnce() -> bool) -> Option<CapturedClip> {
+/// A busy notification must preserve both the clipboard sequence and capture
+/// epoch for the next UI tick. A successful open handles this notification,
+/// including private, unsupported and self-written contents.
+fn poll_capture_lock<T>(request: (u32, u64), open: impl FnOnce() -> bool,
+    read_and_close: impl FnOnce() -> Option<T>) -> (Option<(u32, u64)>, Option<T>) {
+    if open() { (None, read_and_close()) } else { (Some(request), None) }
+}
+
+/// SAFETY: the caller opened the clipboard on this thread. This function
+/// closes it before returning. Clipboard-owned handles are never freed here.
+unsafe fn read_open_clipboard_content(skip_open: impl FnOnce() -> bool) -> Option<CapturedClip> {
     let (cf_html, cf_rtf) = clip_atoms();
-    for attempt in 0..5 {
-        if attempt > 0 {
-            Sleep(15);
-        }
-        if OpenClipboard(hwnd) == 0 {
-            continue;
-        }
-        if skip_open() || super::win_privacy::marked_open() {
-            CloseClipboard();
-            return None;
-        }
-        let image = read_blob_open(png_atom(), MAX_IMAGE_BYTES)
-            .and_then(|b| ClipImage::from_png(&b))
-            .or_else(|| {
-                read_blob_open(17, 64 * 1024 * 1024 + 4096).and_then(|b| ClipImage::from_dib(&b))
-            })
-            .or_else(|| {
-                read_blob_open(8, 64 * 1024 * 1024 + 4096).and_then(|b| ClipImage::from_dib(&b))
-            });
-        if let Some(image) = image {
-            CloseClipboard();
-            return Some(CapturedClip::Image(image));
-        }
-        let text = read_unicode_open();
-        let formats = text.as_ref().and_then(|_| {
-            let html = read_format_bytes(cf_html).and_then(|b| String::from_utf8(b).ok());
-            let rtf_b64 = read_format_bytes(cf_rtf).map(|b| b64_encode(&b));
-            let f = RichFormats { html, rtf_b64 };
-            (!f.is_empty()).then_some(f)
-        });
+    if skip_open() || super::win_privacy::marked_open() {
         CloseClipboard();
-        return text.map(|t| CapturedClip::Text(t, formats));
+        return None;
     }
-    None
+    let image = read_blob_open(png_atom(), MAX_IMAGE_BYTES)
+        .and_then(|b| ClipImage::from_png(&b))
+        .or_else(|| {
+            read_blob_open(17, 64 * 1024 * 1024 + 4096).and_then(|b| ClipImage::from_dib(&b))
+        })
+        .or_else(|| {
+            read_blob_open(8, 64 * 1024 * 1024 + 4096).and_then(|b| ClipImage::from_dib(&b))
+        });
+    if let Some(image) = image {
+        CloseClipboard();
+        return Some(CapturedClip::Image(image));
+    }
+    let text = read_unicode_open();
+    let formats = text.as_ref().and_then(|_| {
+        let html = read_format_bytes(cf_html).and_then(|b| String::from_utf8(b).ok());
+        let rtf_b64 = read_format_bytes(cf_rtf).map(|b| b64_encode(&b));
+        let f = RichFormats { html, rtf_b64 };
+        (!f.is_empty()).then_some(f)
+    });
+    CloseClipboard();
+    text.map(|t| CapturedClip::Text(t, formats))
 }
 
 enum CapturedClip {
@@ -2016,22 +2013,20 @@ unsafe fn capture_notification(hwnd: HWND, seq: u32, epoch: u64) {
         && a.pet.capture_epoch.load(std::sync::atomic::Ordering::Acquire) == epoch
         && GetClipboardSequenceNumber() == seq;
     if !with_app(|a| allowed(a)).unwrap_or(false) { return; }
-    let mut locked = false;
     let mut origin = None;
-    let content = read_clipboard_content(hwnd, || {
-        locked = true;
-        with_app(|a| {
-            if !allowed(a) || super::win_privacy::ClipboardIdentity::skip_notification(
-                &mut a.observed_clip, &mut a.suppress_clip) { return true; }
-            let (source, badge) = a.clipboard_source();
-            if source.as_deref().is_some_and(|s| a.pet.st.excludes(s)) { return true; }
-            origin = Some((source, badge));
-            false
-        }).unwrap_or(true)
-    });
+    let skip_open = || with_app(|a| {
+        if !allowed(a) || super::win_privacy::ClipboardIdentity::skip_notification(
+            &mut a.observed_clip, &mut a.suppress_clip) { return true; }
+        let (source, badge) = a.clipboard_source();
+        if source.as_deref().is_some_and(|s| a.pet.st.excludes(s)) { return true; }
+        origin = Some((source, badge));
+        false
+    }).unwrap_or(true);
+    let (retry, content) = poll_capture_lock((seq, epoch), || OpenClipboard(hwnd) != 0,
+        || read_open_clipboard_content(skip_open));
     with_app(|a| {
         if !allowed(a) { return; }
-        a.retry_capture = (!locked).then_some((seq, epoch));
+        a.retry_capture = retry;
         if let (Some((source, badge)), Some(content)) = (origin, content) {
             match content {
                 CapturedClip::Text(text, formats) => a.pet.on_copy_rich(text, source, badge, formats),
@@ -2586,6 +2581,28 @@ pub fn run() {
 mod clipboard_tests {
     use super::*;
 
+    // Ordinary round-trip checks tolerate competing OS clipboard consumers.
+    // Product notifications use the UI timer for rescheduling.
+    unsafe fn read_clipboard_content(hwnd: HWND, skip_open: impl FnOnce() -> bool) -> Option<CapturedClip> {
+        for attempt in 0..5 {
+            if attempt > 0 { Sleep(15); }
+            if OpenClipboard(hwnd) != 0 { return read_open_clipboard_content(skip_open); }
+        }
+        None
+    }
+
+    #[test]
+    fn timer_retries_busy_clipboard_once_per_tick() {
+        let request = (23, 8);
+        let mut opens = 0;
+        let (retry, value) = poll_capture_lock::<()>(request, || { opens += 1; false }, || panic!("clipboard still locked"));
+        assert_eq!(opens, 1, "one lock attempt per UI tick");
+        assert_eq!((retry, value), (Some(request), None));
+        let (retry, value) = poll_capture_lock(retry.unwrap(), || { opens += 1; true }, || Some("released"));
+        assert_eq!(opens, 2);
+        assert_eq!((retry, value), (None, Some("released")));
+    }
+
     const TARGET_ENV: &str = "CLIPCAT_SYNTHETIC_EDIT_DIR";
     const FIRST: &str = "queue-dedicated";
     const SECOND: &str = "queue-restored";
@@ -2882,12 +2899,27 @@ mod clipboard_tests {
             let mut marker = None;
             assert_eq!(write.acknowledge(&mut marker, true), None, "unverified writes cannot dispatch");
             assert!(marker.is_some(), "successful writes must retain a pending capture receipt");
-            assert!(capture(&mut marker).is_none());
+            let request = (GetClipboardSequenceNumber(), 8);
+            let tick = |request, marker: &mut Option<ClipboardIdentity>| {
+                poll_capture_lock(request, || OpenClipboard(owner) != 0,
+                    || read_open_clipboard_content(|| ClipboardIdentity::consume_open(marker)))
+            };
+            let (retry, content) = tick(request, &mut marker);
+            assert_eq!(retry, Some(request), "retain the sequence and epoch across contention");
+            assert!(content.is_none());
             assert!(marker.is_some(), "a blocked read must preserve the receipt");
             release.send(()).unwrap();
             reader.join().unwrap();
             if !replaced_before_capture {
-                assert!(capture(&mut marker).is_none(), "own content reached capture");
+                let mut pending = retry;
+                for _ in 0..30 {
+                    let (retry, content) = tick(pending.unwrap(), &mut marker);
+                    assert!(content.is_none(), "own content reached capture");
+                    pending = retry;
+                    if pending.is_none() { break; }
+                    Sleep(TICK_MS);
+                }
+                assert_eq!(pending, None, "acquiring the lock completes the pending request");
                 assert!(marker.is_none(), "consume the matching receipt once");
             }
             set_clipboard_rich(other, "same synthetic text", None, true).unwrap();

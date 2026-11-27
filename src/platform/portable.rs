@@ -4,6 +4,7 @@
 //! macOS presents transparent CALayers; Linux/Windows portable use softbuffer.
 //! Middle click and local C open history even if global registration fails.
 
+use crate::capture_policy::SourceEpoch;
 use crate::clipboard::RichFormats;
 use crate::hotkey::Hotkey;
 use super::registered_hotkey::{HotkeyEvent, RegisteredHotkey};
@@ -17,7 +18,7 @@ use crate::viewport::Density;
 /// Linux/arboard is text-only, so `formats` is always `None` there).
 struct ClipCapture {
     capture_epoch: u64,
-    policy: crate::capture_policy::SourceEpoch,
+    policy: SourceEpoch,
     source: Option<String>,
     text: String,
     formats: Option<RichFormats>,
@@ -1512,18 +1513,38 @@ fn consume_self_copy(marker: &mut Option<isize>, observation: Option<isize>) -> 
 }
 
 #[cfg(any(windows, target_os = "macos", test))]
-fn poll_generation<T>(generation: &mut isize, baseline: &mut bool, current: isize,
-    read: impl FnOnce() -> Result<Option<T>, ()>) -> Option<T> {
-    if std::mem::take(baseline) {
-        *generation = current;
-        return None;
+#[derive(Default)]
+struct GenerationPoll {
+    handled: Option<isize>,
+    pending: Option<(isize, SourceEpoch)>,
+}
+
+#[cfg(any(windows, target_os = "macos", test))]
+impl GenerationPoll {
+    fn poll<T>(
+        &mut self,
+        current: isize,
+        snapshot: SourceEpoch,
+        read: impl FnOnce(&SourceEpoch) -> Result<Option<T>, ()>,
+    ) -> Option<(T, SourceEpoch)> {
+        // A busy clipboard can delay source lookup across a policy change.
+        // Use this generation's original rules through both read and delivery.
+        let snapshot = match self.pending.take() {
+            Some((sequence, original)) if sequence == current => original,
+            _ => snapshot,
+        };
+        if *self.handled.get_or_insert(current) == current { return None; }
+        match read(&snapshot) {
+            Ok(observation) => {
+                self.handled = Some(current);
+                observation.map(|value| (value, snapshot))
+            }
+            Err(()) => {
+                self.pending = Some((current, snapshot));
+                None
+            }
+        }
     }
-    if *generation == current { return None; }
-    // Err is transient (e.g. another Windows app still holds the lock).
-    // Ok(None) definitively skips a private or unsupported generation.
-    let observation = read().ok()?;
-    *generation = current;
-    observation
 }
 
 #[cfg(any(target_os = "linux", test))]
@@ -1548,33 +1569,35 @@ fn spawn_clipboard_watcher(tx: Sender<ClipCapture>, suppress: Suppress, capture:
         #[cfg(windows)]
         use super::win_privacy as native;
         #[cfg(any(windows, target_os = "macos"))]
-        let mut generation = native::generation();
+        let mut generation = GenerationPoll { handled: Some(native::generation()), ..Default::default() };
         #[cfg(target_os = "linux")]
         let Ok(mut cb) = arboard::Clipboard::new() else { return };
         #[cfg(target_os = "linux")]
         let mut last = None;
         #[cfg(target_os = "linux")]
-        let mut previous_read: Option<(Option<u32>, Option<String>, crate::capture_policy::SourceEpoch)> = None;
+        let mut previous_read: Option<(Option<u32>, Option<String>, SourceEpoch)> = None;
         #[cfg(target_os = "linux")]
         let mut excluded_owner = None;
         #[cfg(target_os = "linux")]
         let source_probe = super::linux_clipboard::SourceProbe::open();
-        let mut baseline = cfg!(target_os = "linux");
+        #[cfg(target_os = "linux")]
+        let mut baseline = true;
         loop {
             std::thread::sleep(CLIP_POLL);
             let epoch = capture.load(Ordering::Acquire);
             if epoch != seen_epoch {
-                baseline = true;
+                #[cfg(any(windows, target_os = "macos"))]
+                { generation = GenerationPoll::default(); }
                 seen_epoch = epoch;
                 #[cfg(target_os = "linux")]
-                { last = None; previous_read = None; excluded_owner = None; }
+                { baseline = true; last = None; previous_read = None; excluded_owner = None; }
             }
             if !epoch.is_multiple_of(2) { continue; }
             let snapshot = policy.snapshot();
             #[cfg(any(windows, target_os = "macos"))]
-            let (text, source, formats) = {
+            let ((text, source, formats), snapshot) = {
                 let current = native::generation();
-                let Some(copy) = poll_generation(&mut generation, &mut baseline, current, || {
+                let Some(copy) = generation.poll(current, snapshot, |snapshot| {
                     #[cfg(windows)]
                     { native::observe(current, &suppress, |s| snapshot.allows(s)) }
                     #[cfg(target_os = "macos")]
@@ -1717,13 +1740,50 @@ mod paste_tests {
     }
 
     #[test]
-    fn privacy_busy_generation_retries_and_private_generation_is_consumed() {
-        let mut generation = 4;
-        let mut baseline = false;
-        assert_eq!(poll_generation::<i32>(&mut generation, &mut baseline, 5, || Err(())), None);
-        assert_eq!(poll_generation(&mut generation, &mut baseline, 5, || Ok(Some(51))), Some(51));
-        assert_eq!(poll_generation::<i32>(&mut generation, &mut baseline, 6, || Ok(None)), None);
-        assert_eq!(poll_generation(&mut generation, &mut baseline, 6, || Ok(Some(61))), None);
+    fn privacy_locked_generation_keeps_its_source_epoch_through_retries() {
+        use crate::capture_policy::SourcePolicy;
+        let editor = Some("Editor");
+        let blocked = vec!["editor".into()];
+        let policy = SourcePolicy::new(&blocked);
+        let mut poll = GenerationPoll::default();
+        assert!(poll.poll::<()>(4, policy.snapshot(), |_| panic!("initial baseline")).is_none());
+        assert!(poll.poll::<()>(5, policy.snapshot(), |_| Err(())).is_none());
+        policy.update("editor", &[]);
+        assert!(poll.poll::<()>(5, policy.snapshot(), |_| Err(())).is_none());
+        let mut payload_reads = 0;
+        let old = poll.poll(5, policy.snapshot(), |s| Ok(s.allows(editor).then(|| {
+            payload_reads += 1;
+            "old payload"
+        })));
+        assert_eq!(payload_reads, 0, "excluded bytes must never be read");
+        assert!(old.is_none(), "restoration must never authorize the locked generation");
+        assert!(poll.pending.is_none());
+        assert!(poll.poll::<()>(5, policy.snapshot(), |_| panic!("handled twice")).is_none());
+        let (fresh, snapshot) = poll.poll(6, policy.snapshot(), |s| Ok(s.allows(editor).then_some("new payload"))).unwrap();
+        assert_eq!(fresh, "new payload");
+        assert!(snapshot.allows(editor));
+    }
+
+    #[test]
+    fn privacy_pending_generation_handles_supersession_and_pause_resync() {
+        use crate::capture_policy::SourcePolicy;
+        let policy = SourcePolicy::new(&[]);
+        let mut poll = GenerationPoll::default();
+        assert!(poll.poll::<()>(1, policy.snapshot(), |_| panic!("baseline")).is_none());
+        assert!(poll.poll::<()>(2, policy.snapshot(), |_| Err(())).is_none());
+        policy.update("Editor", &["editor".into()]);
+        policy.update("Editor", &[]);
+        let (_, original) = poll.poll(2, policy.snapshot(), |s| Ok(s.allows(Some("Mail")).then_some(()))).unwrap();
+        assert!(!original.allows(Some("Editor")), "UI delivery must use the original epoch");
+        assert!(poll.poll::<()>(3, policy.snapshot(), |_| Err(())).is_none());
+        policy.update("Editor", &["editor".into()]);
+        policy.update("Editor", &[]);
+        assert!(poll.poll(4, policy.snapshot(), |s| Ok(s.allows(Some("Editor")).then_some(()))).is_some(),
+            "a newer generation supersedes a busy generation");
+        assert!(poll.poll::<()>(5, policy.snapshot(), |_| Err(())).is_none());
+        poll = GenerationPoll::default(); // The watcher drops pending reads on each pause/resume epoch change.
+        assert!(poll.poll::<()>(5, policy.snapshot(), |_| panic!("must resync silently")).is_none());
+        assert!(poll.poll(6, policy.snapshot(), |_| Ok(Some(()))).is_some());
     }
 
     #[test]
