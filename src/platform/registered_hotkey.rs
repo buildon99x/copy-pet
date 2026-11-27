@@ -8,6 +8,7 @@ use winit::event_loop::EventLoopProxy;
 #[derive(Debug)]
 pub enum HotkeyEvent {
     OpenPanel,
+    QueueNext,
 }
 
 #[cfg(target_os = "macos")]
@@ -20,7 +21,7 @@ pub struct RegisteredHotkey {
 }
 #[cfg(not(target_os = "macos"))]
 enum Command {
-    Bind(Hotkey, std::sync::mpsc::SyncSender<bool>),
+    Bind(usize, Option<Hotkey>, std::sync::mpsc::SyncSender<bool>),
     Stop,
 }
 #[cfg(not(target_os = "macos"))]
@@ -31,8 +32,8 @@ impl RegisteredHotkey {
             let mut native = native::Native::new();
             loop {
                 match rx.recv_timeout(std::time::Duration::from_millis(20)) {
-                    Ok(Command::Bind(hk, reply)) => {
-                        let result = native.as_mut().is_some_and(|n| n.bind(hk));
+                    Ok(Command::Bind(slot, hk, reply)) => {
+                        let result = native.as_mut().is_some_and(|n| n.bind(slot, hk));
                         let _ = reply.send(result);
                     }
                     Ok(Command::Stop) | Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
@@ -40,8 +41,12 @@ impl RegisteredHotkey {
                     }
                     Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
                 }
-                if native.as_mut().is_some_and(|n| n.poll()) {
-                    let _ = proxy.send_event(HotkeyEvent::OpenPanel);
+                while let Some(slot) = native.as_mut().and_then(|n| n.poll()) {
+                    let _ = proxy.send_event(if slot == 0 {
+                        HotkeyEvent::OpenPanel
+                    } else {
+                        HotkeyEvent::QueueNext
+                    });
                 }
             }
         });
@@ -51,8 +56,15 @@ impl RegisteredHotkey {
         }
     }
     pub fn bind(&mut self, hk: Hotkey) -> bool {
+        self.bind_slot(0, Some(hk))
+    }
+    pub fn bind_queue(&mut self, hk: Option<Hotkey>) -> bool {
+        self.bind_slot(1, hk)
+    }
+
+    fn bind_slot(&mut self, slot: usize, hk: Option<Hotkey>) -> bool {
         let (tx, rx) = std::sync::mpsc::sync_channel(1);
-        self.tx.send(Command::Bind(hk, tx)).is_ok() && rx.recv().unwrap_or(false)
+        self.tx.send(Command::Bind(slot, hk, tx)).is_ok() && rx.recv().unwrap_or(false)
     }
 }
 #[cfg(not(target_os = "macos"))]
@@ -74,20 +86,23 @@ mod native {
         pub fn new() -> Option<Self> {
             Some(Self)
         }
-        pub fn bind(&mut self, hk: Hotkey) -> bool {
+        pub fn bind(&mut self, slot: usize, hk: Option<Hotkey>) -> bool {
             // SAFETY: all calls are confined to this thread's message queue.
             unsafe {
-                UnregisterHotKey(std::ptr::null_mut(), 1);
+                let id = slot as i32 + 1;
+                UnregisterHotKey(std::ptr::null_mut(), id);
+                let Some(hk) = hk else {
+                    return true;
+                };
                 let mods = MOD_NOREPEAT
                     | if hk.ctrl { MOD_CONTROL } else { 0 }
                     | if hk.shift { MOD_SHIFT } else { 0 }
                     | if hk.alt { MOD_ALT } else { 0 }
                     | if hk.win { MOD_WIN } else { 0 };
-                RegisterHotKey(std::ptr::null_mut(), 1, mods, hk.key as u32) != 0
+                RegisterHotKey(std::ptr::null_mut(), id, mods, hk.key as u32) != 0
             }
         }
-        pub fn poll(&mut self) -> bool {
-            let mut fired = false;
+        pub fn poll(&mut self) -> Option<usize> {
             // SAFETY: MSG is valid and this thread owns its queue.
             unsafe {
                 let mut msg = std::mem::zeroed();
@@ -99,10 +114,12 @@ mod native {
                     PM_REMOVE,
                 ) != 0
                 {
-                    fired = true;
+                    if (1..=2).contains(&msg.wParam) {
+                        return Some(msg.wParam - 1);
+                    }
                 }
             }
-            fired
+            None
         }
     }
     impl Drop for Native {
@@ -110,6 +127,7 @@ mod native {
             // SAFETY: registration and teardown share the owning message-loop thread.
             unsafe {
                 UnregisterHotKey(std::ptr::null_mut(), 1);
+                UnregisterHotKey(std::ptr::null_mut(), 2);
             }
         }
     }
@@ -198,8 +216,9 @@ mod native {
     pub struct Native {
         display: *mut Display,
         root: c_ulong,
-        key: u8,
-        modifiers: Vec<u32>,
+        keys: [u8; 2],
+        queue_pressed: bool,
+        modifiers: [Vec<u32>; 2],
     }
     impl Native {
         pub fn new() -> Option<Self> {
@@ -221,28 +240,36 @@ mod native {
                 Some(Self {
                     display,
                     root: XDefaultRootWindow(display),
-                    key: 0,
-                    modifiers: Vec::new(),
+                    keys: [0; 2],
+                    queue_pressed: false,
+                    modifiers: Default::default(),
                 })
             }
         }
-        fn clear(&mut self) {
+        fn clear(&mut self, slot: usize) {
+            if slot == 1 {
+                self.queue_pressed = false;
+            }
             // SAFETY: this worker owns the live display and every stored grab.
             unsafe {
-                for mods in self.modifiers.drain(..) {
-                    XUngrabKey(self.display, self.key.into(), mods, self.root);
+                for mods in self.modifiers[slot].drain(..) {
+                    XUngrabKey(self.display, self.keys[slot].into(), mods, self.root);
                 }
                 XSync(self.display, 0);
-                self.key = 0;
+                self.keys[slot] = 0;
             }
         }
-        pub fn bind(&mut self, hk: Hotkey) -> bool {
+        pub fn bind(&mut self, slot: usize, hk: Option<Hotkey>) -> bool {
             // SAFETY: Xlib buffers and modifier map stay valid until their matching free.
             unsafe {
-                self.clear();
+                self.clear(slot);
+                let Some(hk) = hk else {
+                    return true;
+                };
                 FAILED.store(false, Ordering::SeqCst);
-                self.key = XKeysymToKeycode(self.display, hk.key.to_ascii_lowercase() as c_ulong);
-                if self.key == 0 {
+                self.keys[slot] =
+                    XKeysymToKeycode(self.display, hk.key.to_ascii_lowercase() as c_ulong);
+                if self.keys[slot] == 0 {
                     return false;
                 }
                 let base = u32::from(hk.shift)
@@ -268,23 +295,36 @@ mod native {
                 for mask in 0..256 {
                     if mask & !locks == 0 {
                         let mods = base | mask;
-                        if !self.modifiers.contains(&mods) {
-                            XGrabKey(self.display, self.key.into(), mods, self.root, 0, 1, 1);
-                            self.modifiers.push(mods);
+                        if self.keys[1 - slot] == self.keys[slot]
+                            && self.modifiers[1 - slot].contains(&mods)
+                        {
+                            self.clear(slot);
+                            return false;
+                        }
+                        if !self.modifiers[slot].contains(&mods) {
+                            XGrabKey(
+                                self.display,
+                                self.keys[slot].into(),
+                                mods,
+                                self.root,
+                                0,
+                                1,
+                                1,
+                            );
+                            self.modifiers[slot].push(mods);
                         }
                     }
                 }
                 XSync(self.display, 0); // deliver BadAccess before claiming success
                 if FAILED.load(Ordering::SeqCst) {
-                    self.clear();
+                    self.clear(slot);
                     false
                 } else {
                     true
                 }
             }
         }
-        pub fn poll(&mut self) -> bool {
-            let mut fired = false;
+        pub fn poll(&mut self) -> Option<usize> {
             // SAFETY: XEvent has 24-long storage; Xlib fills it before typed access.
             unsafe {
                 while XPending(self.display) > 0 {
@@ -292,15 +332,29 @@ mod native {
                     XNextEvent(self.display, &mut event);
                     // XEvent.type is int, not long (works on either endian).
                     let key = &*event.as_ptr().cast::<KeyEvent>();
-                    if key.kind == 2
-                        && key.keycode == u32::from(self.key)
-                        && self.modifiers.contains(&(key.state & 0xff))
+                    // A passive X11 grab lasts until the triggering key is
+                    // released. Dispatch paste after release so synthesized
+                    // Ctrl+V reaches the external window rather than our grab.
+                    if key.kind == 3 && key.keycode == u32::from(self.keys[1]) && self.queue_pressed
                     {
-                        fired = true;
+                        self.queue_pressed = false;
+                        return Some(1);
+                    }
+                    if key.kind == 2 {
+                        for slot in 0..2 {
+                            if key.keycode == u32::from(self.keys[slot])
+                                && self.modifiers[slot].contains(&(key.state & 0xff))
+                            {
+                                if slot == 0 {
+                                    return Some(slot);
+                                }
+                                self.queue_pressed = true;
+                            }
+                        }
                     }
                 }
             }
-            fired
+            None
         }
     }
     #[cfg(test)]
@@ -311,22 +365,33 @@ mod native {
         fn x11_conflict_rebind_and_cleanup() {
             let mut native = Native::new().expect("X11 display");
             let hk = Hotkey::from_spec("ctrl+alt+k");
-            assert!(native.bind(hk));
+            assert!(native.bind(0, Some(hk)));
+            assert!(native.bind(1, Some(Hotkey::from_spec("ctrl+alt+j"))));
+            assert!(
+                !native.bind(1, Some(hk)),
+                "reserved panel slot survives a conflicting queue chord"
+            );
+            assert!(!native.modifiers[0].is_empty());
+            assert!(native.bind(1, None));
+
             unsafe {
                 let other = XOpenDisplay(std::ptr::null());
                 assert!(!other.is_null());
                 let key = XKeysymToKeycode(other, 'k' as c_ulong);
                 // Release our binding, then reserve the chord in another client.
-                native.clear();
+                native.clear(0);
                 XGrabKey(other, key.into(), 4 | 8, XDefaultRootWindow(other), 0, 1, 1);
                 XSync(other, 0);
                 assert!(
-                    !native.bind(hk),
+                    !native.bind(0, Some(hk)),
                     "BadAccess must return false, never exit process"
                 );
-                assert!(native.modifiers.is_empty(), "partial lock grabs cleaned up");
                 assert!(
-                    native.bind(Hotkey::from_spec("ctrl+alt+j")),
+                    native.modifiers[0].is_empty(),
+                    "partial lock grabs cleaned up"
+                );
+                assert!(
+                    native.bind(0, Some(Hotkey::from_spec("ctrl+alt+j"))),
                     "rebind after conflict"
                 );
                 XCloseDisplay(other);
@@ -334,7 +399,7 @@ mod native {
             drop(native);
             let mut again = Native::new().unwrap();
             assert!(
-                again.bind(Hotkey::from_spec("ctrl+alt+j")),
+                again.bind(0, Some(Hotkey::from_spec("ctrl+alt+j"))),
                 "drop released chord"
             );
         }
@@ -343,7 +408,8 @@ mod native {
         fn drop(&mut self) {
             // SAFETY: no display use remains after this owning worker exits.
             unsafe {
-                self.clear();
+                self.clear(0);
+                self.clear(1);
                 XCloseDisplay(self.display);
                 let previous = PREVIOUS.lock().unwrap_or_else(|e| e.into_inner()).take();
                 XSetErrorHandler(previous);

@@ -177,6 +177,12 @@ pub enum PanelAction {
 pub enum NavKey {
     /// Legacy workbench navigation for offline tooling; no app shortcut binds it.
     Workbench,
+    QueueView,
+    QueueAdd,
+    QueueReset,
+    QueueReplay,
+    QueueCombine,
+    QueueShortcut,
     Up,
     Down,
     PageUp,
@@ -216,6 +222,12 @@ pub enum PanelDrag {
 }
 
 pub struct Panel {
+    pub queue: crate::paste_queue::PasteQueue,
+    pub queue_open: bool,
+    pub queue_conflict: bool,
+    pub queue_hotkey: u8,
+    pub queue_sel: usize,
+    pub queue_status: Option<crate::i18n::QueueText>,
     pub ai_view: Option<crate::ai_workbench::View>,
     pub ai_adding: bool,
     pub open: bool,
@@ -270,6 +282,12 @@ pub struct Panel {
 impl Default for Panel {
     fn default() -> Panel {
         Panel {
+            queue: Default::default(),
+            queue_open: false,
+            queue_conflict: false,
+            queue_hotkey: 0,
+            queue_sel: 0,
+            queue_status: None,
             open: false,
             standalone: false,
             query: String::new(),
@@ -303,6 +321,67 @@ struct ViewCache {
 }
 
 impl Panel {
+    pub fn queue_start(&self) -> usize {
+        let l = self.active_layout();
+        let rows = ((l.footer_y - 46.0 - l.rows_y) / 22.0).max(1.0) as usize;
+        self.queue_sel
+            .min(self.queue.entries().len().saturating_sub(1))
+            .saturating_add(1)
+            .saturating_sub(rows)
+    }
+
+    pub fn queue_buttons(&self) -> Vec<(NavKey, f32, f32, f32)> {
+        let l = self.active_layout();
+        if !self.queue_open {
+            let w = (l.row_w * 0.27).min(94.0);
+            return vec![
+                (NavKey::QueueAdd, l.row_x + l.row_w - 2.0 * w, l.footer_y, w),
+                (NavKey::QueueView, l.row_x + l.row_w - w, l.footer_y, w),
+            ];
+        }
+        let keys = [
+            NavKey::Left,
+            NavKey::Right,
+            NavKey::Delete,
+            NavKey::QueueReset,
+            NavKey::Enter,
+            NavKey::QueueReplay,
+            NavKey::QueueCombine,
+            NavKey::QueueView,
+        ];
+        let w = l.row_w / 4.0;
+        keys.iter()
+            .enumerate()
+            .map(|(i, k)| {
+                (
+                    *k,
+                    l.row_x + (i % 4) as f32 * w,
+                    l.footer_y - 45.0 + (i / 4) as f32 * 22.0,
+                    w,
+                )
+            })
+            .collect()
+    }
+
+    pub fn queue_button_at(&self, x: f32, y: f32) -> Option<NavKey> {
+        let l = self.active_layout();
+        if self.queue_open
+            && (l.search_x..l.search_x + l.search_w).contains(&x)
+            && (l.search_y..l.search_y + l.search_h).contains(&y)
+        {
+            return Some(NavKey::QueueShortcut);
+        }
+        self.queue_buttons()
+            .into_iter()
+            .find(|(_, bx, by, w)| {
+                x >= *bx
+                    && x < bx + w
+                    && y >= *by
+                    && y < by + if self.queue_open { 21.0 } else { 15.0 }
+            })
+            .map(|b| b.0)
+    }
+
     /// Panel with persisted card geometry (clamped to sane bounds).
     pub fn with_geometry(w: f32, h: f32, off: (f32, f32)) -> Panel {
         let (w, h, ox, oy) = clamp_geometry(w, h, off.0, off.1);
@@ -724,7 +803,7 @@ impl Panel {
         }
     }
 
-    fn selected_id(&self, store: &ClipStore) -> Option<u64> {
+    pub(crate) fn selected_id(&self, store: &ClipStore) -> Option<u64> {
         self.visible(store).get(self.sel).map(|c| c.id)
     }
 
@@ -757,7 +836,7 @@ impl Panel {
             self.expanded = None;
         }
         match key {
-            NavKey::SelectAll | NavKey::Workbench => return None,
+            NavKey::QueueShortcut | NavKey::QueueView | NavKey::QueueAdd | NavKey::QueueReset | NavKey::QueueReplay | NavKey::QueueCombine | NavKey::SelectAll | NavKey::Workbench => return None,
             NavKey::Tags => unreachable!(),
             NavKey::Up => {
                 self.sel = self.sel.saturating_sub(1);

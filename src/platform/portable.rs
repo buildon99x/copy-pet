@@ -75,6 +75,9 @@ struct PortableApp {
     clip_rx: Receiver<ClipCapture>,
     suppress: Suppress,
     hotkey: RegisteredHotkey,
+    queue_active: Option<u8>,
+    #[cfg(not(target_os = "macos"))]
+    staged_plain: Option<bool>,
     hotkey_label: String,
     #[cfg(not(target_os = "macos"))]
     privacy_source: Option<String>,
@@ -105,7 +108,7 @@ struct PortableApp {
     #[cfg(target_os = "macos")]
     last_external_pid: Option<i32>,
     #[cfg(target_os = "macos")]
-    pending_paste: Option<(i32, Instant, Instant)>,
+    pending_paste: Option<(i32, Instant, Instant, bool, isize)>,
 }
 
 /// The flyout panel's dedicated winit window + transparent presenter (macOS).
@@ -196,6 +199,9 @@ impl PortableApp {
             suppress,
             hotkey,
             hotkey_label,
+            queue_active: None,
+            #[cfg(not(target_os = "macos"))]
+            staged_plain: None,
             cursor: PhysicalPosition::new(0.0, 0.0),
             mouse_down: false,
             dragging: false,
@@ -387,28 +393,93 @@ impl PortableApp {
     /// Write the selected clip, suppress our own capture once, then schedule
     /// macOS paste after the original app regains focus on the main run loop.
     fn set_clipboard(&mut self, pick: ClipPick) {
-        if pick.image.is_some() { return; } // Image clipboard is Windows-native only.
+        #[cfg(target_os = "macos")]
+        if self.pending_paste.take().is_some_and(|p| p.3) {
+            self.pet.finish_queue_pick(false);
+        }
+        let queued = pick.queued;
+        if queued && pick.image.is_some() {
+            self.pet.finish_queue_pick(false);
+            self.pet.queue_message(crate::i18n::QueueText::ImageUnsupported);
+            return;
+        }
+        if queued && !self.pet.queue_output_valid() {
+            self.pet.finish_queue_pick(false);
+            return;
+        }
+        #[cfg(not(target_os = "macos"))]
+        if queued && self.window.as_ref().is_some_and(|w| w.has_focus()) {
+            self.staged_plain = Some(pick.plain_only);
+            self.pet.queue_message(crate::i18n::QueueText::Target);
+            return;
+        }
+        if !self.write_and_paste(pick) && queued {
+            self.pet.finish_queue_pick(false);
+        }
+    }
+
+    fn write_and_paste(&mut self, pick: ClipPick) -> bool {
+        #[cfg(target_os = "macos")]
+        let written_generation;
+        if pick.image.is_some() {
+            return false;
+        } // Image clipboard is Windows-native only.
         {
             // Publish the identity before the watcher can accept the write.
             let mut marker = self.suppress.lock().unwrap_or_else(|e| e.into_inner());
             #[cfg(target_os = "macos")]
             {
-                let formats = if pick.plain_only { None } else { pick.formats.as_ref() };
-                let Some(generation) = super::mac_clipboard::write(&pick.text, formats) else { return; };
+                let formats = if pick.plain_only {
+                    None
+                } else {
+                    pick.formats.as_ref()
+                };
+                let Some((generation, complete)) = super::mac_clipboard::write(&pick.text, formats)
+                else {
+                    return false;
+                };
+                written_generation = generation;
                 *marker = Some(generation);
+                if pick.queued && !complete {
+                    return false;
+                }
             }
             #[cfg(windows)]
             {
-                let Some(generation) = self.window.as_ref().and_then(|w| super::win_privacy::write_text(w, &pick.text))
-                    else { return; };
+                let formats = if pick.plain_only {
+                    None
+                } else {
+                    pick.formats.as_ref()
+                };
+                let Some((generation, complete)) = self
+                    .window
+                    .as_ref()
+                    .and_then(|w| super::win_privacy::write_text(w, &pick.text, formats))
+                else {
+                    return false;
+                };
                 *marker = Some(generation);
+                if pick.queued && !complete {
+                    return false;
+                }
             }
             #[cfg(target_os = "linux")]
             {
-                let Ok(mut clipboard) = arboard::Clipboard::new() else { return; };
-                if clipboard.set_text(pick.text.clone()).is_err() { return; }
+                if pick.queued
+                    && !pick.plain_only
+                    && pick.formats.as_ref().is_some_and(|f| !f.is_empty())
+                {
+                    return false;
+                }
+                let Ok(mut clipboard) = arboard::Clipboard::new() else {
+                    return false;
+                };
+                if clipboard.set_text(pick.text.clone()).is_err() {
+                    return false;
+                }
                 *marker = super::linux_clipboard::SourceProbe::open()
-                    .and_then(|probe| probe.own_selection()).map(|id| id as isize);
+                    .and_then(|probe| probe.own_selection())
+                    .map(|id| id as isize);
             }
         }
         if pick.paste {
@@ -416,9 +487,11 @@ impl PortableApp {
             {
                 if !super::mac_paste::trusted() {
                     use crate::i18n::{t, Msg};
-                    super::mac_dialogs::info(t(self.pet.lang(), Msg::PastePermissionTitle),
-                        t(self.pet.lang(), Msg::PastePermissionBody));
-                    return;
+                    super::mac_dialogs::info(
+                        t(self.pet.lang(), Msg::PastePermissionTitle),
+                        t(self.pet.lang(), Msg::PastePermissionBody),
+                    );
+                    return false;
                 }
                 // The flyout owns its captured target. Embedded panels use
                 // the most recent external app, observed before cat focus.
@@ -426,13 +499,27 @@ impl PortableApp {
                 if let Some(pid) = target {
                     if super::mac_paste::activate(pid) {
                         let now = Instant::now();
-                        self.pending_paste = Some((pid, now + Duration::from_millis(100), now + Duration::from_secs(1)));
+                        self.pending_paste = Some((
+                            pid,
+                            now + Duration::from_millis(100),
+                            now + Duration::from_secs(1),
+                            pick.queued,
+                            written_generation,
+                        ));
+                        return true;
                     }
                 }
             }
             #[cfg(not(target_os = "macos"))]
-            paste_synthesize();
+            {
+                let sent = paste_synthesize();
+                if pick.queued {
+                    self.pet.finish_queue_pick(sent);
+                }
+                return sent;
+            }
         }
+        !pick.paste
     }
 
     /// Replaces the OS registration and labels only the chord that succeeded.
@@ -632,7 +719,7 @@ impl PortableApp {
         if let Some(pid) = super::mac_paste::frontmost_pid() {
             if pid != std::process::id() as i32 { self.paste_target = Some(pid); }
         }
-        self.pending_paste = None;
+        if self.pending_paste.take().is_some_and(|p| p.3) { self.pet.finish_queue_pick(false); }
         self.pet.open_flyout();
         let (fw, fh) = self.pet.flyout_size();
         let (fw, fh) = (fw as u32, fh as u32);
@@ -931,7 +1018,21 @@ impl PortableApp {
 }
 
 impl ApplicationHandler<HotkeyEvent> for PortableApp {
-    fn user_event(&mut self, event_loop: &ActiveEventLoop, _: HotkeyEvent) {
+    fn user_event(&mut self, event_loop: &ActiveEventLoop, event: HotkeyEvent) {
+        if matches!(event, HotkeyEvent::QueueNext) {
+            #[cfg(target_os = "macos")]
+            {
+                let Some(pid) = super::mac_paste::frontmost_pid().filter(|id| *id != std::process::id() as i32) else { return; };
+                self.paste_target = Some(pid);
+            }
+            if self.window.as_ref().is_some_and(|w| w.has_focus()) { return; }
+            #[cfg(not(target_os = "macos"))]
+            let pick = if let Some(plain) = self.staged_plain.take() { self.pet.staged_queue_pick(plain) } else { self.pet.next_queue_pick() };
+            #[cfg(target_os = "macos")]
+            let pick = self.pet.next_queue_pick();
+            if let Some(pick) = pick { self.set_clipboard(pick); }
+            return;
+        }
         #[cfg(target_os = "macos")]
         self.open_flyout(event_loop);
         #[cfg(not(target_os = "macos"))]
@@ -1213,11 +1314,32 @@ impl ApplicationHandler<HotkeyEvent> for PortableApp {
         }
         let now = Instant::now();
         #[cfg(target_os = "macos")]
-        if let Some((pid, due, deadline)) = self.pending_paste {
-            if now >= deadline { self.pending_paste = None; }
+        if let Some((pid, due, deadline, queued, generation)) = self.pending_paste {
+            if now >= deadline || (queued && (!self.pet.queue_output_valid() || generation != super::mac_clipboard::generation())) {
+                self.pending_paste = None;
+                if queued { self.pet.finish_queue_pick(false); }
+            }
             else if now >= due && super::mac_paste::frontmost_pid() == Some(pid) {
                 self.pending_paste = None;
-                super::mac_paste::paste();
+                let sent = super::mac_paste::paste();
+                if queued { self.pet.finish_queue_pick(sent); }
+            }
+        }
+        let active = self.pet.panel.queue.next().is_some();
+        #[cfg(not(target_os = "macos"))]
+        let active = {
+            if self.staged_plain.is_some() && !self.pet.queue_output_valid() {
+                self.staged_plain = None;
+                self.pet.finish_queue_pick(false);
+            }
+            active || self.staged_plain.is_some()
+        };
+        let active = active.then_some(self.pet.panel.queue_hotkey);
+        if self.queue_active != active {
+            self.queue_active = active;
+            self.pet.panel.queue_conflict = false;
+            if !self.hotkey.bind_queue(active.map(crate::hotkey::queue_hotkey)) && active.is_some() {
+                self.pet.queue_shortcut_failed();
             }
         }
         if now.duration_since(self.last_frame) >= TICK {
@@ -1281,6 +1403,12 @@ fn nav_from_key(event: &winit::event::KeyEvent, ctrl: bool) -> Option<NavKey> {
         PhysicalKey::Code(KeyCode::Escape) => Some(NavKey::Esc),
         PhysicalKey::Code(KeyCode::Tab) => Some(NavKey::Tab), // source filter
         PhysicalKey::Code(KeyCode::KeyA) if ctrl => Some(NavKey::SelectAll),
+        PhysicalKey::Code(KeyCode::F2) => Some(NavKey::QueueView),
+        PhysicalKey::Code(KeyCode::F3) => Some(NavKey::QueueAdd),
+        PhysicalKey::Code(KeyCode::F4) => Some(NavKey::QueueReset),
+        PhysicalKey::Code(KeyCode::F5) => Some(NavKey::QueueReplay),
+        PhysicalKey::Code(KeyCode::F7) => Some(NavKey::QueueShortcut),
+        PhysicalKey::Code(KeyCode::F6) => Some(NavKey::QueueCombine),
         PhysicalKey::Code(KeyCode::KeyT) if ctrl => Some(NavKey::Tags),
         PhysicalKey::Code(KeyCode::KeyP) if ctrl => Some(NavKey::Pin),
         PhysicalKey::Code(KeyCode::KeyZ) if ctrl => Some(NavKey::Undo),
@@ -1313,10 +1441,12 @@ fn quick_digit(code: KeyCode) -> Option<u8> {
 /// 1); and being a `simulate` call it avoids the macOS TIS *listen* crash path
 /// (LNR-0005).
 #[cfg(not(target_os = "macos"))]
-fn paste_synthesize() {
+fn paste_synthesize() -> bool {
+    let mut ok = true;
     for event in paste_events(cfg!(target_os = "macos")) {
-        let _ = rdev::simulate(&event);
+        ok &= rdev::simulate(&event).is_ok();
     }
+    ok
 }
 
 /// Output-only neutralization prevents still-held panel modifiers from turning

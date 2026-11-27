@@ -138,10 +138,39 @@ pub(super) unsafe fn write_format(fmt: u32, bytes: &[u8]) -> bool {
     }
 }
 
+/// Emit every captured rich format while the caller holds the clipboard lock.
+pub(super) unsafe fn write_rich_formats(formats: &crate::clipboard::RichFormats) -> bool {
+    fn atom(name: &str) -> u32 {
+        let wide: Vec<u16> = name.encode_utf16().chain(Some(0)).collect();
+        // SAFETY: wide is a terminated, live UTF-16 string.
+        unsafe { RegisterClipboardFormatW(wide.as_ptr()) }
+    }
+    let mut ok = true;
+    if let Some(html) = &formats.html {
+        let mut data = html.as_bytes().to_vec();
+        data.push(0);
+        ok &= write_format(atom("HTML Format"), &data);
+    }
+    if let Some(rtf) = &formats.rtf_b64 {
+        let Some(mut data) = crate::clipboard::b64_decode(rtf) else {
+            return false;
+        };
+        data.push(0);
+        ok &= write_format(atom("Rich Text Format"), &data);
+    }
+    ok
+}
+
 #[cfg(feature = "portable")]
-pub fn write_text(window: &winit::window::Window, text: &str) -> Option<isize> {
+pub fn write_text(
+    window: &winit::window::Window,
+    text: &str,
+    formats: Option<&crate::clipboard::RichFormats>,
+) -> Option<(isize, bool)> {
     use winit::raw_window_handle::{HasWindowHandle, RawWindowHandle};
-    let RawWindowHandle::Win32(handle) = window.window_handle().ok()?.as_raw() else { return None; };
+    let RawWindowHandle::Win32(handle) = window.window_handle().ok()?.as_raw() else {
+        return None;
+    };
     let wide: Vec<u16> = text.encode_utf16().chain(Some(0)).collect();
     // SAFETY: the window is live; the slice borrows initialized UTF-16.
     // Sample the sequence under the clipboard lock to bind it to this write.
@@ -150,7 +179,8 @@ pub fn write_text(window: &winit::window::Window, text: &str) -> Option<isize> {
         for _ in 0..5 {
             if OpenClipboard(handle.hwnd.get() as _) != 0 {
                 let ok = EmptyClipboard() != 0 && write_format(13, bytes);
-                let sequence = ok.then(generation);
+                let complete = ok && formats.is_none_or(|formats| write_rich_formats(formats));
+                let sequence = ok.then(|| (generation(), complete));
                 CloseClipboard();
                 return sequence;
             }

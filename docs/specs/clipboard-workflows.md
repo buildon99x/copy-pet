@@ -55,6 +55,22 @@ Also combine selected text entries in queue order with newlines for one paste;
 never silently discard an image when combining. Focus goes to the current
 external target; no automatic Tab/Enter or form submission. Document OS limits.
 
+The queue holds 16 snapshots, including already pasted entries. F3 toggles
+the selected history row. F2 opens the queue. Up/Down selects, Left/Right
+moves, Delete removes, F4 clears, Enter pastes next, F5 replays the most
+recent completed item, and F6 combines the queue as plain text. The dedicated
+registered shortcut defaults to Ctrl+Alt+J (Control+Option+J on macOS).
+F7 or a click on its label cycles J/K/L presets and persists that choice. Registration
+is active while a next item is available or an explicit portable panel
+operation awaits its target. Windows native and macOS restore the target
+window. Windows portable and X11 let the user focus the destination and
+invoke the shortcut to complete a panel-initiated paste. Wayland has no
+global queue shortcut. macOS requires Accessibility for posting paste events.
+An acknowledged paste means that ClipCat wrote the requested formats and
+submitted the OS paste events. Applications can decline the paste. Image
+output requires Windows native. Capture pause clears all snapshots, explicit
+clear preserves pins, and source exclusion removes matching snapshots.
+
 ## 3. Image text
 
 Windows native first: explicit per-image local OCR action, plus an opt-in setting

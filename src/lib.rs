@@ -26,3 +26,4 @@ pub mod update;
 pub mod viewport;
 
 pub mod cat_picker;
+pub mod paste_queue;

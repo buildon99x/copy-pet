@@ -36,6 +36,7 @@ pub struct Persist {
     /// Global panel hotkey spec, e.g. "win+shift+v" (see [`crate::hotkey`]).
     /// Editable in state.json; invalid values reset to the default on load.
     pub hotkey: String,
+    pub queue_hotkey: u8,
     /// Version of the once-only macOS default migration; missing legacy marker is zero.
     #[serde(default)]
     pub hotkey_version: u8,
@@ -86,6 +87,7 @@ impl Default for Persist {
             retention_days: 0,
             excluded_sources: Vec::new(),
             hotkey: crate::hotkey::DEFAULT.to_string(),
+            queue_hotkey: 0,
             hotkey_version: 1,
             auto_update: true,
             panel_w: crate::panel::DEFAULT_W,

@@ -69,6 +69,7 @@ const CMD_AUTOSTART: usize = 12;
 const CMD_ABOUT: usize = 14;
 const CMD_EXIT: usize = 15;
 const CMD_PANEL: usize = 16;
+const CMD_QUEUE: usize = 56;
 const CMD_CAPTURE: usize = 17;
 const CMD_UPDATE: usize = 18;
 const CMD_AUTOUPDATE: usize = 19;
@@ -100,6 +101,7 @@ struct App {
     // simulation
     pet: Pet,
     // clipboard
+    queue_active: Option<u8>,
     suppress_clip: Option<u32>,
     // interaction
     mouse_down: bool,
@@ -214,6 +216,7 @@ impl App {
     /// setting for the embedded panel), it then restores focus to the app that
     /// was active when the panel opened and synthesizes Ctrl+V there.
     fn copy_back(&mut self, pick: ClipPick) {
+        if pick.queued && !self.pet.queue_output_valid() { self.pet.finish_queue_pick(false); return; }
         // Arm sequence-based suppression only after a successful write.
         // This handles image-only clips without comparing or retaining pixels.
         let sequence = unsafe {
@@ -223,8 +226,9 @@ impl App {
                 set_clipboard_rich(self.hwnd, &pick.text, pick.formats.as_ref(), pick.plain_only)
             }
         };
-        self.suppress_clip = sequence;
-        let ok = sequence.is_some();
+        self.suppress_clip = sequence.map(|receipt| receipt.0);
+        let ok = sequence.is_some_and(|(_, complete)| !pick.queued || complete);
+        let mut sent = false;
         // Only paste when the write actually landed: on failure the clipboard
         // still holds the previous content, so synthesizing Ctrl+V would paste
         // stale text into the target field instead of the picked clip. The
@@ -259,12 +263,15 @@ impl App {
                 if attached {
                     SetFocus(target);
                 }
-                send_ctrl_v();
+                sent = GetForegroundWindow() == target
+                    && (!pick.queued || self.suppress_clip == Some(GetClipboardSequenceNumber()))
+                    && send_ctrl_v();
                 if attached {
                     AttachThreadInput(me, tid, 0);
                 }
             }
         }
+        if pick.queued { self.pet.finish_queue_pick(sent); }
     }
 
     /// Records the window to auto-paste into: the foreground window captured at
@@ -952,7 +959,7 @@ unsafe fn read_blob_open(format: u32, limit: usize) -> Option<Vec<u8>> {
 
 /// Prepare validated data before emptying the clipboard. PNG preserves alpha;
 /// CF_DIB supplies a broadly compatible bitmap fallback (including Paint).
-unsafe fn set_clipboard_image(hwnd: HWND, image: &ClipImage) -> Option<u32> {
+unsafe fn set_clipboard_image(hwnd: HWND, image: &ClipImage) -> Option<(u32,bool)> {
     let dib = image.to_dib()?;
     let png = b64_decode(&image.png_b64)?;
     for attempt in 0..5 {
@@ -964,7 +971,7 @@ unsafe fn set_clipboard_image(hwnd: HWND, image: &ClipImage) -> Option<u32> {
         let png_ok = atom != 0 && write_format(atom, &png);
         // Capture the marker while the clipboard is locked, so another app
         // cannot replace it before we remember our own sequence number.
-        let sequence = (dib_ok || png_ok).then(|| GetClipboardSequenceNumber());
+        let sequence = (dib_ok || png_ok).then(|| (GetClipboardSequenceNumber(), png_ok));
         CloseClipboard();
         return sequence;
     }
@@ -980,8 +987,7 @@ unsafe fn set_clipboard_rich(
     text: &str,
     formats: Option<&RichFormats>,
     plain_only: bool,
-) -> Option<u32> {
-    let (cf_html, cf_rtf) = clip_atoms();
+) -> Option<(u32,bool)> {
     let wide: Vec<u16> = text.encode_utf16().chain(std::iter::once(0)).collect();
     let text_bytes = std::slice::from_raw_parts(wide.as_ptr() as *const u8, wide.len() * 2);
     for attempt in 0..5 {
@@ -993,22 +999,8 @@ unsafe fn set_clipboard_rich(
         }
         if EmptyClipboard() == 0 { CloseClipboard(); return None; }
         let ok = write_format(CF_UNICODETEXT, text_bytes);
-        if ok && !plain_only {
-            if let Some(f) = formats {
-                if let Some(html) = &f.html {
-                    let mut b = html.as_bytes().to_vec();
-                    b.push(0);
-                    let _ = write_format(cf_html, &b);
-                }
-                if let Some(rtf_b64) = &f.rtf_b64 {
-                    if let Some(mut b) = b64_decode(rtf_b64) {
-                        b.push(0);
-                        let _ = write_format(cf_rtf, &b);
-                    }
-                }
-            }
-        }
-        let sequence = ok.then(|| GetClipboardSequenceNumber());
+        let complete = ok && (plain_only || formats.is_none_or(|formats| super::win_privacy::write_rich_formats(formats)));
+        let sequence = ok.then(|| (GetClipboardSequenceNumber(), complete));
         CloseClipboard();
         return sequence;
     }
@@ -1232,7 +1224,7 @@ unsafe fn register_panel_hotkey(hwnd: HWND, spec: &str) -> HotkeyReg {
 /// Output-only: we synthesize keystrokes and never read key state, so this does
 /// not touch the input-privacy guarantee (golden rule 1). Modifiers are released
 /// up-front and Ctrl in reverse at the end.
-unsafe fn send_ctrl_v() {
+unsafe fn send_ctrl_v() -> bool {
     let mut inputs: [INPUT; 8] = std::mem::zeroed();
     for inp in &mut inputs {
         inp.r#type = INPUT_KEYBOARD;
@@ -1260,7 +1252,7 @@ unsafe fn send_ctrl_v() {
         inputs.len() as u32,
         inputs.as_ptr(),
         std::mem::size_of::<INPUT>() as i32,
-    );
+    ) == inputs.len() as u32
 }
 
 // ---- tray ----------------------------------------------------------------------
@@ -1415,6 +1407,7 @@ unsafe fn show_menu(hwnd: HWND, ms: &MenuSnapshot) -> usize {
         CMD_PANEL,
         wz(&i18n::menu_clipboard(lang, &ms.hotkey_label)).as_ptr(),
     );
+    AppendMenuW(menu, MF_STRING, CMD_QUEUE, wz(i18n::queue_button(lang, NavKey::QueueView, false)).as_ptr());
     AppendMenuW(
         menu,
         MF_STRING | chk(!ms.capture),
@@ -1639,6 +1632,7 @@ unsafe fn open_menu(hwnd: HWND) {
                     a.pet.dirty = true;
                 });
             }
+            CMD_QUEUE => { with_app(|a| a.pet.apply_menu_action(MenuAction::OpenQueue)); }
             CMD_PANEL => {
                 with_app(|a| a.pet.toggle_panel());
             }
@@ -1735,6 +1729,12 @@ fn map_nav_key(vk: u16, ctrl: bool) -> Option<NavKey> {
         0x1B => Some(NavKey::Esc),       // VK_ESCAPE
         0x09 => Some(NavKey::Tab),       // VK_TAB: source filter
         0x41 if ctrl => Some(NavKey::SelectAll),
+        0x71 => Some(NavKey::QueueView),
+        0x72 => Some(NavKey::QueueAdd),
+        0x73 => Some(NavKey::QueueReset),
+        0x74 => Some(NavKey::QueueReplay),
+        0x75 => Some(NavKey::QueueCombine),
+        0x76 => Some(NavKey::QueueShortcut),
         0x54 if ctrl => Some(NavKey::Tags), // Ctrl+T: edit tags
         0x50 if ctrl => Some(NavKey::Pin),  // Ctrl+P: pin clip
         0x5A if ctrl => Some(NavKey::Undo), // Ctrl+Z: undo delete
@@ -1866,6 +1866,19 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
     match msg {
         WM_TIMER => {
             if wp == TIMER_ID {
+                with_app(|a| {
+                    let active = a.pet.panel.queue.next().map(|_| a.pet.panel.queue_hotkey);
+                    if active != a.queue_active {
+                        a.queue_active = active;
+                        a.pet.panel.queue_conflict = false;
+                        UnregisterHotKey(hwnd, 2);
+                        if let Some(index) = active {
+                            if RegisterHotKey(hwnd, 2, MOD_CONTROL | MOD_ALT | MOD_NOREPEAT, crate::hotkey::queue_hotkey(index).key as u32) == 0 {
+                                a.pet.queue_shortcut_failed();
+                            }
+                        }
+                    }
+                });
                 // restart request must run outside the APP borrow: DestroyWindow
                 // re-enters the wndproc and WM_DESTROY needs `with_app`
                 if with_app(|a| a.tick()).unwrap_or(false) {
@@ -1916,6 +1929,15 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
             0
         }
         WM_HOTKEY => {
+            if wp as i32 == 2 {
+                with_app(|a| {
+                    let fg = GetForegroundWindow();
+                    if fg != a.hwnd && fg != a.flyout_hwnd && !fg.is_null() {
+                        a.paste_target = fg;
+                        if let Some(pick) = a.pet.next_queue_pick() { a.copy_back(pick); }
+                    }
+                });
+            }
             if wp as i32 == HOTKEY_ID {
                 with_app(|a| {
                     // The hotkey opens the panel as a caret-anchored flyout in
@@ -2160,6 +2182,7 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
                 a.pet.save_pos(x, y);
                 KillTimer(hwnd, TIMER_ID);
                 UnregisterHotKey(hwnd, HOTKEY_ID);
+                UnregisterHotKey(hwnd, 2);
                 RemoveClipboardFormatListener(hwnd);
                 tray_remove(hwnd);
             });
@@ -2353,6 +2376,7 @@ pub fn run() {
             h,
             pm: tiny_skia::Pixmap::new(w as u32, h as u32).unwrap(),
             pet,
+            queue_active: None,
             suppress_clip: None,
             mouse_down: false,
             drag_moved: false,

@@ -857,3 +857,59 @@ pub fn source_status(lang: Lang, name: &str, excluded: bool) -> String {
         (Lang::Ko, false) => format!("{name} · 수집 허용"),
     }
 }
+
+#[derive(Clone, Copy)]
+pub enum QueueText {
+    ImageUnsupported,
+    Failed,
+    Full,
+    Excluded,
+    TextOnly,
+    NextKey,
+    ShortcutFailed,
+    Target,
+}
+
+pub fn queue_text(lang: Lang, msg: QueueText) -> &'static str {
+    use QueueText::*;
+    match (lang, msg) {
+        (Lang::En, ImageUnsupported) => "Queued images require Windows native. Item kept.",
+        (Lang::Ko, ImageUnsupported) => "이미지는 Windows 네이티브에서 붙여넣으세요. 항목을 유지합니다.",
+        (Lang::En, Failed) => "Paste failed. The item is still queued.",
+        (Lang::Ko, Failed) => "붙여넣기에 실패했습니다. 항목은 대기 중입니다.",
+        (Lang::En, Target) => "Focus the destination, then press the queue shortcut.",
+        (Lang::Ko, Target) => "대상 창에서 대기열 단축키를 누르세요.",
+        (Lang::En, Full) => "Queue full (16 items)",
+        (Lang::Ko, Full) => "대기열이 가득 찼습니다 (16개)",
+        (Lang::En, Excluded) => "Capture privacy settings prevent adding this clip.",
+        (Lang::Ko, Excluded) => "수집 보호 설정으로 이 항목을 추가할 수 없습니다.",
+        (Lang::En, TextOnly) => "Combine requires one or more text clips.",
+        (Lang::Ko, TextOnly) => "합치려면 텍스트 항목만 선택하세요.",
+        (Lang::En, ShortcutFailed) => "Shortcut unavailable · change F7",
+        (Lang::Ko, ShortcutFailed) => "단축키 등록 실패 · 변경 F7",
+        (Lang::En, NextKey) => "Next paste · change F7",
+        (Lang::Ko, NextKey) => "다음 붙여넣기 · 변경 F7",
+    }
+}
+
+pub fn queue_button(lang: Lang, key: crate::panel::NavKey, open: bool) -> &'static str {
+    use crate::panel::NavKey::*;
+    let (en, ko) = match key {
+        QueueView if open => ("Back F2", "목록 F2"),
+        QueueView => ("Queue F2", "대기열 F2"),
+        QueueAdd => ("Add/remove F3", "추가/제거 F3"),
+        Left => ("Earlier ←", "앞으로 ←"),
+        Right => ("Later →", "뒤로 →"),
+        Delete => ("Remove Del", "제거 Del"),
+        QueueReset => ("Clear F4", "비우기 F4"),
+        Enter => ("Next Enter", "다음 Enter"),
+        QueueReplay => ("Replay F5", "다시 F5"),
+        QueueCombine => ("Combine F6", "합치기 F6"),
+        _ => ("", ""),
+    };
+    if lang == Lang::Ko {
+        ko
+    } else {
+        en
+    }
+}

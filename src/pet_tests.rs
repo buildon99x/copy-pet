@@ -1008,3 +1008,110 @@ fn privacy_menu_keeps_existing_clips_and_restores_excluded_sources_after_clear()
     p.on_copy("allowed again".into(), Some("editor".into()), None);
     assert_eq!(p.clips.len(), 1);
 }
+
+#[test]
+fn ordered_queue_keeps_rich_and_image_snapshots_rejects_mixed_combine() {
+    let mut p = pet();
+    p.open_panel();
+    let rich = RichFormats {
+        html: Some("<b>test</b>".into()),
+        rtf_b64: None,
+    };
+    p.on_copy_rich(
+        "test".into(),
+        Some("Writer".into()),
+        None,
+        Some(rich.clone()),
+    );
+    p.panel_nav(NavKey::QueueAdd);
+    let image = ClipImage::from_pixmap(&Pixmap::new(2, 2).unwrap()).unwrap();
+    p.on_copy_image(image.clone(), Some("Paint".into()), None);
+    p.panel_nav(NavKey::QueueAdd);
+    p.panel_nav(NavKey::QueueView);
+    assert!(p.panel_nav(NavKey::QueueCombine).is_none());
+    assert_eq!(p.next_queue_pick().unwrap().formats, Some(rich));
+    p.finish_queue_pick(true);
+    assert_eq!(p.next_queue_pick().unwrap().image, Some(image.clone()));
+    p.finish_queue_pick(false);
+    assert_eq!(p.next_queue_pick().unwrap().image, Some(image));
+    p.finish_queue_pick(true);
+    assert!(p.next_queue_pick().is_none());
+    assert!(p.panel_nav(NavKey::QueueReplay).unwrap().image.is_some());
+}
+
+#[test]
+fn ordered_queue_invalidation_rejects_pending_output_and_history_eviction_keeps_snapshot() {
+    let mut p = pet();
+    p.open_panel();
+    p.on_copy("sensitive".into(), Some("Writer".into()), None);
+    p.panel_nav(NavKey::QueueAdd);
+    for i in 0..crate::clipboard::MAX_HISTORY {
+        p.clips.add_copy(format!("safe {i}"), None);
+    }
+    assert_eq!(p.next_queue_pick().unwrap().text, "sensitive");
+    p.apply_menu_action(MenuAction::ToggleExcludedSource("writer".into()));
+    assert!(!p.queue_output_valid());
+    p.finish_queue_pick(false);
+    assert!(p.next_queue_pick().is_none());
+    p.panel_nav(NavKey::QueueAdd);
+    p.run_action(PanelAction::Clear);
+    assert!(p.panel.queue.entries().is_empty());
+    p.on_copy("delete".into(), None, None);
+    p.panel_nav(NavKey::QueueAdd);
+    let id = p.panel.queue.next().unwrap().id;
+    p.run_action(PanelAction::Delete(id));
+    assert!(p.next_queue_pick().is_none());
+}
+
+#[test]
+fn ordered_queue_retention_pin_and_explicit_pause_apply_to_snapshots() {
+    let mut p = pet();
+    let clip = |id, pinned| {
+        serde_json::from_value(serde_json::json!({
+            "id": id, "text":"old", "source":null, "ts":1, "pinned":pinned
+        }))
+        .unwrap()
+    };
+    p.panel.queue.toggle(&clip(1, false));
+    p.panel.queue.toggle(&clip(2, true));
+    p.apply_menu_action(MenuAction::SetRetention(1));
+    assert_eq!(p.panel.queue.next().unwrap().id, 2);
+    p.apply_menu_action(MenuAction::ToggleCapture);
+    assert!(p.panel.queue.entries().is_empty());
+    assert!(p.next_queue_pick().is_none());
+}
+
+#[test]
+fn ordered_queue_bounds_and_staged_combination_are_stable() {
+    let mut p = pet();
+    p.open_panel();
+    for i in 0..=crate::paste_queue::PasteQueue::LIMIT {
+        p.on_copy(format!("line-{i}"), None, None);
+        p.panel_nav(NavKey::QueueAdd);
+    }
+    assert_eq!(
+        p.panel.queue.entries().len(),
+        crate::paste_queue::PasteQueue::LIMIT
+    );
+    p.panel_nav(NavKey::QueueView);
+    let pick = p.panel_nav(NavKey::QueueCombine).unwrap();
+    assert!(pick.plain_only && pick.queued);
+    assert_eq!(p.staged_queue_pick(true).unwrap(), pick);
+    p.panel_nav(NavKey::QueueReset);
+    assert!(p.staged_queue_pick(true).is_none());
+}
+
+#[test]
+fn ordered_queue_shortcut_presets_keep_legacy_panel_binding_untouched() {
+    let state: Persist = serde_json::from_str("{}").unwrap();
+    assert_eq!(state.queue_hotkey, 0);
+    let panel_hotkey = state.hotkey.clone();
+    let mut p = Pet::new(state);
+    p.open_panel();
+    p.panel_nav(NavKey::QueueView);
+    for key in ['K', 'L', 'J'] {
+        p.panel_nav(NavKey::QueueShortcut);
+        assert_eq!(crate::hotkey::queue_hotkey(p.st.queue_hotkey).key, key);
+        assert_eq!(p.st.hotkey, panel_hotkey);
+    }
+}

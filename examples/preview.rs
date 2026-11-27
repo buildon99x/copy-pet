@@ -440,6 +440,41 @@ fn main() {
             save(&pm, &dir, &format!("9-ai-{mode}-{}", lang.code()));
         }
     }
+    for lang in [Lang::En, Lang::Ko] {
+        let store = demo_store();
+        let mut panel = Panel::default();
+        panel.toggle();
+        panel.standalone = true;
+        for clip in store.visible("").iter().take(3) {
+            panel.queue.toggle(clip);
+        }
+        for open in [false, true] {
+            panel.queue_open = open;
+            let lt = panel.active_layout();
+            let mut pm = Pixmap::new(lt.canvas_w as u32, lt.canvas_h as u32).unwrap();
+            render::draw_panel(
+                &mut pm,
+                &PanelView {
+                    panel: &panel,
+                    store: &store,
+                    lang,
+                    capture: true,
+                    hint: "",
+                    caret: false,
+                },
+            );
+            save(
+                &pm,
+                &dir,
+                &format!(
+                    "ordered-{}-{}",
+                    if open { "queue" } else { "history" },
+                    lang.code()
+                ),
+            );
+        }
+    }
+
     // Illustrated ragdoll: every motion frame, all pet sizes, and the persistent
     // pause marker. These are renderer previews, distinct from live captures.
     for frame in 0..16 {

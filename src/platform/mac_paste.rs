@@ -46,10 +46,11 @@ fn command_v(down: bool) -> Result<CGEvent, ()> {
     Ok(event)
 }
 
-pub fn paste() {
-    for down in [true, false] {
-        if let Ok(event) = command_v(down) { event.post(CGEventTapLocation::HID); }
-    }
+pub fn paste() -> bool {
+    let (Ok(down), Ok(up)) = (command_v(true), command_v(false)) else { return false; };
+    down.post(CGEventTapLocation::HID);
+    up.post(CGEventTapLocation::HID);
+    true
 }
 
 #[cfg(test)]

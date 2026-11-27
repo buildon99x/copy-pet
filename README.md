@@ -127,6 +127,15 @@ Linux Wayland에서는 전역 단축키를 등록하지 못할 수 있으며,
 `#tag`는 태그 전체가 일치해야 합니다.
 [태그·이미지 지원 형식과 저장 한도](docs/specs/clipboard-tags-images.md)
 
+### 순서대로 붙여넣기
+
+1. 기록 패널에서 방향키로 항목을 선택하고 **F3**을 누르세요. 마우스로는 원하는 행의 **…**를 누르고 **추가/제거**를 클릭하세요. 선택 순서대로 최대 16개까지 담을 수 있습니다.
+2. **대기열(F2)**에서 순서와 미리보기를 확인하세요. ↑/↓로 항목을 고르고 ←/→로 옮기세요. Delete는 한 항목을 제거하고 F4는 대기열을 비웁니다.
+3. 대상 창의 입력란을 클릭하고 **Ctrl+Alt+J**를 누를 때마다 한 항목이 붙여넣어집니다. macOS에서는 Control+Option+J입니다. F7을 누르거나 대기열의 단축키 표시를 클릭하면 마지막 키를 J, K, L 중에서 바꿀 수 있습니다. ▶ 표시가 다음 항목을 가리킵니다.
+4. 대기열에서 **다시(F5)**를 누르면 직전에 붙여넣은 항목을 다시 사용합니다. **합치기(F6)**는 텍스트 항목 전체를 줄바꿈으로 연결합니다. Linux X11과 Windows portable에서는 대상 창을 선택한 후 설정한 대기열 단축키로 실행하세요.
+
+대기열은 앱을 종료하면 사라집니다. 수집 일시정지는 대기열을 비우며, 출처 제외·명시적 삭제·보존 기간 만료 시 해당 항목도 제거됩니다. Wayland에서는 전역 순차 붙여넣기를 지원하지 않습니다. macOS에서 자동 붙여넣기를 사용하려면 손쉬운 사용 권한이 필요합니다.
+
 ### 자주 쓰는 조작
 
 아래 `Ctrl/Cmd`는 Windows·Linux에서는 Ctrl, macOS에서는 Command입니다.
@@ -250,6 +259,14 @@ In the Windows tray menu or macOS cat menu, select **Exclude copies from apps**,
 Source identification is best effort. Windows uses the clipboard owner's executable, with the foreground app as a fallback. macOS samples the foreground app during clipboard polling. X11 reads the selection owner's application class when available. An unidentified source can still be captured. On X11, a clipboard restored by ClipCat may create a copy reaction if the server cannot verify the owner process. Exclusions apply to ClipCat history at the application level. Websites, password fields and OS clipboard history have separate privacy controls. Supported Windows and macOS privacy markers take precedence over the source name.
 
 Set `CLIPCAT_CONFIG_DIR` to a separate directory for an isolated profile. ClipCat skips legacy profile migration while this override is active.
+
+**Ordered paste.** In clipboard history, F3 adds or removes the selected row.
+F2 shows the queue. Use the arrows to select or reorder, Delete to remove,
+and F4 to clear. Focus the destination and press Ctrl+Alt+J (Control+Option+J
+on Mac) for each next item. F7 cycles the J, K and L presets. F5 replays the last successful item. F6 joins all
+text entries with newlines. On Linux X11 and Windows portable, focus the target
+and press the queue shortcut to complete a panel paste. Wayland has no global
+queue shortcut. Each session holds up to 16 entries.
 
 **A quiet desktop cat that keeps your clipboard close.** Copy text to feed your
 cat and save it locally. Search history, pin useful clips, add tags and copy them

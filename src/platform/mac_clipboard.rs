@@ -105,9 +105,10 @@ mod tests {
             let pool: Id = msg_send![class!(NSAutoreleasePool), new];
             let board: Id = msg_send![class!(NSPasteboard), pasteboardWithUniqueName];
             let rich = RichFormats { html: Some("<b>Y</b>".into()), rtf_b64: None };
-            let own = write_board(board, "Y", Some(&rich)).expect("own rich write");
+            let (own, complete) = write_board(board, "Y", Some(&rich)).expect("own rich write");
+            assert!(complete);
             assert_eq!(observe_board(board, own).unwrap().0, "Y");
-            let external = write_board(board, "Y", None).expect("second declaration");
+            let (external, _) = write_board(board, "Y", None).expect("second declaration");
             assert_ne!(own, external);
             assert!(observe_board(board, own).is_none());
             let _: () = msg_send![board, releaseGlobally];
@@ -141,7 +142,7 @@ mod tests {
 
 /// Replaces the pasteboard with `text` plus the given rich `formats` (when
 /// present). `formats: None` writes plain text only.
-pub fn write(text: &str, formats: Option<&RichFormats>) -> Option<isize> {
+pub fn write(text: &str, formats: Option<&RichFormats>) -> Option<(isize,bool)> {
     unsafe {
         let pool: Id = msg_send![class!(NSAutoreleasePool), new];
         let pb: Id = msg_send![class!(NSPasteboard), generalPasteboard];
@@ -153,22 +154,25 @@ pub fn write(text: &str, formats: Option<&RichFormats>) -> Option<isize> {
 
 // setString/setData add types to our declared pasteboard contents. A new
 // declaration by another process changes the generation returned by clearContents.
-unsafe fn write_board(pb: Id, text: &str, formats: Option<&RichFormats>) -> Option<isize> {
+unsafe fn write_board(pb: Id, text: &str, formats: Option<&RichFormats>) -> Option<(isize,bool)> {
     let declared: isize = msg_send![pb, clearContents];
     let ok: BOOL = msg_send![pb, setString: nsstring(text) forType: nsstring(UTF8_TEXT)];
     if ok != objc::runtime::YES { return None; }
+    let mut complete = true;
     if let Some(f) = formats {
         if let Some(html) = &f.html {
-            let _: BOOL = msg_send![pb, setString: nsstring(html) forType: nsstring(HTML)];
+            let ok: BOOL = msg_send![pb, setString: nsstring(html) forType: nsstring(HTML)];
+            complete &= ok == objc::runtime::YES;
         }
         if let Some(rtf_b64) = &f.rtf_b64 {
             if let Some(bytes) = b64_decode(rtf_b64) {
                 let data: Id =
                     msg_send![class!(NSData), dataWithBytes: bytes.as_ptr() length: bytes.len()];
-                let _: BOOL = msg_send![pb, setData: data forType: nsstring(RTF)];
-            }
+                let ok: BOOL = msg_send![pb, setData: data forType: nsstring(RTF)];
+                complete &= ok == objc::runtime::YES;
+            } else { complete = false; }
         }
     }
     let current: isize = msg_send![pb, changeCount];
-    (current == declared).then_some(current)
+    (current == declared).then_some((current,complete))
 }

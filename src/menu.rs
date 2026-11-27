@@ -16,6 +16,7 @@ use crate::i18n::Lang;
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub enum MenuAction {
     TogglePanel,
+    OpenQueue,
     ToggleCapture,
     ToggleExcludedSource(String),
     SetRetention(u16),
