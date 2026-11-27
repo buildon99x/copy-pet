@@ -39,19 +39,30 @@ try {
         Get-WindowsCapability -Online -Name $name | Format-List Name, State | Out-Host
     }
     Set-WinUserLanguageList (New-WinUserLanguageList $Language) -Force
-    Get-WinUserLanguageList | Format-List LanguageTag | Out-Host
+    $profileTag = (Get-WinUserLanguageList)[0].LanguageTag
+    Write-Host "First user-profile language: $profileTag"
+    $requiredLanguage = [Globalization.CultureInfo]::GetCultureInfo($Language).TwoLetterISOLanguageName
+    if ([Globalization.CultureInfo]::GetCultureInfo($profileTag).TwoLetterISOLanguageName -ne $requiredLanguage) {
+        throw "Unexpected user-profile language: $profileTag"
+    }
     # Probe in a fresh process, just as the app starts a fresh worker.
-    $env:CLIPCAT_CI_PROFILE = $Language
+    $env:CLIPCAT_CI_LANGUAGE = $requiredLanguage
     $probe = @'
 $ErrorActionPreference = 'Stop'
 [Windows.Media.Ocr.OcrEngine, Windows.Foundation, ContentType = WindowsRuntime] | Out-Null
 'Installed recognizers: ' + ([Windows.Media.Ocr.OcrEngine]::AvailableRecognizerLanguages.LanguageTag -join ', ')
 $engine = [Windows.Media.Ocr.OcrEngine]::TryCreateFromUserProfileLanguages()
 'Profile recognizer: ' + $engine.RecognizerLanguage.LanguageTag
-if ($engine.RecognizerLanguage.LanguageTag -ne $env:CLIPCAT_CI_PROFILE) { exit 1 }
+if (!$engine -or !$engine.RecognizerLanguage.LanguageTag) { exit 2 }
+# Windows normalizes Korean to the neutral BCP-47 tag ko on this image.
+$selected = [Globalization.CultureInfo]::GetCultureInfo($engine.RecognizerLanguage.LanguageTag)
+if ($selected.TwoLetterISOLanguageName -ne $env:CLIPCAT_CI_LANGUAGE) { exit 1 }
 '@
-    & powershell.exe -NoProfile -NonInteractive -Command $probe
-    if ($LASTEXITCODE -ne 0) { throw "No matching $Language profile recognizer." }
+    $encoded = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($probe))
+    $result = & powershell.exe -NoProfile -NonInteractive -EncodedCommand $encoded
+    $code = $LASTEXITCODE
+    $result | Tee-Object -FilePath (Join-Path $dir "$Language-recognizer.txt") | Out-Host
+    if ($code -ne 0) { throw "No matching $Language profile recognizer (probe exit $code)." }
 } finally {
     if ($mounted) { Dismount-DiskImage -ImagePath $iso }
     if (Test-Path $iso) { Remove-Item -LiteralPath $iso }
